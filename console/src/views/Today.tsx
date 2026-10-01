@@ -24,7 +24,7 @@ export function Today() {
   }) : null
   return <>
     <div className="vh"><div><div className="eyebrow">{w.n} · work</div><h1>Today</h1>
-      <p>{cal ? `Meetings in your local time with ${w.tzl} alongside, the` : 'The'} jobs that need you, and what you and the LLM runs you asked for did today.</p></div></div>
+      <p>{cal ? `Meetings in your local time${w.tz ? ` with ${w.tzl} alongside` : ''}, the` : 'The'} jobs that need you, and what you and the LLM runs you asked for did today.</p></div></div>
     <div className="cols">
       <div style={{ display: 'grid', gap: 16, minWidth: 0 }}>
         <section className="panel"><header><Ic n="calendar" /><h3>Calendar</h3><span className="src">{cal ? w.src.cal!.n : 'not set'}</span></header>
