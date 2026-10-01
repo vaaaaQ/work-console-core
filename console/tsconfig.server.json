@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+    "erasableSyntaxOnly": true
+  },
+  "include": ["server", "src/model", "src/data", "src/lib", "src/live/adapt.ts"]
+}

@@ -1,0 +1,56 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { JOBS, LOG, applyLocal, atOf, byId, initFlow, isClosed, keySrc, putJob, restore, setJobs, snap } from './world.ts'
+
+JOBS.forEach(initFlow)
+
+test('a local command replaces the job, bumps its version and logs the new journal entry', () => {
+  const j = JOBS.find((j) => !isClosed(j) && j.st !== 'recurring' && j.st !== 'draft' && atOf(j))!
+  const at = atOf(j)!, x = snap(), before = j.flow[at].s, v0 = j.v || 0, log0 = LOG[j.ws].length
+  const r = applyLocal(j.id, { op: 'stepDone', step: at })
+  assert.equal(byId(j.id), r.job)
+  assert.equal(r.job.flow[at].s, 'done')
+  assert.equal(r.job.v, v0 + 1)
+  assert.equal(LOG[j.ws].length, log0 + 1)
+  assert.equal(LOG[j.ws][0].job, j.id)
+  restore(x)
+  assert.equal(byId(j.id)!.flow[at].s, before, 'undo brings the step back')
+  assert.equal(LOG[j.ws].length, log0)
+})
+
+test('putJob ignores a copy no newer than the one it holds (reply and event for one write)', () => {
+  const j = JOBS.find((j) => !isClosed(j) && atOf(j))!, x = snap()
+  const r = applyLocal(j.id, { op: 'noteAdd', step: atOf(j)!, k: 'q', t: 'why?' })
+  const log0 = LOG[j.ws].length
+  assert.equal(putJob(structuredClone(r.job)), false)
+  assert.equal(LOG[j.ws].length, log0)
+  restore(x)
+})
+
+test('setJobs rebuilds the log from the journals, newest first', () => {
+  const x = snap(), list = structuredClone(JOBS)
+  setJobs(list)
+  for (const ws of Object.keys(LOG) as (keyof typeof LOG)[]) {
+    const n = list.filter((j) => j.ws === ws).reduce((a, j) => a + j.jr.length, 0)
+    assert.equal(LOG[ws].length, Math.min(200, n))
+  }
+  restore(x)
+})
+
+test('a job from a removed workspace lands in the default one and does not break the log', () => {
+  const x = snap(), old = structuredClone(JOBS[0]) as { ws: string; id: string }, id = old.id
+  old.ws = 'marvell'
+  setJobs([old as never])
+  assert.equal(byId(id)!.ws, 'acme')
+  const again = structuredClone(byId(id)!) as { ws: string; v?: number }
+  again.ws = 'marvell'; again.v = (again.v || 0) + 1
+  const n = LOG.acme.length
+  assert.doesNotThrow(() => putJob(again as never))
+  assert.equal(byId(id)!.ws, 'acme')
+  assert.ok(LOG.acme.length >= n)
+  restore(x)
+})
+
+test('every job knows where its key lives', () => {
+  for (const j of JOBS) assert.ok(keySrc(j).n, j.id)
+})

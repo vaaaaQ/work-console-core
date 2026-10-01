@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bridge/work.item",
+  "title": "work item",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "assignedTo": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "changedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "link": {
+      "type": "string",
+      "format": "uri"
+    }
+  },
+  "required": [
+    "id",
+    "type",
+    "title",
+    "state",
+    "assignedTo",
+    "changedAt",
+    "link"
+  ],
+  "additionalProperties": false
+}

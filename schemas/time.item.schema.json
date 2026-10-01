@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bridge/time.item",
+  "title": "time month",
+  "description": "One month, YYYY-MM; workdays and emptyDays run Monday to Friday up to today or the month's end; top is the largest work item + activity of the month before.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "period": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "empty",
+        "partial",
+        "entered"
+      ]
+    },
+    "hours": {
+      "type": "number",
+      "minimum": 0
+    },
+    "workdays": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "emptyDays": {
+      "type": "array",
+      "maxItems": 31,
+      "items": {
+        "type": "string"
+      }
+    },
+    "top": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "workItemId": {
+          "type": "integer"
+        },
+        "workItemName": {
+          "type": "string"
+        },
+        "activityId": {
+          "type": "integer"
+        },
+        "activityName": {
+          "type": "string"
+        },
+        "hours": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "workItemId",
+        "workItemName",
+        "activityId",
+        "activityName",
+        "hours"
+      ],
+      "additionalProperties": false
+    },
+    "locked": {
+      "type": "boolean"
+    },
+    "link": {
+      "type": "string",
+      "format": "uri"
+    }
+  },
+  "required": [
+    "id",
+    "period",
+    "state",
+    "hours",
+    "workdays",
+    "emptyDays",
+    "top",
+    "locked",
+    "link"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bridge/cal.item",
+  "title": "calendar event",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "start": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "end": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "organizer": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "joinUrl": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uri"
+    },
+    "response": {
+      "type": "string"
+    },
+    "cancelled": {
+      "type": "boolean"
+    },
+    "link": {
+      "type": "string",
+      "format": "uri"
+    }
+  },
+  "required": [
+    "id",
+    "subject",
+    "start",
+    "end",
+    "organizer",
+    "joinUrl",
+    "response",
+    "cancelled",
+    "link"
+  ],
+  "additionalProperties": false
+}

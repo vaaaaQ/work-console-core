@@ -1,0 +1,14 @@
+{
+  "name": "example",
+  "zone": "UTC",
+  "script": "example.js",
+  "tabs": {
+    "jira": { "match": "^https://[a-z0-9-]+\\.atlassian\\.net/", "open": "https://your-site.atlassian.net/jira/your-work" }
+  },
+  "concepts": {
+    "work": { "tab": "jira", "interval": 30, "cap": 100 }
+  },
+  "actions": {
+    "work.comment": { "tab": "jira", "concept": "work" }
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bridge/chat.item",
+  "title": "chat thread",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "oneOnOne",
+        "group",
+        "meeting"
+      ]
+    },
+    "unread": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "lastAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "lastFrom": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "lastPreview": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "link": {
+      "type": "string",
+      "format": "uri"
+    },
+    "mentioned": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "kind",
+    "unread",
+    "lastAt",
+    "lastFrom",
+    "lastPreview",
+    "link",
+    "mentioned"
+  ],
+  "additionalProperties": false
+}

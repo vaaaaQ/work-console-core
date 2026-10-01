@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bridge/ci.get",
+  "title": "build log tail",
+  "type": "object",
+  "properties": {
+    "log": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "log"
+  ],
+  "additionalProperties": false
+}

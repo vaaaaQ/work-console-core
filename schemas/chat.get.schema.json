@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bridge/chat.get",
+  "title": "chat thread messages",
+  "description": "The 50 latest messages, newest first; cursor fetches earlier ones.",
+  "type": "object",
+  "properties": {
+    "messages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "authorKind": {
+            "type": "string",
+            "enum": [
+              "me",
+              "bot",
+              "person"
+            ]
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "author",
+          "authorKind",
+          "at",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 50
+    },
+    "cursor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "messages",
+    "cursor"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bridge/mail.get",
+  "title": "mail body",
+  "type": "object",
+  "properties": {
+    "body": {
+      "type": "string"
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "body",
+    "attachments"
+  ],
+  "additionalProperties": false
+}

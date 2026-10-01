@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bridge/review.item",
+  "title": "pull request",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "repo": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "author": {
+      "type": "string"
+    },
+    "myVote": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "votes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "reviewer": {
+            "type": "string"
+          },
+          "vote": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "reviewer",
+          "vote"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "activeThreads": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "link": {
+      "type": "string",
+      "format": "uri"
+    }
+  },
+  "required": [
+    "id",
+    "repo",
+    "title",
+    "author",
+    "myVote",
+    "votes",
+    "activeThreads",
+    "createdAt",
+    "link"
+  ],
+  "additionalProperties": false
+}

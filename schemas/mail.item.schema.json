@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bridge/mail.item",
+  "title": "mail message",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "folder": {
+      "type": "string",
+      "enum": [
+        "Inbox",
+        "Sent"
+      ]
+    },
+    "from": {
+      "type": "string"
+    },
+    "to": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "cc": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "subject": {
+      "type": "string"
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "unread": {
+      "type": "boolean"
+    },
+    "preview": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "wait",
+        "fyi",
+        "reply"
+      ]
+    },
+    "myReply": {
+      "type": "boolean"
+    },
+    "conversationId": {
+      "type": "string"
+    },
+    "link": {
+      "type": "string",
+      "format": "uri"
+    }
+  },
+  "required": [
+    "id",
+    "folder",
+    "from",
+    "to",
+    "cc",
+    "subject",
+    "at",
+    "unread",
+    "preview",
+    "category",
+    "myReply",
+    "conversationId",
+    "link"
+  ],
+  "additionalProperties": false
+}
