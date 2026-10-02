@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { DEFAULT_PB, boardKey } from '../../src/data/board.ts'
 import { DEFAULT_WS, PACKS } from '../../src/data/packs.ts'
+import { itemOf } from '../../src/model/context.ts'
 import * as T from '../../src/model/transitions.ts'
 import type { Job } from '../../src/model/types.ts'
 import { READY } from '../bridge/wire.ts'
@@ -32,8 +33,8 @@ export function startItem(d: Deps): StartItem {
   // so the second finds the job the first created
   const queue = new Map<string, Promise<unknown>>()
   return (key, pb = DEFAULT_PB, who = 'page') => {
-    const id = String(key ?? '').trim()
-    if (!/^[\w.#-]{1,64}$/.test(id)) return Promise.reject(new HttpError(400, 'bad_args', `${key} is not a board item key`))
+    const id = itemOf(String(key ?? '').trim())
+    if (!id) return Promise.reject(new HttpError(400, 'bad_args', `${key} is not a board item key`))
     const prev = queue.get(id) ?? Promise.resolve(), run = prev.catch(() => {}).then(() => start(id, pb, who))
     queue.set(id, run)
     void run.catch(() => {}).finally(() => { if (queue.get(id) === run) queue.delete(id) })

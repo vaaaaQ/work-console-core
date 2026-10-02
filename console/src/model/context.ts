@@ -15,7 +15,7 @@ export const CTX_MAX = 10, FIELD_MAX = 4000, ENTRY_MAX = 1500
 /** a job key that names a work item: the item's id, or null for any other key */
 export const workId = (_ws: Ws, key: string): string | null => itemIdOf(key)
 /** an item id, given as the item's id or its key */
-const itemOf = (s: string) => itemIdOf(s) ?? (itemIdOf(keyOf(s)) === s ? s : null)
+export const itemOf = (s: string) => itemIdOf(s) ?? (itemIdOf(keyOf(s)) === s ? s : null)
 /** what someone types for a work item: its key or its id */
 export const parseWorkId = (_ws: Ws, s: string) => itemOf(s.trim())
 

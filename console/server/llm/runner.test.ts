@@ -12,6 +12,7 @@ import { demoCtx, demoSeed } from '../testkit.ts'
 import { GatewayError } from '../bridge/wire.ts'
 import type { ConceptReply } from '../bridge/wire.ts'
 import { resolveContext } from './context.ts'
+import { buildPrompt } from './prompt.ts'
 import { Runner, safeName } from './runner.ts'
 import type { RunTools, Sdk, SdkEvent } from './sdk.ts'
 
@@ -291,4 +292,62 @@ test("a new run's prompt carries the job's context; an unreadable item is a line
   await runner.resume(r.id)
   await until(() => sessions.length === 2)
   assert.equal(seen.length, n, 'a resumed run reads no context')
+})
+
+/* a fixed job, so the prompt text can be compared word for word */
+function promptJob() {
+  const j = demoSeed().jobs!.find((x) => x.id === 'J-0420')!
+  j.jr = [{ ts: '2026-10-01T09:00:00.000Z', a: 'you', o: 'Created the job', c: 'playbook Action', n: 'work on the last step' }]
+  return j
+}
+/* captured from buildPrompt before it took `me` */
+const PROMPT_BEFORE_ME = [
+  "You are working one step of a job in the user's Work Console.",
+  '',
+  'Job J-0420: Reply to Sam about rate limiting',
+  'Key: CHAT · playbook: Action · project: platform',
+  'Step: Send it',
+  'Exit criterion: Sent',
+  '',
+  'Instruction: Draft the reply.',
+  '',
+  '## Earlier outputs',
+  '### Draft the answer',
+  'hi Sam,',
+  'rate limiting is in review (PR #482), one approval left. I will write here once it is on staging.',
+  '',
+  '## Journal (latest last)',
+  '- 2026-10-01T09:00:00.000Z you: Created the job → playbook Action Next: work on the last step',
+  '',
+  '## How to work',
+  '- The context above was read when this run started. Read anything more yourself with the bridge tools (bridge_snapshot, bridge_get).',
+  '- You never send anything to a source (no chat posts, mails, votes, comments or state changes): the user sends after review.',
+  '- Write progress with the run tool journal(observed, changed, next) at meaningful points.',
+  '- Save files the step expects with add_artifact(name, content).',
+  '- Finish by calling submit_draft(text) exactly once with the draft for the user to review. Without it the run counts as failed.',
+].join('\n')
+
+test('a prompt names the user it was given; without one it is the text it always was', () => {
+  const x = demoCtx(), j = promptJob()
+  assert.equal(buildPrompt(x, j, 'sn', 'Draft the reply.'), PROMPT_BEFORE_ME)
+  assert.equal(buildPrompt(x, j, 'sn', 'Draft the reply.', [], 'the user'), PROMPT_BEFORE_ME)
+  const p = buildPrompt(x, j, 'sn', 'Draft the reply.', [], 'Alex')
+  assert.match(p, /in Alex's Work Console/)
+  assert.match(p, /: Alex sends after review\./)
+  assert.match(p, /the draft for Alex to review\./)
+  assert.ok(!/the user/.test(p), 'no phrase still says "the user"')
+  assert.equal(p, PROMPT_BEFORE_ME.replaceAll("the user's Work Console", "Alex's Work Console").replace('the user sends', 'Alex sends').replace('for the user to review', 'for Alex to review'))
+})
+
+test("a runner told who the user is puts the name in a new run's prompt", async () => {
+  const named = setup(), [t] = await targets(named.jobs, 1)
+  const runner = new Runner({ store: named.store, jobs: named.jobs, bus: named.bus, sdk: fakeSdkOf(named.sessions), cwd: named.dir, gate: () => true, artifactsDir: join(named.dir, 'arts'), ctx: demoCtx, me: 'Alex' })
+  await runner.ask(t.job, t.step, 'q')
+  await until(() => named.sessions.length === 1)
+  assert.match(named.sessions[0].prompt, /in Alex's Work Console/)
+  assert.match(named.sessions[0].prompt, /the draft for Alex to review/)
+  const plain = setup(), [u] = await targets(plain.jobs, 1)
+  await plain.runner.ask(u.job, u.step, 'q')
+  await until(() => plain.sessions.length === 1)
+  assert.match(plain.sessions[0].prompt, /in the user's Work Console/)
 })

@@ -71,3 +71,14 @@ test("A's refusal, a bad key, an unknown playbook and a missing bridge change no
   assert.equal(s.acts.length, 0)
   await assert.rejects(setup({ up: false }).start('ACME-603'), (e: unknown) => e instanceof HttpError && e.status === 503)
 })
+
+test("an input the board rule does not accept is refused; a key is accepted", async () => {
+  const s = setup(), n = (await s.jobs.all()).length
+  for (const bad of ['acme-603', 'ACME603', '603', 'ACME-', 'ACME 603', '']) {
+    await assert.rejects(s.start(bad), (e: unknown) => e instanceof HttpError && e.status === 400 && e.code === 'bad_args' && e.message === `${bad} is not a board item key`)
+  }
+  assert.equal(s.acts.length, 0); assert.equal((await s.jobs.all()).length, n)
+  const r = await s.start('ACME-603')
+  assert.equal(r.created, true); assert.equal(r.job.key, 'ACME-603')
+  assert.deepEqual(s.acts.map((a) => a.args), [{ id: 'ACME-603' }])
+})
