@@ -101,7 +101,8 @@ export interface RunRec {
   id: string; job: string; step: string; q: string; state: RunState; session?: string; reason?: string; at: string; ended?: string
 }
 
-export interface LogEntry extends New { at: string; job: string; a: string; l: Lamp; t: string }
+/** at = time of day; ts = the journal entry's ISO time, which Home orders logs that span days by (the demo's seeded rows have none) */
+export interface LogEntry extends New { at: string; job: string; a: string; l: Lamp; t: string; ts?: string }
 export interface Msg extends New { who: string; me?: 1; bot?: 1; at: string; t: string }
 /** hidden + mentioned: a thread the console hides, listed while an unread message mentions me */
 export interface Chat { id: string; name: string; kind: string; unread: number; sum: string; msgs: Msg[]; at?: string; link?: string; hidden?: 1; mentioned?: 1 }

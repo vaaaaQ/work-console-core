@@ -4,8 +4,9 @@ import { PRI } from '../data/demo.ts'
 import { PACKS } from '../data/packs.ts'
 import { hm, initials, tfmt } from '../lib/util.ts'
 import { S, TPL, byId, chName, isClosed, isLive, phaseOf, rvState, stepOf } from '../model/world.ts'
+import { actOf } from '../model/home.ts'
 import type { Flow, Job, Step } from '../model/types.ts'
-import { closeDrawer, go } from '../actions/nav.tsx'
+import { closeDrawer } from '../actions/nav.tsx'
 import {
   acceptDraft, askLlm, bAdd, bAnswer, bReopen, editDraft, llmCancel, nudge, rejectDraft, rvOpen, rvVote, stepDoneHere, stepReopen,
   stepResume, stepSkip, stepWait, tplSend,
@@ -92,15 +93,16 @@ function BadgeSec({ j, f }: P) {
   )
 }
 
-/** the console actions the core knows: icon, label, what the button does. An act it does not know shows no button */
-const ACT = new Map<string, [string, string, () => void]>([['time', ['hourglass', 'Open Time', () => go('time')]]])
-/** a step the console does itself: its button */
+/** a step the console does itself: its button, and why it cannot yet. actOf knows the core's acts and the workspaces';
+    an act nobody knows shows no button */
 function ConsoleSec({ j, s, f }: P) {
-  const a = s.act ? ACT.get(s.act) : undefined
+  const a = s.act ? actOf(s.act) : null
   if (!a || isClosed(j) || !isLive(f)) return null
+  const wait = a.busy?.(j) ?? false, why = a.blocked?.(j) ?? null, eb = a.eyebrow?.(j)
   return (
-    <section className="sec"><div className="eyebrow">Console</div>
-      <div className="row"><button className="btn sm pri" onClick={a[2]}><Ic n={a[0]} sm />{a[1]}</button></div></section>
+    <section className="sec"><div className="eyebrow">Console{eb ? ' · ' + eb : ''}</div>
+      <div className="row"><button className="btn sm pri" disabled={wait} onClick={() => void a.run(j)}><Ic n={a.icon} sm />{wait ? 'Working…' : a.label}</button></div>
+      {why ? <p className="hint" style={{ margin: '8px 0 0' }}>{why}</p> : null}</section>
   )
 }
 

@@ -8,6 +8,7 @@ import { VIEWS, closeDrawer, demoInfo, dismiss, go, isDark, isView, readHash, to
 import { curChat } from './actions/sources.tsx'
 import { LIVE, missingParts, pushSupported, subscribePush } from './live/api.ts'
 import { L } from './live/boot.ts'
+import { REG } from './data/registry.ts'
 import { Devices } from './views/Devices.tsx'
 import { Ic } from './ui/Icon.tsx'
 import { ModalHost, closeModal, isModalOpen } from './ui/modal.tsx'
@@ -138,5 +139,6 @@ export function App() {
     <Drawer />
     <ModalHost onDismiss={dismiss} />
     <Toasts />
+    {REG.map(({ page, ui }) => { const M = ui?.Mount; return M ? <M key={page.id} /> : null })}
   </>
 }

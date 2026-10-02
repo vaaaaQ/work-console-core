@@ -2,6 +2,7 @@ import * as React from 'react'
 import { PACKS } from '../data/packs.ts'
 import { store } from '../lib/util.ts'
 import { S, W, byId } from '../model/world.ts'
+import { opener } from '../model/home.ts'
 import type { View, Ws } from '../model/types.ts'
 import { commit, repaint } from '../store.ts'
 import { closeModal, modal, modalForm } from '../ui/modal.tsx'
@@ -37,6 +38,7 @@ export function go(v: View, id?: string, sel?: string) {
   }, () => window.scrollTo(0, 0))
   setHash()
 }
+opener.go = (v) => go(v)
 
 /** quiet only changes the state, for a caller that renders itself */
 export function setWs(ws: Ws, quiet?: boolean) {

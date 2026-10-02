@@ -96,7 +96,7 @@ export function putJob(j: Job) {
   if (old && old.v != null && j.v != null && j.v <= old.v) return false
   if (i >= 0) JOBS[i] = j; else JOBS.unshift(j)
   const fresh = old ? j.jr.slice(0, Math.max(0, j.jr.length - old.jr.length)) : j.jr.slice(0, 1)
-  LOG[j.ws].unshift(...fresh.map((e) => ({ at: hm(new Date(e.ts)), job: j.id, a: e.a, l: e.l || 'ok', t: e.o, nw: 1 as const })))
+  LOG[j.ws].unshift(...fresh.map((e) => ({ at: hm(new Date(e.ts)), ts: e.ts, job: j.id, a: e.a, l: e.l || 'ok', t: e.o, nw: 1 as const })))
   return true
 }
 /** demo mode: the command runs here, on the in-memory world */
@@ -114,7 +114,7 @@ export function setJobs(list: Job[]) {
   ;(Object.keys(LOG) as Ws[]).forEach((ws) => {
     LOG[ws] = list.filter((j) => j.ws === ws).flatMap((j) => j.jr.map((e) => ({ ...e, job: j.id })))
       .sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 200)
-      .map((e) => ({ at: hm(new Date(e.ts)), job: e.job, a: e.a, l: e.l || 'ok', t: e.o }))
+      .map((e) => ({ at: hm(new Date(e.ts)), ts: e.ts, job: e.job, a: e.a, l: e.l || 'ok', t: e.o }))
   })
 }
 export type Snap = { J: Job[]; L: Record<Ws, LogEntry[]> }
