@@ -404,3 +404,21 @@ test('knowledge: an LLM proposes, the user accepts in Approvals, then edits the 
     assert.deepEqual((await call(lp, 'GET', '/api/knowledge/search?q=two')).json.hits.map((h: { id: string }) => h.id), [id])
   } finally { await stop() }
 })
+
+test("context preview: a job's item reads as the run would get it; an item not on the job is 404", async () => {
+  const { lp, stop } = await setup()
+  try {
+    const r = await call(lp, 'POST', '/api/jobs', { body: { t: 'Reply to Sam', key: 'ACME-512', pb: 'action', prj: 'platform', ws: 'acme', chat: 'c4', chatName: 'Sam Rivera' } })
+    assert.equal(r.status, 200, r.text)
+    const id = r.json.job.id
+    assert.deepEqual(r.json.job.ctx.map((c: { k: string; id: string; name: string }) => `${c.k}/${c.id}/${c.name}`), ['work/ACME-512/ACME-512', 'chat/c4/Sam Rivera'])
+    const w = await call(lp, 'GET', `/api/jobs/${id}/context/work/ACME-512`)
+    assert.equal(w.status, 200, w.text)
+    assert.equal(w.json.item.status, 'ok')
+    assert.match(w.json.item.text, /^Story ACME-512: Public API: rate limiting per token\nState In Progress · assigned to You\n[\s\S]*Acceptance criteria:\n- A token over its limit gets 429[\s\S]*Comments, oldest first:\n- 2026-09-24 12:10Z Dana:/)
+    const c = await call(lp, 'GET', `/api/jobs/${id}/context/chat/c4`)
+    assert.match(c.json.item.text, /Sam Rivera: Hi, is the rate limiting live yet\?/)
+    assert.equal((await call(lp, 'GET', `/api/jobs/${id}/context/chat/c1`)).status, 404)
+    assert.equal((await call(lp, 'GET', '/api/jobs/J-NOPE/context/chat/c4')).status, 404)
+  } finally { await stop() }
+})

@@ -237,6 +237,22 @@ kbd{font:500 11px/1 var(--mono);padding:3px 5px;border:1px solid var(--line);bor
 .md hr{border:0;border-top:1px solid var(--line);margin:1.2em 0}
 .md a{color:var(--fg);text-underline-offset:2px}
 .m-b .tw .mt td{white-space:pre-wrap}
+/* the job's context panel */
+.side{display:flex;flex-direction:column;gap:16px;min-width:0}
+.cx{list-style:none;margin:0 0 6px;padding:0;display:flex;flex-direction:column}
+.cx>li{border-bottom:1px solid var(--line-soft);padding:6px 0}
+.cx>li:last-child{border-bottom:0}
+.cx-r{display:flex;align-items:center;gap:8px;font-size:13px;min-width:0}
+.cx-r .lnk{display:flex;align-items:center;gap:6px;min-width:0;flex:1;text-decoration:none}
+.cx-r .lnk>.i:first-child{transition:transform .15s}.cx-r .lnk[aria-expanded="true"]>.i:first-child{transform:rotate(90deg)}
+.cx-k{color:var(--muted);flex:none}
+.cx-l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cx-u{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;flex:none}
+.cx-n{width:58px;height:26px;padding:0 6px}
+.cx-x{width:26px;height:26px}
+.cx-t{margin:6px 0 2px 20px;max-height:320px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.45 var(--mono);background:var(--sunken);border:1px solid var(--line);border-radius:var(--r);padding:8px 10px}
+p.cx-t{font-family:var(--font)}
+.cx-kind{justify-self:start}
 @media (max-width:980px){.below{grid-template-columns:minmax(0,1fr)}}
 
 /* inspector */

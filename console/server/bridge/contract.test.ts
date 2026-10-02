@@ -50,6 +50,15 @@ test('get chat returns messages', async (t) => {
   for (const m of body.items.messages) for (const f of ['id', 'author', 'authorKind', 'at', 'text']) assert.ok(f in m, `message has ${f}`)
 })
 
+test('get work returns the item with its sections and comments', async (t) => {
+  const s = await get('/api/snapshot?concepts=work'), c = s.body.concepts.work
+  if (c.status !== 'ok' || !c.items.length) return t.skip('no work item to read')
+  const { body } = await get(`/api/items/work/${encodeURIComponent(c.items[0].id)}`)
+  assert.equal(body.status, 'ok')
+  for (const f of ['type', 'title', 'state', 'assignedTo', 'description', 'reproSteps', 'acceptanceCriteria', 'comments']) assert.ok(f in body.items, `work has ${f}`)
+  for (const m of body.items.comments) for (const f of ['id', 'author', 'at', 'text']) assert.ok(f in m, `comment has ${f}`)
+})
+
 test('no token is 401; an act without the console token never lands', async () => {
   assert.equal((await get('/api/snapshot', null)).status, 401)
   const r = await fetch(url + '/api/act', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'chat.post', actionId: 'x', args: {} }) })

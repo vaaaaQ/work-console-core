@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { BOARD0, ME, started } from '../../src/data/board.ts'
 import type { BoardItem } from '../../src/data/board.ts'
-import { CAL_ITEMS, CHATS0, JOBS0, MAIL0, PRI } from '../../src/data/demo.ts'
+import { CAL_ITEMS, CHATS0, JOBS0, MAIL0, PRI, WORK0 } from '../../src/data/demo.ts'
 import { demoTime, fillMonth } from '../../src/data/time.ts'
 import type { FillArgs, TimeItem } from '../../src/data/time.ts'
 import { dayOf, fromWall } from '../../src/lib/zone.ts'
@@ -237,6 +237,9 @@ export async function startFakeGateway(o: { port?: number; token?: string; llmTo
       const it = c.items.find((i) => i.id === id)
       if (!it) return json(200, { status: 'source_error', message: `no ${concept} ${id}` })
       if (concept === 'chat') return json(200, { status: 'ok', rev: c.rev, items: { messages: threads[id] || [] } })
+      if (concept === 'work') return json(200, { status: 'ok', rev: c.rev, items: WORK0[id] ?? {
+        type: it.type, title: it.title, state: it.state, assignedTo: it.assignedTo ?? null, description: '', reproSteps: '', acceptanceCriteria: '', comments: [],
+      } })
       if (concept === 'mail') {
         const src = (MAIL0.acme || []).find((x) => x.id === id)
         return json(200, { status: 'ok', rev: c.rev, items: { body: src?.body ?? String(it.preview ?? ''), attachments: [] } })

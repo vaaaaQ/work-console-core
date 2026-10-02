@@ -3,7 +3,8 @@ import { PB0 } from '../data/playbooks.ts'
 import { CHATS0, JOBS0, JR, LLMS, LOG0, MAIL0, OVR, PRI, RET0, TPL0 } from '../data/demo.ts'
 import { clone, hm, norm } from '../lib/util.ts'
 import * as T from './transitions.ts'
-import type { BadgeKind, Chat, Cmd, Flow, Job, LogEntry, Mail, NodeState, Playbook, Src, SrcKey, Step, Tpl, Ui, Ws } from './types.ts'
+import { KINDS, ctxLabel, ctxOf, ctxUnit } from './context.ts'
+import type { BadgeKind, Chat, Cmd, CtxItem, Flow, Job, LogEntry, Mail, NodeState, Playbook, Src, SrcKey, Step, Tpl, Ui, Ws } from './types.ts'
 
 /* ===== the world: plain mutable data, as in the prototype; the views re-render after each commit() ===== */
 export const PB: Record<string, Playbook> = clone(PB0)
@@ -67,6 +68,11 @@ export function clearNew() {
   })
   Object.values(LOG).forEach((l) => l.forEach((e) => { e.nw = 0 }))
 }
+
+/** a context item's row label: its name, a loaded chat's name, or its id */
+export const ctxName = (j: Job, it: CtxItem) => it.name || (it.k === 'chat' && (CHATS[j.ws] || []).find((c) => c.id === it.id)?.name) || ctxLabel(it)
+/** what a run's prompt will carry from the job's context, as [icon, text] */
+export const ctxRows = (j: Job): [string, string][] => ctxOf(j).map((it) => [KINDS[it.k].ic, `${KINDS[it.k].l} ${ctxName(j, it)} · ${ctxUnit(it)}`])
 
 /* ===== changing jobs ===== */
 export const chName = (j: Job, k: string, lbl: string) => `${PACKS[j.ws].src[k as SrcKey]?.n || k} · ${lbl}`

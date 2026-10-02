@@ -7,7 +7,7 @@ import { FMT, addPb, blankFile, checkPb, pbToFile, toInternal } from '../model/p
 import type { PbFile } from '../model/playbookFile.ts'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
-import { JOBS, MAIL, PB, S, TPL, W, createJob, pbs, putJob, steps } from '../model/world.ts'
+import { CHATS, JOBS, MAIL, PB, S, TPL, W, createJob, pbs, putJob, steps } from '../model/world.ts'
 import type { Job, Mode, NjDraft, Pack, Playbook, Tpl } from '../model/types.ts'
 import { commit, repaint } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
@@ -56,7 +56,8 @@ export function newJob(pre: NjDraft = {}) {
       const t = String(fd.get('t') || '').trim()
       if (!t) { const i = f.querySelector<HTMLInputElement>('[name=t]'); if (i) { i.focus(); i.setAttribute('aria-invalid', 'true') } return }
       const pb = String(fd.get('pb')), key = String(fd.get('key') || '').trim() || 'NEW', prj = String(fd.get('prj'))
-      const o = { t, key, pb, prj, ws: S.ws, src: S.njSrc || undefined, chat: S.njChat || undefined, mail: S.njMail || undefined, ev: S.njEv || undefined, due: S.njDue || undefined }
+      const o = { t, key, pb, prj, ws: S.ws, src: S.njSrc || undefined, chat: S.njChat || undefined, mail: S.njMail || undefined, ev: S.njEv || undefined, due: S.njDue || undefined,
+        chatName: S.njChat ? (CHATS[S.ws] || []).find((c) => c.id === S.njChat)?.name : undefined }
       let made: Job | null = null
       if (LIVE.on) {
         try { made = (await api.create(o)).job } catch (e) { toast(`Not created: ${(e as Error).message}`); return }

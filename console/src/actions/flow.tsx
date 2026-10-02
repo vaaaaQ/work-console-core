@@ -5,9 +5,8 @@ import { PACKS } from '../data/packs.ts'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
 import { actFor } from '../live/adapt.ts'
-import { artIc } from '../lib/util.ts'
 import {
-  S, TPL, allSent, applyLocal, byId, chName, clearNew, isLive, keyShort, keySrc, llmText, plainT, postToChat, putJob,
+  S, TPL, allSent, applyLocal, byId, chName, clearNew, ctxRows, isLive, keyShort, llmText, plainT, postToChat, putJob,
   restore, rvState, snap, stepOf, steps,
 } from '../model/world.ts'
 import type { BadgeKind, Cmd, Job, JobStatus } from '../model/types.ts'
@@ -128,16 +127,15 @@ export function stepResume() { const { j, sid } = here(); void doCmd(j.id, { op:
 
 /* ----- the LLM: ask, then accept, edit or reject its draft ----- */
 export function askLlm(j: Job, sid: string) {
-  const s = stepOf(j, sid)!, all = steps(j.pb), id = j.id
-  const prev = all.slice(0, all.findIndex((x) => x.id === sid)).filter((x) => j.flow[x.id].s === 'done')
-  const ks = keySrc(j)
-  const ctx: [string, string][] = [['file', `${j.key} · ${ks.n} ${ks.item}`], ['list', 'journal'],
-    ...prev.flatMap((x) => j.flow[x.id].arts.filter((a) => a.ok).map((a): [string, string] => [artIc(a.n), a.n])),
-    ...prev.filter((x) => j.flow[x.id].out).map((x): [string, string] => ['bot', `output of “${x.t}”`])]
+  const s = stepOf(j, sid)!, id = j.id
+  // the same parts, in the same order, as the run's prompt
+  const ctx: [string, string][] = [...ctxRows(j),
+    ...steps(j.pb).filter((x) => j.flow[x.id].out).map((x): [string, string] => ['bot', `output of “${x.t}”`]), ['list', 'journal, last 20']]
   modal({
     title: `Ask LLM · ${s.t}`, form: 'ask',
     body: <>
-      <div className="field"><span className="lbl">Context it gets</span><div className="ctx">{ctx.map(([i, n], k) => <span key={k} className="art"><Ic n={i} sm />{n}</span>)}</div></div>
+      <div className="field"><span className="lbl">Context it gets</span><div className="ctx">{ctx.map(([i, n], k) => <span key={k} className="art"><Ic n={i} sm />{n}</span>)}</div>
+        <span className="hint">Read when the run starts; change it in the job's Context panel.</span></div>
       <label className="field"><span>Instruction</span><textarea className="ta" name="q" rows={5} data-autofocus
         defaultValue={`Do: ${s.t}.\nDone when: ${s.x}.${s.a ? `\nProduce: ${s.a.join(', ')}.` : ''}`} /></label>
       <p className="why" style={{ margin: 0 }}>You get a draft back. Nothing is sent or kept until you accept it. <span className="hint">Ctrl+Enter runs it.</span></p>

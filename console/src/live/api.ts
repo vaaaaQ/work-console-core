@@ -1,5 +1,6 @@
 import type { CalEvent, Chat, Cmd, Job, Mail, Msg, Playbook, RunRec } from '../model/types.ts'
 import type { NewJob } from '../model/transitions.ts'
+import type { Resolved } from '../model/context.ts'
 import type { BoardItem } from '../data/board.ts'
 import type { TimeItem } from '../data/time.ts'
 
@@ -96,6 +97,9 @@ export const cmd = (id: string, c: Cmd, v: number | undefined) =>
   call<{ job: Job; prev: Job; nx: string | null }>('POST', `/api/jobs/${enc(id)}/cmd`, { cmd: c, v })
 export const job = (id: string) => call<{ job: Job }>('GET', `/api/jobs/${enc(id)}`)
 export const create = (o: NewJob) => call<{ job: Job }>('POST', '/api/jobs', o)
+/** one context item as the job's next run would get it */
+export const ctxPreview = async (id: string, k: string, item: string) =>
+  (await call<{ item: Resolved }>('GET', `/api/jobs/${enc(id)}/context/${enc(k)}/${enc(item)}`, undefined, 30000)).item
 export const undo = (id: string, v: number, prev: Job) => call<{ job: Job }>('POST', '/api/undo', { job: id, v, prev })
 /** an artifact's text for the viewer; link is the one the runner recorded */
 export async function artText(link: string): Promise<string> {

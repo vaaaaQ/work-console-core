@@ -2,6 +2,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http'
 import { extname, join, resolve, sep } from 'node:path'
 import { adapt } from '../../src/live/adapt.ts'
+import { ctxOf } from '../../src/model/context.ts'
 import type * as T from '../../src/model/transitions.ts'
 import type { Cmd, Job, Playbook } from '../../src/model/types.ts'
 import { startItem } from '../board/start.ts'
@@ -12,6 +13,7 @@ import { HttpError } from '../events.ts'
 import type { Bus, Ev } from '../events.ts'
 import type { Jobs } from '../jobs/jobs.ts'
 import { knowledge, noteIn } from '../knowledge/knowledge.ts'
+import { resolveItem } from '../llm/context.ts'
 import { safeName } from '../llm/runner.ts'
 import type { Runner } from '../llm/runner.ts'
 import type { Notify } from '../notify/notify.ts'
@@ -226,6 +228,14 @@ export function createApp(d: Deps) {
       return { job }
     }],
     ['POST', /^\/api\/jobs\/([^/]+)\/cmd$/, async (r) => cmd(r.p[0], await r.body())],
+    // the text a run would get for one of the job's context items, from the run's own renderer
+    ['GET', /^\/api\/jobs\/([^/]+)\/context\/([^/]+)\/([^/]+)$/, async (r) => {
+      const job = await d.jobs.get(r.p[0])
+      if (!job) throw new HttpError(404, 'not_found', `no job ${r.p[0]}`)
+      const it = ctxOf(job).find((c) => c.k === r.p[1] && c.id === r.p[2])
+      if (!it) throw new HttpError(404, 'not_found', `${r.p[1]} ${r.p[2]} is not in ${job.id}'s context`)
+      return { item: await resolveItem(d.bridge, it) }
+    }],
     ['POST', /^\/api\/undo$/, async (r) => {
       const b = await r.body()
       return { job: await d.jobs.undo(str(b.job, 'job'), Number(b.v), b.prev as Job) }

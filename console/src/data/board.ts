@@ -26,6 +26,9 @@ export const BOARD0 = (): BoardItem[] => [
 
 /** the job a board item belongs to: its key is the item's own key */
 export const boardKey = (id: string) => id
+/** the other way: a job key is an item id when it looks like one (a key such as CHAT or NEW is not) */
+export const itemIdOf = (key: string): string | null => (/^[A-Z][A-Z0-9]*-\d+$/.test(key) ? key : null)
+export const keyOf = boardKey
 
 /** what Start does to an item, as a pack would: it goes on you, and a Ready one moves to Dev */
 export const started = (it: BoardItem, me = ME, at = new Date().toISOString()): BoardItem =>

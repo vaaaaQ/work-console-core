@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type * as T from '../../src/model/transitions.ts'
+import type { Resolved } from '../../src/model/context.ts'
 import type { Job, RunRec } from '../../src/model/types.ts'
 import { HttpError } from '../events.ts'
 import type { Bus } from '../events.ts'
@@ -27,14 +28,19 @@ export function safeName(n: string) {
 export class Runner {
   private store: Store; private jobs: Jobs; private bus: Bus; private sdk: Sdk; private cwd: string
   private max: number; private gate: () => boolean; private artifactsDir: string; private ctx: () => T.Ctx
+  private context: (j: Job) => Promise<Resolved[]>
   private queue: { id: string; resume?: string }[] = []
   private live = new Map<string, Live>()
   private feeds = new Map<string, string[]>()
   private settled: ((r: RunRec) => void)[] = []
 
-  constructor(o: { store: Store; jobs: Jobs; bus: Bus; sdk: Sdk; cwd: string; max?: number; gate: () => boolean; artifactsDir: string; ctx: () => T.Ctx }) {
+  /** context = reads the job's context items for a new run's prompt */
+  constructor(o: {
+    store: Store; jobs: Jobs; bus: Bus; sdk: Sdk; cwd: string; max?: number; gate: () => boolean; artifactsDir: string; ctx: () => T.Ctx
+    context?: (j: Job) => Promise<Resolved[]>
+  }) {
     this.store = o.store; this.jobs = o.jobs; this.bus = o.bus; this.sdk = o.sdk; this.cwd = o.cwd
-    this.max = o.max ?? 3; this.gate = o.gate; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx
+    this.max = o.max ?? 3; this.gate = o.gate; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => [])
   }
 
   /** draft ready, failed or interrupted: the moments worth a push */
@@ -186,7 +192,8 @@ export class Runner {
     }
     let error: string | undefined
     try {
-      const prompt = resume ? RESUME_PROMPT : buildPrompt(this.ctx(), job, rec.step, rec.q)
+      // a resumed session already has its context
+      const prompt = resume ? RESUME_PROMPT : buildPrompt(this.ctx(), job, rec.step, rec.q, await this.context(job))
       for await (const e of this.sdk.start({ prompt, resume, cwd: this.cwd, tools, abort: l.ac })) {
         if (l.why) break
         if (e.k === 'session') { if (r!.session !== e.id) { r = { ...r!, session: e.id }; await this.save(r) } }

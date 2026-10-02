@@ -55,7 +55,7 @@ test('initialize answers the asked protocol, a session id and the tools; a wrong
   assert.ok(s.init.sid)
   assert.equal((await s.post({ jsonrpc: '2.0', method: 'notifications/initialized' })).status, 202)
   const names = (await s.rpc('tools/list')).result.tools.map((x: { name: string }) => x.name)
-  assert.deepEqual(names, ['list_jobs', 'get_job', 'job_command', 'return_to', 'create_job', 'start_item', 'undo', 'list_playbooks'])
+  assert.deepEqual(names, ['list_jobs', 'get_job', 'job_command', 'job_context', 'return_to', 'create_job', 'start_item', 'undo', 'list_playbooks'])
   assert.equal((await s.post({ jsonrpc: '2.0', id: 9, method: 'tools/list' }, 'b'.repeat(64))).status, 401)
   assert.equal((await s.rpc('nope')).error.code, -32601)
   assert.equal((await s.post(null)).body.error.code, -32600)
@@ -134,4 +134,18 @@ test('get_job and list_jobs read without changing anything', async (t) => {
   assert.ok(d.phases.length > 0)
   assert.equal((await s.call('list_jobs', { filter: 'all' })).json().length, (await s.jobs.all()).length)
   assert.equal((await s.jobs.get(j.id))!.v, j.v)
+})
+
+test("job_context edits the runs' context by key or id; get_job lists it; undo takes back the last change", async (t) => {
+  const s = await setup(t), j = await openJob(s.jobs), base = (await s.call('get_job', { id: j.id })).json().context.length
+  const r = await s.call('job_context', { id: j.id, op: 'add', kind: 'work', item: 'ACME-999', count: 3 })
+  assert.equal(r.err, false, r.text)
+  assert.deepEqual((await s.call('get_job', { id: j.id })).json().context.at(-1), { kind: 'work', item: 'ACME-999', count: 3 }, 'JSON drops the missing name')
+  assert.equal((await s.call('job_context', { id: j.id, op: 'set', kind: 'work', item: 'ACME-999', count: 7 })).err, false)
+  assert.equal((await s.jobs.get(j.id))!.ctx!.at(-1)!.n, 7)
+  assert.match((await s.call('job_context', { id: j.id, op: 'set', kind: 'work', item: 'ACME-999', count: 99 })).text, /^bad_args/)
+  assert.equal((await s.call('undo')).err, false)
+  assert.equal((await s.call('get_job', { id: j.id })).json().context.at(-1).count, 3)
+  assert.equal((await s.call('job_context', { id: j.id, op: 'del', kind: 'work', item: 'ACME-999' })).err, false)
+  assert.equal((await s.call('get_job', { id: j.id })).json().context.length, base)
 })

@@ -19,6 +19,7 @@ import type { Config } from './config.ts'
 import { Bus } from './events.ts'
 import { createApp } from './http/app.ts'
 import { Jobs } from './jobs/jobs.ts'
+import { resolveContext } from './llm/context.ts'
 import { Runner } from './llm/runner.ts'
 import { agentSdk } from './llm/sdk.ts'
 import type { Sdk } from './llm/sdk.ts'
@@ -86,7 +87,7 @@ export async function main(o: { cfg?: Config; sdk?: Sdk } = {}) {
   const jobs = new Jobs({ store, bus, ctx, gate })
   const sdk = o.sdk ?? agentSdk({ gatewayUrl, llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools })
   const artifactsDir = join(cfg.home, 'artifacts')
-  const runner = new Runner({ store, jobs, bus, sdk, cwd: cfg.workDir, max: cfg.maxSessions, gate, artifactsDir, ctx })
+  const runner = new Runner({ store, jobs, bus, sdk, cwd: cfg.workDir, max: cfg.maxSessions, gate, artifactsDir, ctx, context: (j) => resolveContext(bridge, j) })
   bus.on((e) => {
     if (e.kind === 'bridge' && e.state === 'unavailable')
       void runner.interruptAll('the bridge went away').catch((err) => console.error('interrupting runs:', (err as Error).message))

@@ -9,6 +9,9 @@ import type { Ev } from '../events.ts'
 import { Jobs } from '../jobs/jobs.ts'
 import { fileStore } from '../store/file.ts'
 import { demoCtx, demoSeed } from '../testkit.ts'
+import { GatewayError } from '../bridge/wire.ts'
+import type { ConceptReply } from '../bridge/wire.ts'
+import { resolveContext } from './context.ts'
 import { Runner, safeName } from './runner.ts'
 import type { RunTools, Sdk, SdkEvent } from './sdk.ts'
 
@@ -30,10 +33,10 @@ class Session {
     }
   }
 }
+const fakeSdkOf = (sessions: Session[]): Sdk => ({ start: (o) => { const s = new Session(o); sessions.push(s); return s.events() } })
 function fakeSdk() {
   const sessions: Session[] = []
-  const sdk: Sdk = { start: (o) => { const s = new Session(o); sessions.push(s); return s.events() } }
-  return { sdk, sessions }
+  return { sdk: fakeSdkOf(sessions), sessions }
 }
 const tick = () => new Promise((r) => setTimeout(r, 20))
 async function until(f: () => boolean) { const t0 = Date.now(); while (!f()) { if (Date.now() - t0 > 2000) throw new Error('timed out'); await tick() } }
@@ -261,4 +264,31 @@ test('interruptAll aborts every live session even when the store rejects every w
   try { await runner.interruptAll('the bridge went away'); await tick() } finally { console.error = log }
   assert.deepEqual(sessions.map((s) => s.abort.signal.aborted), [true, true])
   assert.ok(logged.some((l) => /not marked interrupted/.test(l)), 'the failed writes are logged once')
+})
+
+test("a new run's prompt carries the job's context; an unreadable item is a line, a resumed run reads none", async () => {
+  const { store, jobs, bus, sessions, dir } = setup(), [t] = await targets(jobs, 1), seen: string[] = []
+  await jobs.cmd(t.job, { op: 'ctxAdd', k: 'work', id: 'ACME-999' })
+  await jobs.cmd(t.job, { op: 'ctxAdd', k: 'chat', id: 'c-gone', name: 'Old chat' })
+  const b = {
+    get: async (concept: string, id: string): Promise<ConceptReply> => {
+      seen.push(`${concept}/${id}`)
+      if (concept === 'chat') throw new GatewayError(504, 'timeout', 'the chat read timed out')
+      return { status: 'ok', rev: 1, items: { title: 'Limiter ignores the token header', comments: [{ author: 'Ann', at: '2026-09-30T09:00:00Z', text: 'still there' }] } }
+    },
+  }
+  const runner = new Runner({ store, jobs, bus, sdk: fakeSdkOf(sessions), cwd: dir, gate: () => true, artifactsDir: join(dir, 'arts'), ctx: demoCtx, context: (j) => resolveContext(b, j) })
+  const r = await runner.ask(t.job, t.step, 'q')
+  await until(() => sessions.length === 1)
+  const p = sessions[0].prompt
+  assert.match(p, /## Context\n[\s\S]*### Work item ACME-999 \(last 10 comments\)\nWork item ACME-999: Limiter ignores the token header\n[\s\S]*- 2026-09-30 09:00Z Ann: still there/)
+  assert.match(p, /### Chat Old chat \(last 10 messages\) — unavailable\nthe chat read timed out/)
+  assert.ok(p.indexOf('## Context') > p.indexOf('Instruction: q') && p.indexOf('## Context') < p.indexOf('## How to work'))
+  sessions[0].push({ k: 'session', id: 'sess-1' })
+  await tick()
+  await runner.interruptAll('the bridge went away')
+  const n = seen.length
+  await runner.resume(r.id)
+  await until(() => sessions.length === 2)
+  assert.equal(seen.length, n, 'a resumed run reads no context')
 })

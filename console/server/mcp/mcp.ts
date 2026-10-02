@@ -2,6 +2,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { DEFAULT_WS, PACKS } from '../../src/data/packs.ts'
+import { KINDS, ctxOf, parseWorkId } from '../../src/model/context.ts'
 import * as T from '../../src/model/transitions.ts'
 import { SESSION_OPS } from '../../src/model/types.ts'
 import type { Cmd, Job } from '../../src/model/types.ts'
@@ -50,6 +51,7 @@ export function detail(x: T.Ctx, j: Job) {
   const at = T.atOf(x, j)
   return {
     ...brief(x, j), v: j.v, current: at, roundFrom: j.rf ?? null, chat: j.chat, mail: j.mail,
+    context: ctxOf(j).map((c) => ({ kind: c.k, item: c.id, count: c.n, name: c.name })),
     phases: (x.PB[j.pb]?.ph || []).map((p) => ({
       phase: `${p.c} ${p.n}`,
       steps: p.s.map((s) => {
@@ -119,12 +121,32 @@ export function jobTools(d: { jobs: Jobs; ctx: () => T.Ctx; start?: StartItem })
       inputSchema: {
         type: 'object', required: ['id', 'op'],
         properties: {
-          id: { type: 'string' }, op: { type: 'string', enum: [...SESSION_OPS] }, step: { type: 'string' }, why: { type: 'string' }, m: { type: 'string' },
+          id: { type: 'string' }, op: { type: 'string', enum: SESSION_OPS.filter((o) => !o.startsWith('ctx')) }, step: { type: 'string' }, why: { type: 'string' }, m: { type: 'string' },
           text: { type: 'string' }, k: { type: 'string', enum: ['q', 'c', 'd', 'p'] }, t: { type: 'string' }, i: { type: 'integer' }, r: { type: 'string' },
           n: { type: 'string' }, v: { type: 'integer' }, st: { type: 'string', enum: ['done', 'cancelled'] }, note: { type: 'string' }, to: { type: 'string' }, subj: { type: 'string' },
         },
       },
       async run(a, s) { const { id, ...c } = a; return command(s, id, c) },
+    },
+    {
+      name: 'job_context',
+      description: "Change what the job's LLM runs are given: add an item, set how many of its newest comments/messages go in, or remove it. "
+        + 'Each run reads the items at its start and inlines them into its prompt; get_job lists them under context.',
+      inputSchema: {
+        type: 'object', required: ['id', 'op', 'kind', 'item'],
+        properties: {
+          id: { type: 'string' }, op: { type: 'string', enum: ['add', 'set', 'del'] }, kind: { type: 'string', enum: Object.keys(KINDS) },
+          item: { type: 'string', description: 'work item key or id (ACME-512), or chat id' },
+          count: { type: 'integer', description: `newest comments or messages; default ${KINDS.work.def}, max ${KINDS.work.max} for work, ${KINDS.chat.max} for a chat` },
+          name: { type: 'string', description: 'label for add' },
+        },
+      },
+      async run(a, s) {
+        const j = await get(a.id), k = a.kind as keyof typeof KINDS, raw = str(a.item, 'item')
+        const id = k === 'work' ? parseWorkId(j.ws, raw) ?? raw : raw
+        const op = a.op === 'add' ? 'ctxAdd' : a.op === 'set' ? 'ctxSet' : a.op === 'del' ? 'ctxDel' : String(a.op)
+        return command(s, j.id, { op, k, id, ...(a.count !== undefined ? { n: a.count } : {}), ...(typeof a.name === 'string' ? { name: a.name } : {}) })
+      },
     },
     {
       name: 'return_to',

@@ -2,15 +2,16 @@ import type { CalEvent, Chat, JobSeed, JournalEntry, LogEntry, Mail, Pr, StepOve
 import { adapt } from '../live/adapt.ts'
 import { weekDays } from '../model/cal.ts'
 import { dayOf, fromWall } from '../lib/zone.ts'
+import { ME } from './board.ts'
 import { PACKS } from './packs.ts'
 
 /* the demo workplace, Acme (fictional): jobs, chats, mail and meetings. at = current step, upd = minutes ago */
 export const JOBS0: JobSeed[] =[
  {id:'J-0412',ws:'acme',key:'ACME-512',pb:'dev-item',prj:'platform',t:'Public API: rate limiting per token',st:'review',at:'pr3',upd:38,slug:'20260924-acme-512-rate-limit'},
- {id:'J-0409',ws:'acme',key:'BUILD-1287',pb:'ci-failure',prj:'ops',t:'main #1287: integration tests failed',st:'active',at:'cf3',upd:4,slug:'20260926-main-1287'},
+ {id:'J-0409',ws:'acme',key:'BUILD-1287',pb:'ci-failure',prj:'ops',t:'main #1287: integration tests failed',st:'active',at:'cf3',upd:4,slug:'20260926-main-1287',ctx:[]},
  {id:'J-0420',ws:'acme',key:'CHAT',pb:'action',prj:'platform',t:'Reply to Sam about rate limiting',st:'waiting-user',at:'sn',upd:26,slug:'action-5e1f09c2a7d4b318',chat:'c4'},
  {id:'J-0418',ws:'acme',key:'ACME-530',pb:'dev-item',prj:'platform',t:'Search: index archived projects',st:'waiting-external',at:'qa1',upd:190,slug:'20260921-acme-530-search-archived'},
- {id:'J-0419',ws:'acme',key:'SUP-77',pb:'action',prj:'ops',t:'Support ticket: the weekly report is not generated',st:'ready',at:'tr',upd:55,slug:'action-8a04c1d9e2f37b65'},
+ {id:'J-0419',ws:'acme',key:'SUP-77',pb:'action',prj:'ops',t:'Support ticket: the weekly report is not generated',st:'ready',at:'tr',upd:55,slug:'action-8a04c1d9e2f37b65',ctx:[]},
  {id:'J-0301',ws:'acme',key:'WEEKLY',pb:'action',prj:'ops',t:'Weekly status update',st:'recurring',at:'dr',upd:300,slug:'action-3c9e0b7f41d2a865'},
  {id:'J-0398',ws:'acme',key:'ACME-480',pb:'dev-item',prj:'web',t:'Login: remember the last workspace',st:'done',at:null,upd:2880,slug:'20260915-acme-480-last-workspace'},
  {id:'J-0402',ws:'acme',key:'ACME-455',pb:'dev-item',prj:'web',t:'Notifications: daily digest',st:'cancelled',at:'im2',upd:4320,slug:'20260912-acme-455-digest'}
@@ -79,6 +80,19 @@ export const CHATS0: Record<Ws, Chat[]> ={
    {who:'Lena Ortiz',at:'10:22',t:'Any ETA for ACME-530 on staging? We planned it for tomorrow.'}]},
   {id:'c4',name:'Sam Rivera',kind:'direct',unread:1,sum:'Asks about rate limiting; your reply waits in Approvals.',msgs:[
    {who:'Sam Rivera',at:'yesterday',t:'Hi, is the rate limiting live yet? A customer asked again.'}]}]
+};
+/* work items as the bridge's work get returns them, by id; the fake gateway and the demo context preview read these */
+export const WORK0: Record<string, { type: string; title: string; state: string; assignedTo: string | null; description: string; reproSteps: string; acceptanceCriteria: string; comments: { id: string; author: string; at: string; text: string }[] }> ={
+ 'ACME-512':{type:'Story',title:'Public API: rate limiting per token',state:'In Progress',assignedTo:ME,
+  description:'Requests to the public API are limited per token, not per user, so one noisy integration cannot starve the others.',
+  reproSteps:'',
+  acceptanceCriteria:'- A token over its limit gets 429 with a Retry-After header.\n- The limit is read from the gateway\'s existing token bucket.',
+  comments:[{id:'1',author:'Dana',at:'2026-09-24T12:10:00Z',text:'Per token, as agreed with the PO.'},
+   {id:'2',author:'Priya Shah',at:'2026-09-25T15:40:00Z',text:'The bucket already exists in the gateway; reusing it.'}]},
+ 'ACME-530':{type:'Story',title:'Search: index archived projects',state:'In Progress',assignedTo:'Sam Rivera',
+  description:'Archived projects show up in search results, marked as archived.',reproSteps:'',
+  acceptanceCriteria:'- An archived project is found by name.\n- Its result carries an Archived badge.',
+  comments:[{id:'1',author:'Lena Ortiz',at:'2026-09-29T13:22:00Z',text:'Any ETA on staging? QA planned it for tomorrow.'}]},
 };
 /* canned LLM reply drafts, per chat and author; the greeting goes in front */
 export const CDR: Record<string, string> ={'c1/Priya':'thanks, I will rename the limiter in the same PR.','c1/Tom':'thanks, it only needs your approval now.',

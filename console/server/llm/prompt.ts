@@ -1,9 +1,11 @@
+import { contextSection } from '../../src/model/context.ts'
+import type { Resolved } from '../../src/model/context.ts'
 import * as T from '../../src/model/transitions.ts'
 import type { Job } from '../../src/model/types.ts'
 
-/* What a session is told. It gets the job's frame and reads the item itself through the bridge. */
+/* What a session is told: the job's frame and its context, read at the run's start; more it reads itself through the bridge. */
 
-export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string): string {
+export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, ctx: Resolved[] = []): string {
   const s = T.stepOf(x, j, step), pb = x.PB[j.pb]
   const outs = T.steps(x, j.pb).filter((t) => j.flow[t.id]?.out).map((t) => `### ${t.t}\n${j.flow[t.id].out}`)
   const jr = j.jr.slice(-20).map((e) => `- ${e.ts} ${e.a}: ${e.o} → ${e.c} Next: ${e.n}`)
@@ -18,10 +20,11 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string): string {
     ``,
     `Instruction: ${q}`,
     ``,
+    contextSection(ctx),
     outs.length ? `## Earlier outputs\n${outs.join('\n\n')}\n` : '',
     jr.length ? `## Journal (latest last)\n${jr.join('\n')}\n` : '',
     `## How to work`,
-    `- Read the key's item, chats, mail and reviews yourself with the bridge tools (bridge_snapshot, bridge_get).`,
+    `- The context above was read when this run started. Read anything more yourself with the bridge tools (bridge_snapshot, bridge_get).`,
     `- You never send anything to a source (no chat posts, mails, votes, comments or state changes): the user sends after review.`,
     `- Write progress with the run tool journal(observed, changed, next) at meaningful points.`,
     `- Save files the step expects with add_artifact(name, content).`,

@@ -2,8 +2,9 @@ import { BK } from '../data/core.ts'
 import { PACKS } from '../data/packs.ts'
 import { clone, slugify, tfmt } from '../lib/util.ts'
 import { fromWall, midnight, offsetAt } from '../lib/zone.ts'
+import { CTX_MAX, KINDS, ctxDefaults, ctxLabel, ctxOf, ctxUnit, parseWorkId } from './context.ts'
 import type {
-  BadgeKind, Cmd, Flow, Job, JobStatus, JournalEntry, Lamp, NodeState, Playbook, Round, Step, StepOverride, Tpl, Ws,
+  BadgeKind, Cmd, CtxItem, CtxKind, Flow, Job, JobStatus, JournalEntry, Lamp, NodeState, Playbook, Round, Step, StepOverride, Tpl, Ws,
 } from './types.ts'
 
 /* The one place for job transitions: the page (demo and live) and the backend run the same code.
@@ -91,7 +92,8 @@ export function seedFlow(x: Ctx, j: Job, ovr: Record<string, StepOverride> = {},
     n: j.st === 'draft' ? 'start it when ready.' : `work on “${first.t}”.`,
   }])
 }
-export interface NewJob { t: string; key: string; pb: string; prj: string; ws: Ws; src?: string; chat?: string; mail?: string; ev?: string; due?: string }
+/** chatName = the chat's name, for its row in the job's context */
+export interface NewJob { t: string; key: string; pb: string; prj: string; ws: Ws; src?: string; chat?: string; chatName?: string; mail?: string; ev?: string; due?: string }
 export function freshJob(x: Ctx, id: string, o: NewJob): Job {
   if (!x.PB[o.pb] || !steps(x, o.pb).length) throw new CmdError('bad_args', `unknown playbook ${o.pb}`)
   if (!o.t.trim()) throw new CmdError('bad_args', 'a job needs a title')
@@ -106,7 +108,44 @@ export function freshJob(x: Ctx, id: string, o: NewJob): Job {
   if (o.mail) j.mail = o.mail
   if (o.ev) j.ev = o.ev
   if (o.due) { if (!Number.isFinite(Date.parse(o.due))) throw new CmdError('bad_args', 'due is not a date'); j.due = new Date(o.due).toISOString() }
+  const ctx = ctxDefaults(j.ws, j.key, j.chat, typeof o.chatName === 'string' ? o.chatName.trim().slice(0, 120) || undefined : undefined)
+  if (ctx.length) j.ctx = ctx
   return j
+}
+
+/** adds, recounts or removes one context item; a job without a list starts from its defaults */
+function ctxEdit(x: Ctx, j: Job, c: Extract<Cmd, { op: 'ctxAdd' | 'ctxSet' | 'ctxDel' }>) {
+  const K = Object.hasOwn(KINDS, c.k) ? KINDS[c.k as CtxKind] : undefined
+  if (!K) throw new CmdError('bad_args', `unknown context kind ${c.k}`)
+  const id = typeof c.id === 'string' ? c.id.trim() : ''
+  if (!id || id.length > 200) throw new CmdError('bad_args', 'a context item needs an id')
+  if (c.k === 'work' && parseWorkId(j.ws, id) !== id) throw new CmdError('bad_args', `${id} is not a work item id`)
+  const count = (v: unknown) => {
+    if (!Number.isInteger(v) || (v as number) < 1 || (v as number) > K.max) throw new CmdError('bad_args', `the ${K.unit} count is 1–${K.max}`)
+    return v as number
+  }
+  const list = ctxOf(j).map((it) => ({ ...it })), i = list.findIndex((it) => it.k === c.k && it.id === id), what = K.l.toLowerCase()
+  const next = nextTxt(x, j, atOf(x, j))
+  if (c.op === 'ctxAdd') {
+    if (i >= 0) throw new CmdError('bad_args', `${what} ${ctxLabel(list[i])} is already in the context`)
+    if (list.length >= CTX_MAX) throw new CmdError('bad_args', `the context holds at most ${CTX_MAX} items`)
+    const it: CtxItem = { k: c.k, id, n: c.n === undefined ? K.def : count(c.n) }
+    const name = typeof c.name === 'string' ? c.name.trim().slice(0, 120) : ''
+    if (name) it.name = name
+    list.push(it)
+    jr(x, j, `Added ${what} ${ctxLabel(it)} to the context.`, `LLM runs get its ${ctxUnit(it)}.`, next, by(x), 'ok')
+  } else {
+    if (i < 0) throw new CmdError('bad_args', `${what} ${id} is not in the context`)
+    const it = list[i]
+    if (c.op === 'ctxSet') {
+      it.n = count(c.n)
+      jr(x, j, `${K.l} ${ctxLabel(it)} now gives the ${ctxUnit(it)}.`, 'context changed for the next LLM runs.', next, by(x), 'ok')
+    } else {
+      list.splice(i, 1)
+      jr(x, j, `Removed ${what} ${ctxLabel(it)} from the context.`, 'the next LLM runs no longer get it.', next, by(x), 'ok')
+    }
+  }
+  j.ctx = list
 }
 
 /* ===== commands ===== */
@@ -231,6 +270,10 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
         nextTxt(x, j, atOf(x, j)), by(x), 'ok')
       break
     }
+    case 'ctxAdd': case 'ctxSet': case 'ctxDel':
+      needOpen()
+      ctxEdit(x, j, cmd)
+      break
     case 'stepDone': {
       const had = !!F.dr
       nx = advance(x, j, sid, 'done')
