@@ -82,3 +82,14 @@ test("an input the board rule does not accept is refused; a key is accepted", as
   assert.equal(r.created, true); assert.equal(r.job.key, 'ACME-603')
   assert.deepEqual(s.acts.map((a) => a.args), [{ id: 'ACME-603' }])
 })
+
+test("an item key is at most 64 characters, counted after trimming", async () => {
+  const s = setup(), n = (await s.jobs.all()).length
+  const long = 'A-' + '1'.repeat(63), edge = 'A-' + '1'.repeat(62)
+  assert.equal(long.length, 65); assert.equal(edge.length, 64)
+  await assert.rejects(s.start(long), (e: unknown) => e instanceof HttpError && e.status === 400 && e.code === 'bad_args' && e.message === `${long} is not a board item key`)
+  assert.equal(s.acts.length, 0); assert.equal((await s.jobs.all()).length, n)
+  const r = await s.start(`  ${edge} `)
+  assert.equal(r.created, true); assert.equal(r.job.key, edge)
+  assert.deepEqual(s.acts.map((a) => a.args), [{ id: edge }])
+})

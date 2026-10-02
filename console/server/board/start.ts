@@ -12,6 +12,8 @@ import type { Jobs, Who } from '../jobs/jobs.ts'
 /* Start on a board item, the same for the page and a Claude Code session: the tracker assigns the item to
    the user and moves it to Dev, then its open job is reused or a new one is created and started. */
 
+/** longest input Start looks at, counted after trimming; the board rule limits the characters, not the length */
+const KEY_MAX = 64
 export type StartItem = (key: string, pb?: string, who?: Who) => Promise<{ job: Job; created: boolean }>
 interface Deps {
   jobs: Jobs; ctx: () => T.Ctx
@@ -33,7 +35,7 @@ export function startItem(d: Deps): StartItem {
   // so the second finds the job the first created
   const queue = new Map<string, Promise<unknown>>()
   return (key, pb = DEFAULT_PB, who = 'page') => {
-    const id = itemOf(String(key ?? '').trim())
+    const raw = String(key ?? '').trim(), id = raw.length <= KEY_MAX ? itemOf(raw) : null
     if (!id) return Promise.reject(new HttpError(400, 'bad_args', `${key} is not a board item key`))
     const prev = queue.get(id) ?? Promise.resolve(), run = prev.catch(() => {}).then(() => start(id, pb, who))
     queue.set(id, run)

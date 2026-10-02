@@ -34,7 +34,7 @@ export class Runner {
   private feeds = new Map<string, string[]>()
   private settled: ((r: RunRec) => void)[] = []
 
-  /** context = reads the job's context items for a new run's prompt; me = what prompts call the user (unset: "the user") */
+  /** context = reads the job's context items for a new run's prompt; me = what prompts call the user (unset or empty: "the user") */
   constructor(o: {
     store: Store; jobs: Jobs; bus: Bus; sdk: Sdk; cwd: string; max?: number; gate: () => boolean; artifactsDir: string; ctx: () => T.Ctx
     context?: (j: Job) => Promise<Resolved[]>; me?: string
