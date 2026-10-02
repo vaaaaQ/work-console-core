@@ -127,6 +127,21 @@ test("a seed's get answers a concept's item get; the item lookup and the other c
   } finally { await f.close() }
 })
 
+test("a seed's get that throws answers 500 naming the error, is logged, and leaves the fake serving", async () => {
+  const lines: string[] = []
+  const f = await startFakeGateway({ log: (l) => lines.push(l), seed: {
+    concepts: { time: [{ id: '2026-09' }] }, threads: {},
+    get: { time: () => { throw new Error('no hours file') } },
+  } })
+  try {
+    const r = await fetch(f.url + '/api/items/time/2026-09', { headers: { authorization: `Bearer ${f.token}` }, signal: AbortSignal.timeout(5000) })
+    assert.equal(r.status, 500)
+    assert.deepEqual(await r.json(), { error: 'internal_error', message: 'no hours file' })
+    assert.deepEqual(lines, ['fake gateway: GET /api/items/time/2026-09 failed: no hours file'])
+    assert.equal((await call(f, 'GET', '/api/items/board/none')).status, 'source_error', 'the next request is served')
+  } finally { await f.close() }
+})
+
 test('the fake mints job ids with the prefix it was started with, J by default', async () => {
   const mint = async (f: FakeGateway) => {
     const r = await fetch(f.url + '/api/state/new-job-id', { method: 'POST', headers: { authorization: `Bearer ${f.token}`, 'content-type': 'application/json' }, body: '{}' })

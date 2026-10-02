@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { hostname, homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { WorkspaceServer, WsConfig } from './workspace.ts'
 
@@ -23,8 +23,17 @@ export interface Config {
 
 const PC_KEYS = new Set(['home', 'loopbackPort', 'lanPort', 'pcName', 'fakeGateway', 'workspaces'])
 
-/** console/server → the repo root */
-export const REPO = fileURLToPath(new URL('../../', import.meta.url))
+/** the console's own folder: console/server → console */
+const CONSOLE = dirname(dirname(fileURLToPath(import.meta.url)))
+
+/** the repo the console sits in: the console's folder or the nearest one above it with a .git (a file in a worktree),
+    else the folder above the console */
+export function repoRoot(dir = CONSOLE, has: (path: string) => boolean = existsSync): string {
+  for (let d = dir; ; d = dirname(d)) {
+    if (has(join(d, '.git'))) return d
+    if (dirname(d) === d) return dirname(dir)
+  }
+}
 
 /** config.json as written; none = {} */
 export function readRaw(home: string): Record<string, unknown> {
@@ -45,7 +54,7 @@ export function coreDefaults(env: NodeJS.ProcessEnv = process.env): WsConfig {
     /** the bearer LLM sessions use for A's /mcp: read tools only */
     llmTokenPath: join(bridge, 'llm.token'),
     /** where LLM sessions run: the repo, so they get its CLAUDE.md, skills and tests */
-    workDir: env.WORK_CONSOLE_CWD || REPO,
+    workDir: env.WORK_CONSOLE_CWD || repoRoot(),
     maxSessions: 3,
     /** tools an LLM run may use beyond its own and A's read tools, e.g. "mcp__my-tools" or
         "Bash(npm test)". The user's own Claude Code settings are not inherited, so this is the whole list */

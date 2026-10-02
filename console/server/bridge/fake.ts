@@ -41,11 +41,13 @@ const MAX_DOC = 256 * 1024, MAX_NOTE_TEXT = 64 * 1024
 const BASE = ['chat', 'mail', 'cal', 'work', 'review', 'board', 'time', 'ci']
 
 /** seed = what A starts with; prefix = what new job ids start with (`<prefix>-NNNN`); me = who Start puts an item on;
-    board = the workspace's board, whose columns Start moves an item between */
+    board = the workspace's board, whose columns Start moves an item between; log = where a request that threw is written */
 export async function startFakeGateway(o: {
   port?: number; token?: string; llmToken?: string; statusMs?: number; seed?: FakeSeed; prefix?: string; me?: string; board?: Pick<Board, 'ready' | 'dev'>
+  log?: (line: string) => void
 } = {}): Promise<FakeGateway> {
   const token = o.token ?? 'fake-console-token', llmToken = o.llmToken ?? 'fake-llm-token', prefix = o.prefix ?? 'J', me = o.me ?? 'You'
+  const log = o.log ?? console.error
   // the get handlers are functions, so only the items are copied
   const seed = structuredClone({ concepts: o.seed?.concepts ?? {}, threads: o.seed?.threads ?? {} }), threads = seed.threads, gets = o.seed?.get ?? {}
   const cs: Record<string, Concept> = {}
@@ -185,7 +187,7 @@ export async function startFakeGateway(o: {
   const body = (req: IncomingMessage) => new Promise<string>((ok) => { let s = ''; req.on('data', (d) => (s += d)); req.on('end', () => ok(s)) })
   const parse = async (req: IncomingMessage) => { try { return JSON.parse((await body(req)) || '{}') as Record<string, unknown> } catch { return {} } }
 
-  const server = createServer(async (req, res) => {
+  const handle = async (req: IncomingMessage, res: ServerResponse) => {
     if (down) { req.socket.destroy(); return }
     const json = (st: number, b: unknown) => { res.writeHead(st, { 'content-type': 'application/json' }); res.end(JSON.stringify(b)) }
     const auth = req.headers.authorization
@@ -259,6 +261,16 @@ export async function startFakeGateway(o: {
       return
     }
     json(404, { error: 'not_found' })
+  }
+  // a handler that throws (a seed's get, say) answers 500 naming the error instead of leaving the request hanging
+  const server = createServer((req, res) => {
+    handle(req, res).catch((e: unknown) => {
+      const message = e instanceof Error ? e.message : String(e)
+      log(`fake gateway: ${req.method} ${req.url} failed: ${message}`)
+      if (res.headersSent) { res.destroy(); return }
+      res.writeHead(500, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: 'internal_error', message }))
+    })
   })
   const tick = setInterval(() => broadcast('status', statusFrame()), o.statusMs ?? 10000)
   await new Promise<void>((ok) => server.listen(o.port ?? 0, '127.0.0.1', ok))

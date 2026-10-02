@@ -1,7 +1,7 @@
 import '../testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { JOBS, LOG, S, applyLocal, atOf, byId, createJob, initFlow, isClosed, jobAtAct, jobForAct, keySrc, putJob, restore, setJobs, snap } from './world.ts'
+import { JOBS, LOG, S, applyLocal, atOf, byId, createJob, initFlow, isClosed, jobAtAct, jobForAct, keySrc, putJob, restore, setJobs, snap, timesheetJob } from './world.ts'
 
 JOBS.forEach(initFlow)
 
@@ -71,21 +71,49 @@ test('jobAtAct finds the open job whose current step carries the act', () => {
   restore(x)
 })
 
-test("an act's view links to the job at its step, else a recurring one in the shown workspace whose playbook has it", () => {
+test("an act's view links to the job at its step, else an open one in the shown workspace whose playbook has it", () => {
   const x = snap()
   assert.equal(jobForAct('time'), undefined, 'no demo job has a time step; the recurring one without it is not offered')
-  // past its time step and recurring: the title says nothing about time, the playbook does
+  // at a later step that is not the time one: the title says nothing about time, the playbook does
   const j = createJob({ t: 'Month end', key: 'NEW', pb: 'acme-timesheet', prj: '', ws: 'acme' })
   applyLocal(j.id, { op: 'stepDone', step: 'ts1' })
+  assert.equal(atOf(byId(j.id)!), 'ts2')
   assert.equal(jobAtAct('time'), undefined)
+  assert.equal(jobForAct('time')?.id, j.id, 'open and not recurring')
   applyLocal(j.id, { op: 'schedule', due: '2026-10-03T21:00:00Z', every: 'month' })
   assert.equal(byId(j.id)!.st, 'recurring')
-  assert.equal(jobForAct('time')?.id, j.id)
+  assert.equal(jobForAct('time')?.id, j.id, 'recurring too')
   const ws = S.ws
   S.ws = 'elsewhere'
   try { assert.equal(jobForAct('time'), undefined, 'only the shown workspace') } finally { S.ws = ws }
-  applyLocal(j.id, { op: 'stepReopen', step: 'ts1' })
-  assert.equal(jobForAct('time')?.id, j.id, 'at the step, the same job')
+  // the job at the step comes before one that only has it in its playbook
+  const k = createJob({ t: 'Next month', key: 'NEW', pb: 'acme-timesheet', prj: '', ws: 'acme' })
+  assert.equal(jobForAct('time')?.id, k.id, 'at the step wins')
+  applyLocal(k.id, { op: 'close', st: 'cancelled' })
+  applyLocal(j.id, { op: 'schedule', due: null })
+  applyLocal(j.id, { op: 'close', st: 'done' })
+  assert.equal(jobForAct('time'), undefined, 'closed jobs are not offered')
+  restore(x)
+})
+
+test('the Time view links to the job for the time act, else a recurring one named for timesheets', () => {
+  const x = snap()
+  assert.equal(timesheetJob(), undefined, 'the demo has neither')
+  // a recurring job on a playbook without a time step, named for timesheets
+  const n = createJob({ t: 'Timesheet for week 40', key: 'TS-W40', pb: 'action', prj: '', ws: 'acme' })
+  assert.equal(timesheetJob(), undefined, 'not while it is a one-off')
+  applyLocal(n.id, { op: 'schedule', due: '2026-10-03T21:00:00Z', every: 'month' })
+  assert.equal(byId(n.id)!.st, 'recurring')
+  assert.equal(jobForAct('time'), undefined, 'its playbook has no time step')
+  assert.equal(timesheetJob()?.id, n.id, 'by its title')
+  // a job with the time step in its playbook comes first, wherever it stands
+  const j = createJob({ t: 'Month end', key: 'NEW', pb: 'acme-timesheet', prj: '', ws: 'acme' })
+  applyLocal(j.id, { op: 'stepDone', step: 'ts1' })
+  assert.equal(timesheetJob()?.id, j.id)
+  restore(x)
+  const k = createJob({ t: 'Week report', key: 'TIMESHEET-W41', pb: 'action', prj: '', ws: 'acme' })
+  applyLocal(k.id, { op: 'schedule', due: '2026-10-03T21:00:00Z', every: 'month' })
+  assert.equal(timesheetJob()?.id, k.id, 'by its key')
   restore(x)
 })
 

@@ -7,7 +7,7 @@ import { go } from '../actions/nav.tsx'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
 import { L, srcState } from '../live/boot.ts'
-import { S, W, jobForAct } from '../model/world.ts'
+import { S, W, timesheetJob } from '../model/world.ts'
 import { commit } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
 import { CancelBtn } from '../ui/bits.tsx'
@@ -31,8 +31,6 @@ const fmtH = (h: number) => `${Math.round(h * 100) / 100} h`
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
 /** newest first: this month, then the one that just ended */
 const months = () => [...(LIVE.on ? L().time : (demo ||= wsPage(DEFAULT_WS).demo.time?.(localDay()) ?? []))].sort((a, b) => b.id.localeCompare(a.id)).slice(0, 2)
-/** the job whose current step opens this view (the monthly fill starts there), else a recurring one with a time step */
-const timesheetJob = () => jobForAct('time')
 
 function put(id: string, f: (it: TimeItem) => TimeItem, ws = S.ws) {
   if (LIVE.on) { const l = L(ws); l.time = l.time.map((x) => (x.id === id ? f(x) : x)) }

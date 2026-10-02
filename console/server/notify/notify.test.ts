@@ -106,10 +106,10 @@ test("a review id is written with its workspace's mark, # by default", async () 
   install([{ page: acme }, { page: { ...beta, reviewMark: '!' } }])
   try {
     const { sent, bus } = setup()
-    const pr = { id: '4821', title: 'feature/ACME-512-rate-limit', votes: [{ reviewer: 'Priya', vote: 1 }] }
+    const pr = { id: '7001', title: 'feature/ACME-512-rate-limit', votes: [{ reviewer: 'Priya', vote: 1 }] }
     for (const ws of ['beta', 'acme']) bus.emit({ kind: 'source', concept: 'review', upserts: [pr], removes: [], ws })
     await flush()
-    assert.deepEqual(sent.map((s) => s.title), ['J-0412: review !4821: Priya +1', 'J-0412: review #4821: Priya +1'])
+    assert.deepEqual(sent.map((s) => s.title), ['J-0412: review !7001: Priya +1', 'J-0412: review #7001: Priya +1'])
   } finally { install([{ page: acme }]) }
 })
 
