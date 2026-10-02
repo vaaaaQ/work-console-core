@@ -9,6 +9,8 @@ export interface PbMsgFile { via?: string; to?: string; text: string }
 export interface PbStepFile {
   id: string; title: string; who: Mode; doneWhen: string
   produces?: string[]; messages?: PbMsgFile[]; review?: boolean; output?: string
+  /** the console action the step offers */
+  act?: string
 }
 export interface PbFile {
   format?: string; key?: string; name: string; description?: string; workspace?: Ws | null
@@ -26,6 +28,7 @@ export function pbToFile(k: string): PbFile {
         if (TPL[s.id]) o.messages = TPL[s.id].map(([via, to, text]) => ({ via, to, text }))
         if (s.rv) o.review = true
         if (s.out) o.output = s.out
+        if (s.act) o.act = s.act
         return o
       }),
     })),
@@ -43,6 +46,7 @@ export function toInternal(o: PbFile, k: string) {
         if (s.messages && s.messages.length) { st.msg = s.messages.length; tpl[id] = s.messages.map((m) => [m.via || 'chat', m.to || '', m.text]) }
         if (s.review) st.rv = 1
         if (s.output) st.out = s.output
+        if (s.act) st.act = s.act
         return st
       }),
     })),
@@ -79,6 +83,7 @@ export function checkPb(o: unknown): string[] {
       if (s.messages != null && !(Array.isArray(s.messages) && s.messages.every((m: any) => m && str(m.text) && (m.via == null || ['chat', 'work', 'mail'].includes(m.via)))))
         e.push(`${sa}: each message needs a text, and via must be chat, work or mail.`)
       if (s.review != null && typeof s.review !== 'boolean') e.push(`${sa}: review must be true or false.`)
+      if (s.act !== undefined && !str(s.act)) e.push(`${sa}: act must be the name of a console action.`)
     })
   })
   return e

@@ -27,3 +27,5 @@ export const CORE: [SrcKey, string, string][] =[
  ['docs','Docs','pages a step reads or writes'],
  ['time','Time tracking','recurring timesheets']
 ];
+/** the console actions the core itself offers a step; model/home.ts holds what they do. A workspace's acts never reuse these names */
+export const CORE_ACT_NAMES = ['time'] as const

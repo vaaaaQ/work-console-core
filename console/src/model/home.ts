@@ -1,3 +1,4 @@
+import { CORE_ACT_NAMES } from '../data/core.ts'
 import { CAL } from '../data/demo.ts'
 import { PACKS } from '../data/packs.ts'
 import { REG } from '../data/registry.ts'
@@ -51,10 +52,12 @@ export interface Act {
   busy?(j: Job): boolean; blocked?(j: Job): string | null; eyebrow?(j: Job): string
 }
 /** opens a view: nav.tsx puts its go here as it loads, since this module stays importable by Node, which cannot load JSX */
-export const opener: { go(v: View): void } = { go: () => {} }
-/** the core's own acts */
-const CORE_ACTS: Record<string, Act> = { time: { icon: 'hourglass', label: 'Open Time', run: () => opener.go('time') } }
-/** a core act, or the first workspace's whose page names it (icon, label) and whose ui handles it; null shows no button */
+export const opener: { go(v: View): void } = { go: () => { throw new Error('opener not wired') } }
+/** the core's own acts, one per name in CORE_ACT_NAMES */
+const CORE_ACTS: Record<string, Act> = {
+  time: { icon: 'hourglass', label: 'Open Time', run: () => opener.go('time') },
+} satisfies Record<(typeof CORE_ACT_NAMES)[number], Act>
+/** a core act, or the workspace's whose page names it (icon, label) and whose ui handles it (install keeps the names unique); null shows no button */
 export function actOf(name: string): Act | null {
   if (Object.hasOwn(CORE_ACTS, name)) return CORE_ACTS[name]
   for (const { page, ui } of REG) {

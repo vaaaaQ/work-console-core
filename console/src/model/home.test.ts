@@ -54,6 +54,7 @@ test('a step act is the core one, a workspace one with its handlers, or nothing'
   assert.equal(actOf('nope'), null)
   const t = actOf('time')!
   assert.equal(t.icon, 'hourglass'); assert.equal(t.label, 'Open Time')
+  assert.throws(() => t.run(JOBS[0]), /^Error: opener not wired$/, 'nothing has wired the opener in Node')
   const opened: string[] = []
   opener.go = (v) => { opened.push(v) }
   void t.run(JOBS[0])
@@ -64,4 +65,15 @@ test('a step act is the core one, a workspace one with its handlers, or nothing'
   void a.run(j)
   assert.equal(ran, j)
   assert.equal(actOf('acme.half'), null, 'a button with nothing behind it is not shown')
+})
+
+test('act names are unique across the core and every workspace', () => {
+  const page = (p: WorkspacePage, acts: string[]) => ({ ...p, acts: Object.fromEntries(acts.map((n) => [n, { icon: 'file', label: n }])) })
+  const ui = (acts: string[]) => ({ acts: Object.fromEntries(acts.map((n) => [n, { run: () => {} }])) })
+  assert.throws(() => install([{ page: page(acme, ['go']) }, { page: page(acme2, ['go']) }]), /^Error: act go is declared by both acme and acme2$/)
+  assert.throws(() => install([{ page: page(acme, ['go']), ui: ui(['go']) }, { page: acme2, ui: ui(['go']) }]), /^Error: act go is declared by both acme and acme2$/)
+  assert.throws(() => install([{ page: page(acme, ['time']) }]), /^Error: act time of acme shadows the core act time$/)
+  assert.throws(() => install([{ page: acme }, { page: acme2, ui: ui(['time']) }]), /^Error: act time of acme2 shadows the core act time$/)
+  assert.doesNotThrow(() => setup({ page: page(acme, ['acme.go']), ui: ui(['acme.go']) }, { page: page(acme2, ['acme2.go']), ui: ui(['acme2.go']) }))
+  assert.equal(actOf('acme.go')?.label, 'acme.go'); assert.equal(actOf('acme2.go')?.label, 'acme2.go')
 })

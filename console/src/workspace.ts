@@ -4,6 +4,7 @@ import { CAL, CAL_ITEMS, CDR, CHATS0, JOBS0, JR, LLMS, LOG0, MAIL0, OVR, PRI, RE
 import type { WorkDoc } from './data/demo.ts'
 import { PACKS, setDefaultWs } from './data/packs.ts'
 import { REG } from './data/registry.ts'
+import { CORE_ACT_NAMES } from './data/core.ts'
 import { CORE_PB, CORE_TPL, PB0 } from './data/playbooks.ts'
 import type { TimeItem } from './data/time.ts'
 import { MDR } from './data/ui.ts'
@@ -47,11 +48,18 @@ export { REG, itemOf, pageOf, wsPage } from './data/registry.ts'
 /** fills PACKS, PB0, TPL0 and the demo maps from the list, sets DEFAULT_WS to the first, resets the world */
 export function install(list: Registered[]): void {
   if (!list.length) throw new Error('no workspace is registered')
-  const seen = new Set<Ws>()
-  for (const { page } of list) {
+  const seen = new Set<Ws>(), core = new Set<string>(CORE_ACT_NAMES), actBy = new Map<string, Ws>()
+  for (const { page, ui } of list) {
     if (typeof page.id !== 'string' || !WS_ID.test(page.id)) throw new Error(`workspace id ${page.id} must match ${WS_ID}`)
     if (seen.has(page.id)) throw new Error(`workspace ${page.id} is registered twice`)
     seen.add(page.id)
+    // an act name means one thing in the whole console: the core's, or one workspace's
+    for (const n of new Set([...Object.keys(page.acts || {}), ...Object.keys(ui?.acts || {})])) {
+      if (core.has(n)) throw new Error(`act ${n} of ${page.id} shadows the core act ${n}`)
+      const by = actBy.get(n)
+      if (by) throw new Error(`act ${n} is declared by both ${by} and ${page.id}`)
+      actBy.set(n, page.id)
+    }
   }
   REG.splice(0, REG.length, ...list)
   const pages = list.map((r) => r.page)
