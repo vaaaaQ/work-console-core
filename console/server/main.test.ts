@@ -1,7 +1,7 @@
 import { acme, acmeServer } from './testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -88,6 +88,26 @@ test('main starts on loopback with a fake gateway per workspace, recovers runs, 
     while ((await state()).bridge.state !== 'ok') { if (Date.now() - t0 > 5000) throw new Error('the fake never came up'); await new Promise((r) => setTimeout(r, 20)) }
     const r = await fetch(`http://127.0.0.1:${m.loopbackPort}/api/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ t: 'Prefix', key: 'ACME-1', pb: 'action', prj: 'platform', ws: 'acme' }) })
     assert.match(((await r.json()) as { job: Job }).job.id, /^A-\d{4}$/, "Acme's fake mints Acme's prefix")
+  } finally { await m.close() }
+})
+
+test('the job MCP behind main serves every workspace: ws picks the space, none named is refused naming them', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'wc-main-'))
+  const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
+  const m = await main({ cfg, sdk: unused, workspaces: [acmeServer, beta2] })
+  try {
+    const base = `http://127.0.0.1:${m.loopbackPort}`
+    const t0 = Date.now()
+    while (!m.spaces.list.every((s) => s.source.available())) { if (Date.now() - t0 > 5000) throw new Error('the fakes never came up'); await new Promise((r) => setTimeout(r, 20)) }
+    const rpc = async (body: unknown) => (await (await fetch(`${base}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${readFileSync(m.mcpToken, 'utf8').trim()}` }, body: JSON.stringify(body) })).json()) as { result: { content: { text: string }[]; isError?: boolean } }
+    const call = async (name: string, args: Record<string, unknown>) => { const r = (await rpc({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })).result; return { err: !!r.isError, text: r.content[0].text } }
+    const none = await call('create_job', { title: 'Which?', playbook: 'action' })
+    assert.deepEqual([none.err, none.text], [true, 'bad_args: say which workspace: acme, beta2'])
+    const made = await call('create_job', { title: 'In beta', playbook: 'action', ws: 'beta2' })
+    assert.equal(made.err, false, made.text)
+    assert.match(made.text, /"id": "B-0001"/)
+    assert.equal((await call('get_job', { id: 'B-0001' })).err, false)
+    assert.equal((await call('get_job', { id: 'X-0001' })).text, 'not_found: no job X-0001')
   } finally { await m.close() }
 })
 

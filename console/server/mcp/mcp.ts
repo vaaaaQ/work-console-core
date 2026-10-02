@@ -1,20 +1,21 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { DEFAULT_WS, PACKS } from '../../src/data/packs.ts'
 import { KINDS, ctxOf, parseWorkId } from '../../src/model/context.ts'
 import * as T from '../../src/model/transitions.ts'
 import { SESSION_OPS } from '../../src/model/types.ts'
 import type { Cmd, Job } from '../../src/model/types.ts'
+import { GatewayError } from '../bridge/wire.ts'
 import { HttpError } from '../events.ts'
-import type { StartItem } from '../board/start.ts'
-import type { Jobs } from '../jobs/jobs.ts'
+import type { Space, Spaces } from '../spaces.ts'
 
 /* Job tools for the user's own Claude Code sessions: an MCP server (streamable HTTP, JSON replies only)
    on the loopback listener at /mcp, behind a bearer token kept in the console's home. A change goes
    through the same Jobs.cmd as the page's, applies at once, is broadcast to open pages and is signed
    "Claude Code" in the journal. Undo walks back this session's own changes. The console's LLM runs
-   never get these tools: they load no user-scope MCP servers and deny this one by name. */
+   never get these tools: they load no user-scope MCP servers and deny this one by name.
+   One server for every workspace: a job id names its workspace by its prefix, and create_job and
+   start_item take a ws (optional while only one is registered). */
 
 export interface Tool {
   name: string; description: string; inputSchema: Record<string, unknown>
@@ -39,18 +40,19 @@ const fail = (e: unknown) => {
   return String((e as Error)?.message || e)
 }
 
-export function brief(x: T.Ctx, j: Job) {
+/** ws = the workspace that owns the job */
+export function brief(x: T.Ctx, j: Job, ws: string) {
   const at = T.atOf(x, j)
   return {
-    id: j.id, key: j.key, title: j.t, status: j.st, playbook: j.pb, project: j.prj, round: (j.rounds?.length || 0) + 1,
+    id: j.id, ws, key: j.key, title: j.t, status: j.st, playbook: j.pb, project: j.prj, round: (j.rounds?.length || 0) + 1,
     step: at ? T.stepOf(x, j, at)!.t : null, needsYou: T.needsYou(x, j),
   }
 }
 
-export function detail(x: T.Ctx, j: Job) {
+export function detail(x: T.Ctx, j: Job, ws: string) {
   const at = T.atOf(x, j)
   return {
-    ...brief(x, j), v: j.v, current: at, roundFrom: j.rf ?? null, chat: j.chat, mail: j.mail,
+    ...brief(x, j, ws), v: j.v, current: at, roundFrom: j.rf ?? null, chat: j.chat, mail: j.mail,
     context: ctxOf(j).map((c) => ({ kind: c.k, item: c.id, count: c.n, name: c.name })),
     phases: (x.PB[j.pb]?.ph || []).map((p) => ({
       phase: `${p.c} ${p.n}`,
@@ -82,34 +84,49 @@ const str = (v: unknown, what: string) => {
   return v.trim()
 }
 
-export function jobTools(d: { jobs: Jobs; ctx: () => T.Ctx; start?: StartItem }): Tool[] {
+export function jobTools(d: { spaces: Spaces }): Tool[] {
+  const { spaces } = d, ids = spaces.list.map((s) => s.id)
+  /** a per-workspace default for a description: the value alone when there is one workspace */
+  const perWs = (f: (s: Space) => string) => (spaces.list.length === 1 ? f(spaces.list[0]) : spaces.list.map((s) => `${s.id}: ${f(s)}`).join('; '))
+  const wsArg = { type: 'string', enum: ids, description: 'workspace; may be omitted when one workspace is registered' }
+  /** the job and the space that owns it, by the prefix of its id */
   const get = async (id: unknown) => {
-    const j = await d.jobs.get(str(id, 'id'))
-    if (!j) throw new HttpError(404, 'not_found', `no job ${id}`)
-    return j
+    const key = str(id, 'id'), sp = spaces.byJob(key), j = await sp.jobs.get(key)
+    if (!j) throw new HttpError(404, 'not_found', `no job ${key}`)
+    return { sp, j }
   }
   const command = async (s: Session, id: unknown, c: Record<string, unknown>) => {
-    const x = d.ctx(), j = await get(id)
+    const { sp, j } = await get(id), x = sp.ctx()
     if ('step' in c) c.step = stepId(x, j, c.step)
-    const r = await d.jobs.cmd(j.id, c as unknown as Cmd, undefined, 'session')
+    const r = await sp.jobs.cmd(j.id, c as unknown as Cmd, undefined, 'session')
     s.undo.push({ id: j.id, v: r.job.v!, prev: r.prev }); s.undo.splice(0, s.undo.length - MAX_UNDO)
     const e = r.job.jr[0]
-    return { job: brief(x, r.job), journal: `${e.o} ${e.c} Next: ${e.n}` }
+    return { job: brief(x, r.job, sp.id), journal: `${e.o} ${e.c} Next: ${e.n}` }
   }
   return [
     {
-      name: 'list_jobs', description: 'List Work Console jobs: id, key, title, status, current step, round, whether it needs the user.',
+      name: 'list_jobs', description: 'List Work Console jobs of every workspace: id, workspace, key, title, status, current step, round, whether it needs the user.',
       inputSchema: { type: 'object', properties: { filter: { type: 'string', enum: ['open', 'needs_you', 'closed', 'all'], description: 'default open' } } },
       async run(a) {
-        const x = d.ctx(), f = a.filter || 'open'
-        const js = (await d.jobs.all()).filter((j) => f === 'all' || (f === 'closed' ? T.isClosed(j) : f === 'needs_you' ? T.needsYou(x, j) : !T.isClosed(j)))
-        return js.sort((a, b) => b.ts - a.ts).map((j) => brief(x, j))
+        const f = a.filter || 'open'
+        const per = await Promise.all(spaces.list.map(async (sp) => {
+          const x = sp.ctx()
+          try {
+            const js = (await sp.jobs.all()).filter((j) => f === 'all' || (f === 'closed' ? T.isClosed(j) : f === 'needs_you' ? T.needsYou(x, j) : !T.isClosed(j)))
+            return { sp, x, js }
+          } catch (e) { if (e instanceof GatewayError) return { sp, err: e }; throw e }
+        }))
+        // one workspace's gateway being away is no reason to hide the others; its absence is named, never read as "no jobs"
+        const bad = per.flatMap((p) => (p.err ? [{ ws: p.sp.id, unavailable: p.err.message }] : []))
+        if (bad.length === per.length) throw per[0].err
+        const rows = per.flatMap((p) => (p.js ? p.js.map((j) => ({ j, b: brief(p.x!, j, p.sp.id) })) : []))
+        return [...rows.sort((a, b) => b.j.ts - a.j.ts).map((r) => r.b), ...bad]
       },
     },
     {
       name: 'get_job', description: 'One job in full: every step with its state, notes, draft, output, artifacts and planned messages; past rounds; the last 10 journal entries.',
       inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'job id, e.g. J-0412' } }, required: ['id'] },
-      async run(a) { return detail(d.ctx(), await get(a.id)) },
+      async run(a) { const { sp, j } = await get(a.id); return detail(sp.ctx(), j, sp.id) },
     },
     {
       name: 'job_command',
@@ -142,7 +159,7 @@ export function jobTools(d: { jobs: Jobs; ctx: () => T.Ctx; start?: StartItem })
         },
       },
       async run(a, s) {
-        const j = await get(a.id), k = a.kind as keyof typeof KINDS, raw = str(a.item, 'item')
+        const { j } = await get(a.id), k = a.kind as keyof typeof KINDS, raw = str(a.item, 'item')
         const id = k === 'work' ? parseWorkId(j.ws, raw) ?? raw : raw
         const op = a.op === 'add' ? 'ctxAdd' : a.op === 'set' ? 'ctxSet' : a.op === 'del' ? 'ctxDel' : String(a.op)
         return command(s, j.id, { op, k, id, ...(a.count !== undefined ? { n: a.count } : {}), ...(typeof a.name === 'string' ? { name: a.name } : {}) })
@@ -155,58 +172,65 @@ export function jobTools(d: { jobs: Jobs; ctx: () => T.Ctx; start?: StartItem })
       async run(a, s) { return command(s, a.id, { op: 'returnTo', step: a.step, why: a.why }) },
     },
     {
-      name: 'create_job', description: 'Create a job from a playbook (see list_playbooks). It starts as ready; start it with job_command op start.',
+      name: 'create_job', description: 'Create a job from a playbook (see list_playbooks) in a workspace. It starts as ready; start it with job_command op start.',
       inputSchema: {
         type: 'object', required: ['title', 'playbook'],
         properties: {
-          title: { type: 'string' }, playbook: { type: 'string', description: 'playbook id' }, key: { type: 'string', description: 'work item or ticket key, e.g. ACME-512' },
-          project: { type: 'string', description: `one of ${PACKS[DEFAULT_WS].prj.join(', ')}; default ${PACKS[DEFAULT_WS].prj[0]}` }, chat: { type: 'string', description: 'chat id to link' }, mail: { type: 'string', description: 'mail id to link' },
+          title: { type: 'string' }, playbook: { type: 'string', description: 'playbook id' }, ws: wsArg,
+          key: { type: 'string', description: 'work item or ticket key, e.g. ACME-512' },
+          project: { type: 'string', description: `a project of that workspace's pack (${perWs((sp) => sp.page.pack.prj.join(', '))}); default its first` },
+          chat: { type: 'string', description: 'chat id to link' }, mail: { type: 'string', description: 'mail id to link' },
         },
       },
       async run(a, s) {
-        const j = await d.jobs.create({
+        const sp = spaces.pick(a.ws)
+        const j = await sp.jobs.create({
           t: str(a.title, 'title'), pb: str(a.playbook, 'playbook'), key: typeof a.key === 'string' && a.key.trim() ? a.key.trim() : 'NEW',
-          prj: typeof a.project === 'string' && a.project ? a.project : PACKS[DEFAULT_WS].prj[0], ws: DEFAULT_WS,
+          prj: typeof a.project === 'string' && a.project ? a.project : sp.page.pack.prj[0], ws: sp.id,
           ...(typeof a.chat === 'string' ? { chat: a.chat } : {}), ...(typeof a.mail === 'string' ? { mail: a.mail } : {}),
         }, 'session')
         s.undo.push({ id: j.id, created: true })
-        return brief(d.ctx(), j)
+        return brief(sp.ctx(), j, sp.id)
       },
     },
-    ...(d.start ? [{
+    {
       name: 'start_item',
-      description: 'Start a board item: in the tracker assign it to the user and move it from Ready to Dev, then create and start its job, or return the job if one is open. '
+      description: 'Start a board item of a workspace: in the tracker assign it to the user and move it from Ready to Dev, then create and start its job, or return the job if one is open. '
         + 'Undo cancels a job this created; the tracker change stays.',
       inputSchema: {
         type: 'object', required: ['key'],
-        properties: { key: { type: 'string', description: 'work item key, e.g. ACME-603' }, playbook: { type: 'string', description: 'playbook id; default dev-item' } },
+        properties: {
+          key: { type: 'string', description: 'work item key, e.g. ACME-603' }, ws: wsArg,
+          playbook: { type: 'string', description: `playbook id; default the workspace's board start (${perWs((sp) => sp.page.board.start)})` },
+        },
       },
-      async run(a: Record<string, unknown>, s: Session) {
-        const r = await d.start!(str(a.key, 'key'), typeof a.playbook === 'string' && a.playbook.trim() ? a.playbook.trim() : undefined, 'session')
+      async run(a, s) {
+        const sp = spaces.pick(a.ws)
+        const r = await sp.start(str(a.key, 'key'), typeof a.playbook === 'string' && a.playbook.trim() ? a.playbook.trim() : undefined, 'session')
         if (r.created) { s.undo.push({ id: r.job.id, created: true }); s.undo.splice(0, s.undo.length - MAX_UNDO) }
-        return { ...brief(d.ctx(), r.job), created: r.created }
+        return { ...brief(sp.ctx(), r.job, sp.id), created: r.created }
       },
-    }] : []),
+    },
     {
       name: 'undo', description: "Take back this session's last change. A command is undone only if the job has not changed since; a job this session created is cancelled.",
       inputSchema: { type: 'object', properties: {} },
       async run(_, s) {
         const u = s.undo.pop()
         if (!u) throw new HttpError(400, 'bad_state', 'nothing to undo in this session')
-        const x = d.ctx()
+        const sp = spaces.byJob(u.id), x = sp.ctx()
         if ('created' in u) {
-          const r = await d.jobs.cmd(u.id, { op: 'close', st: 'cancelled', note: 'created by mistake; undone' }, undefined, 'session')
-          return { undone: `created ${u.id}`, job: brief(x, r.job) }
+          const r = await sp.jobs.cmd(u.id, { op: 'close', st: 'cancelled', note: 'created by mistake; undone' }, undefined, 'session')
+          return { undone: `created ${u.id}`, job: brief(x, r.job, sp.id) }
         }
-        return { undone: `last change to ${u.id}`, job: brief(x, await d.jobs.undo(u.id, u.v, u.prev)) }
+        return { undone: `last change to ${u.id}`, job: brief(x, await sp.jobs.undo(u.id, u.v, u.prev), sp.id) }
       },
     },
     {
-      name: 'list_playbooks', description: 'Playbooks a job can follow, with their phases and step ids.',
+      name: 'list_playbooks', description: 'Playbooks a job can follow, with the workspace each belongs to (none: any workspace), their phases and step ids.',
       inputSchema: { type: 'object', properties: {} },
       async run() {
-        const PB = d.ctx().PB
-        return Object.entries(PB).map(([id, p]) => ({ id, name: p.n, about: p.d, phases: p.ph.map((h) => `${h.c} ${h.n}: ${h.s.map((s) => `${s.id} ${s.t}`).join('; ')}`) }))
+        const PB = spaces.ctx().PB
+        return Object.entries(PB).map(([id, p]) => ({ id, ws: p.ws, name: p.n, about: p.d, phases: p.ph.map((h) => `${h.c} ${h.n}: ${h.s.map((s) => `${s.id} ${s.t}`).join('; ')}`) }))
       },
     },
   ]

@@ -104,12 +104,10 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
     throw e
   }
 
-  const first = list[0]
   app = createApp({
     loopbackPort, lanPort: lanPort ?? cfg.lanPort, pcName: cfg.pcName, hub: bus, spaces, pairing, notify,
     staticDirs: [join(PKG, 'dist'), join(PKG, 'public')], artifactsDir, tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    // first space until Task 9: the job tools still serve one workspace
-    mcp: mcpHandler({ tools: jobTools({ jobs: first.jobs, ctx: first.ctx, start: first.start }), token: () => readToken(mcpToken) }),
+    mcp: mcpHandler({ tools: jobTools({ spaces }), token: () => readToken(mcpToken) }),
   })
   for (const s of list) s.source.start()
   const fakes: Record<string, FakeGateway> = Object.fromEntries(list.flatMap((s) => (s.fake ? [[s.id, s.fake]] : [])))

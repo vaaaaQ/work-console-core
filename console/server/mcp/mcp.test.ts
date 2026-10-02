@@ -6,22 +6,44 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as T from '../../src/model/transitions.ts'
+import { install } from '../../src/workspace.ts'
+import type { WorkspacePage } from '../../src/workspace.ts'
 import { startItem } from '../board/start.ts'
+import { GatewayError } from '../bridge/wire.ts'
 import type { ActReq } from '../bridge/wire.ts'
 import { Bus } from '../events.ts'
 import { Jobs } from '../jobs/jobs.ts'
+import { Spaces } from '../spaces.ts'
+import type { Space } from '../spaces.ts'
 import { fileStore } from '../store/file.ts'
 import { acme, demoCtx, demoSeed } from '../testkit.ts'
 import { jobTools, mcpHandler } from './mcp.ts'
 
 const TOKEN = 'a'.repeat(64)
 
-async function setup(t: { after(f: () => unknown): void }, open = { v: true }) {
-  const store = fileStore(join(mkdtempSync(join(tmpdir(), 'wc-mcp-')), 's.json'), demoSeed)
+/** Acme under another id, with its own projects and its own start playbook */
+const beta: WorkspacePage = {
+  ...acme, id: 'beta', playbooks: {}, pack: { ...acme.pack, prj: ['labs'] },
+  board: { start: 'action', key: (id) => `beta/${id}`, itemId: (k) => (k.startsWith('beta/') ? k.slice(5) : null) },
+}
+
+/** a workspace's space reduced to what the tools read: its jobs on a file store, its start, its page.
+    Acme's prefix is J, the one the demo seed's jobs carry. */
+function stubSpace(page: WorkspacePage, prefix: string, open: { v: boolean }, seed?: typeof demoSeed) {
+  const store = fileStore(join(mkdtempSync(join(tmpdir(), 'wc-mcp-')), 's.json'), seed, prefix)
   const jobs = new Jobs({ store, bus: new Bus(), ctx: demoCtx, gate: () => open.v })
   const acts: ActReq[] = []
   const bridge = { available: () => true, read: async () => ({}), act: async (a: ActReq) => { acts.push(a); return { status: 'ok' as const, result: { title: `Item ${a.args.id}` } } } }
-  const srv = createServer(mcpHandler({ tools: jobTools({ jobs, ctx: demoCtx, start: startItem({ jobs, ctx: demoCtx, bridge, page: acme }) }), token: () => TOKEN }))
+  const space = { id: page.id, prefix, page, jobs, ctx: demoCtx, start: startItem({ jobs, ctx: demoCtx, bridge, page }) } as unknown as Space
+  return { space, jobs, acts }
+}
+
+async function setup(t: { after(f: () => unknown): void }, o: { open?: { v: boolean }; both?: boolean } = {}) {
+  const open = o.open ?? { v: true }
+  install(o.both ? [{ page: acme }, { page: beta }] : [{ page: acme }])
+  const a = stubSpace(acme, 'J', open, demoSeed), b = o.both ? stubSpace(beta, 'B', open) : undefined
+  const spaces = new Spaces(b ? [a.space, b.space] : [a.space])
+  const srv = createServer(mcpHandler({ tools: jobTools({ spaces }), token: () => TOKEN }))
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r))
   t.after(() => new Promise((r) => srv.close(r)))
   const url = `http://127.0.0.1:${(srv.address() as AddressInfo).port}/mcp`
@@ -40,7 +62,7 @@ async function setup(t: { after(f: () => unknown): void }, open = { v: true }) {
   }
   const init = await post({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 't', version: '1' } } })
   sid = init.sid!
-  return { jobs, acts, open, post, rpc, call, init, setSid: (s: string) => { sid = s } }
+  return { jobs: a.jobs, acts: a.acts, beta: b, spaces, open, post, rpc, call, init, setSid: (s: string) => { sid = s } }
 }
 const openJob = async (jobs: Jobs) => {
   const x = demoCtx()
@@ -148,4 +170,149 @@ test("job_context edits the runs' context by key or id; get_job lists it; undo t
   assert.equal((await s.call('get_job', { id: j.id })).json().context.at(-1).count, 3)
   assert.equal((await s.call('job_context', { id: j.id, op: 'del', kind: 'work', item: 'ACME-999' })).err, false)
   assert.equal((await s.call('get_job', { id: j.id })).json().context.length, base)
+})
+
+test('with two workspaces create_job needs a ws; ws picks the space, its prefix and its default project', async (t) => {
+  const s = await setup(t, { both: true }), pb = 'action'
+  const none = await s.call('create_job', { title: 'Which one?', playbook: pb })
+  assert.equal(none.err, true)
+  assert.match(none.text, /^bad_args: say which workspace: acme, beta$/)
+  assert.match((await s.call('create_job', { title: 'Nowhere', playbook: pb, ws: 'zzz' })).text, /^no_workspace: no workspace zzz$/)
+  assert.equal((await s.call('create_job', { title: 'Array', playbook: pb, ws: ['acme'] })).err, true, 'only a string names a workspace')
+
+  const r = await s.call('create_job', { title: 'In beta', playbook: pb, ws: 'beta' })
+  assert.equal(r.err, false, r.text)
+  const b = r.json()
+  assert.equal(b.id, 'B-0001')
+  assert.deepEqual([b.ws, b.project], ['beta', 'labs'], "the default project is the first of beta's pack")
+  assert.equal((await s.beta!.jobs.get('B-0001'))!.ws, 'beta')
+  assert.equal(await s.jobs.get('B-0001'), undefined, "acme's store has no B-0001")
+
+  const a = (await s.call('create_job', { title: 'In acme', playbook: pb, ws: 'acme', project: 'web' })).json()
+  assert.deepEqual([a.ws, a.project], ['acme', 'web'], 'a named project is kept')
+  assert.equal((await s.call('create_job', { title: 'Default', playbook: pb, ws: 'acme' })).json().project, acme.pack.prj[0])
+})
+
+test('with one workspace create_job works without a ws', async (t) => {
+  const s = await setup(t)
+  const r = await s.call('create_job', { title: 'The only one', playbook: 'action' })
+  assert.equal(r.err, false, r.text)
+  assert.match(r.json().id, /^J-\d{4}$/)
+  assert.equal(r.json().ws, 'acme')
+})
+
+test('get_job, job_command, return_to and undo find a job through its prefix, in one session', async (t) => {
+  const s = await setup(t, { both: true })
+  const id = (await s.call('create_job', { title: 'Beta work', playbook: 'action', ws: 'beta' })).json().id
+  assert.equal(id, 'B-0001')
+  const d = await s.call('get_job', { id })
+  assert.equal(d.err, false, d.text)
+  assert.deepEqual([d.json().id, d.json().ws, d.json().status], ['B-0001', 'beta', 'ready'])
+
+  assert.equal((await s.call('job_command', { id, op: 'start' })).json().job.ws, 'beta')
+  const j = (await s.beta!.jobs.get(id))!
+  assert.equal(j.st, 'active')
+  assert.equal(j.jr[0].a, 'Claude Code')
+
+  // acme's job in the same session: one undo stack holds both, newest first
+  const x = demoCtx(), mine = await openJob(s.jobs)
+  assert.equal((await s.call('job_command', { id: mine.id, op: 'noteAdd', step: T.atOf(x, mine)!, k: 'q', t: 'in acme' })).json().job.ws, 'acme')
+  assert.equal((await s.call('undo')).json().undone, `last change to ${mine.id}`)
+  const back = (await s.call('undo')).json()
+  assert.deepEqual([back.undone, back.job.ws, back.job.status], [`last change to ${id}`, 'beta', 'ready'], 'the start is taken back in beta')
+  assert.equal((await s.call('undo')).json().undone, `created ${id}`, 'a created job is cancelled in its own space')
+  assert.equal((await s.beta!.jobs.get(id))!.st, 'cancelled')
+})
+
+test('return_to resolves the job in its own workspace', async (t) => {
+  const s = await setup(t, { both: true })
+  const id = (await s.call('create_job', { title: 'Beta work', playbook: 'action', ws: 'beta' })).json().id
+  await s.call('job_command', { id, op: 'start' })
+  const first = T.steps(demoCtx(), 'action')[0].id
+  assert.equal((await s.call('job_command', { id, op: 'stepDone', step: first })).err, false)
+  const r = await s.call('return_to', { id, step: first, why: 'again' })
+  assert.equal(r.err, false, r.text)
+  assert.deepEqual([r.json().job.id, r.json().job.ws, r.json().job.round], [id, 'beta', 2])
+  assert.equal((await s.beta!.jobs.get(id))!.rounds!.length, 1)
+})
+
+test('a job id no workspace owns is a not_found tool error naming it', async (t) => {
+  const s = await setup(t, { both: true })
+  for (const tool of ['get_job', 'job_command', 'job_context', 'return_to']) {
+    const r = await s.call(tool, { id: 'X-0001', op: 'start', step: 's', why: 'w', kind: 'work', item: 'ACME-1' })
+    assert.equal(r.err, true, tool)
+    assert.equal(r.text, 'not_found: no job X-0001', tool)
+  }
+  assert.equal((await s.call('get_job', { id: 'B-0099' })).text, 'not_found: no job B-0099', 'a known prefix, no such job')
+  assert.equal((await s.call('get_job', { id: '' })).err, true)
+})
+
+test('list_jobs covers every workspace and each brief carries its ws', async (t) => {
+  const s = await setup(t, { both: true })
+  await s.call('create_job', { title: 'Beta one', playbook: 'action', ws: 'beta' })
+  const all = (await s.call('list_jobs', { filter: 'all' })).json() as { id: string; ws: string }[]
+  assert.equal(all.length, (await s.jobs.all()).length + 1)
+  assert.deepEqual(all.filter((b) => b.ws === 'beta').map((b) => b.id), ['B-0001'])
+  assert.ok(all.filter((b) => b.ws === 'acme').every((b) => b.id.startsWith('J-')))
+})
+
+test('list_jobs with one workspace down names it instead of passing it off as empty; all down is the tool error', async (t) => {
+  t.mock.method(console, 'error', () => undefined)
+  const s = await setup(t, { both: true })
+  await s.call('create_job', { title: 'Beta one', playbook: 'action', ws: 'beta' })
+  const down = async () => { throw new GatewayError(503, 'bridge_unavailable', 'the bridge is not reachable: refused') }
+  const acmeJobs = s.spaces.get('acme').jobs
+  s.spaces.get('acme').jobs = { all: down } as never
+  const got = (await s.call('list_jobs', { filter: 'all' })).json() as { id?: string; ws: string; unavailable?: string }[]
+  assert.deepEqual(got.filter((b) => b.id).map((b) => b.id), ['B-0001'], "beta's jobs still come")
+  assert.deepEqual(got.filter((b) => b.unavailable).map((b) => [b.ws, b.unavailable]), [['acme', 'the bridge is not reachable: refused']])
+  s.spaces.get('beta').jobs = { all: down } as never
+  const none = await s.call('list_jobs')
+  assert.equal(none.err, true)
+  assert.match(none.text, /the bridge is not reachable/)
+  s.spaces.get('acme').jobs = acmeJobs
+})
+
+test("start_item takes a ws; the playbook defaults to that workspace's board.start and the job lands in its space", async (t) => {
+  const s = await setup(t, { both: true })
+  assert.match((await s.call('start_item', { key: 'beta/ACME-603' })).text, /^bad_args: say which workspace: acme, beta$/)
+  const r = await s.call('start_item', { key: 'beta/ACME-603', ws: 'beta' })
+  assert.equal(r.err, false, r.text)
+  const b = r.json()
+  assert.deepEqual([b.id, b.ws, b.playbook, b.project, b.created], ['B-0001', 'beta', 'action', 'labs', true])
+  assert.deepEqual(s.beta!.acts.map((a) => [a.action, a.args]), [['work.start', { id: 'ACME-603' }]])
+  assert.deepEqual(s.acts, [], "acme's gateway is not asked")
+  assert.match((await s.call('start_item', { key: 'beta/ACME-603', ws: 'acme' })).text, /^bad_args: beta\/ACME-603 is not a board item key$/, "acme's rule does not read beta's key")
+  const a = (await s.call('start_item', { key: 'ACME-604', ws: 'acme' })).json()
+  assert.deepEqual([a.ws, a.playbook, a.project], ['acme', 'dev-item', acme.pack.prj[0]])
+  assert.equal((await s.call('undo')).json().undone, `created ${a.id}`)
+  assert.equal((await s.call('undo')).json().undone, 'created B-0001')
+})
+
+test("list_playbooks carries each playbook's own ws; core playbooks have none", async (t) => {
+  const s = await setup(t, { both: true })
+  const pbs = (await s.call('list_playbooks')).json() as { id: string; ws?: string }[]
+  assert.equal(pbs.find((p) => p.id === 'dev-item')!.ws, 'acme')
+  assert.equal('ws' in pbs.find((p) => p.id === 'action')!, false, "a core playbook is nobody's: no ws is invented")
+})
+
+test('ws is an enum of the registered ids and says it may be omitted when there is one', async (t) => {
+  type Prop = { type?: string; enum?: string[]; description: string }
+  type Def = { inputSchema: { required?: string[]; properties: Record<string, Prop> } }
+  const tools = async (both: boolean) => {
+    const s = await setup(t, { both })
+    return new Map<string, Def>((await s.rpc('tools/list')).result.tools.map((x: Def & { name: string }) => [x.name, x]))
+  }
+  const two = await tools(true), one = await tools(false)
+  for (const name of ['create_job', 'start_item']) {
+    const w = two.get(name)!.inputSchema.properties.ws
+    assert.deepEqual([w.type, w.enum], ['string', ['acme', 'beta']], name)
+    assert.match(w.description, /may be omitted when one workspace is registered/)
+    assert.deepEqual(one.get(name)!.inputSchema.properties.ws.enum, ['acme'], name)
+    assert.equal(two.get(name)!.inputSchema.required!.includes('ws'), false, 'ws is optional')
+  }
+  const prj = two.get('create_job')!.inputSchema.properties.project.description
+  assert.match(prj, /labs/); assert.match(prj, /default/)
+  assert.match(two.get('start_item')!.inputSchema.properties.playbook.description, /beta: action/)
+  assert.equal('ws' in two.get('get_job')!.inputSchema.properties, false, 'a job id already names its workspace')
 })
