@@ -12,7 +12,7 @@ Guidance for an agent working in this repo.
   (pack, playbooks, board rule, demo data), and in a bridge pack under `packs/<name>/`. The demo
   workspaces are the fictional Acme and Beta, and example hosts end in `.example`.
 - **A repo that vendors the core never edits core files.** Its `core.lock.json` lists them, and
-  `console/server/core-lock.test.ts` fails on an edit or a stray file. Change the core, then run
+  `console/server/core-lock.test.ts` fails on an edit, a stray file or a missing lock. Change the core, then run
   `sync-core.mjs`. A consumer adds only `workspaces/<id>/`, its two registries and `tools/`.
 - **No cloud of ours.** Everything runs on the user's machine: the page, the backend, the gateway and
   the browser. Do not add a dependency on a hosted queue, vault or database.

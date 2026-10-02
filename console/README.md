@@ -32,8 +32,13 @@ is core-owned, so there is no npm script for them.
 
 ## Using the core from another repo
 
+Order: the consumer's registries first, then the sync.
+
+1. In the consumer's console dir write `workspaces/page.ts` and `workspaces/server.ts`. Copy the core's as
+   a start and list only the consumer's workspaces.
+2. From a core checkout, with the core change committed:
+
 ```bash
-# from a core checkout, with the core change committed
 node <core>/console/scripts/sync-core.mjs --to <consumer console dir> [--ref <rev>] [--force]
 ```
 
@@ -43,13 +48,16 @@ node <core>/console/scripts/sync-core.mjs --to <consumer console dir> [--ref <re
 | The consumer's own | `workspaces/page.ts`, `workspaces/server.ts`, its `workspaces/<id>/` and `tools/` |
 | Written by sync | `core.lock.json`: the core commit and a sha256 per synced file |
 
-- The consumer writes its two registries first. Copy the core's as a start and list only its workspaces.
+- Sync refuses a `--to` that lacks either registry, whether or not there is a lock, and writes nothing.
 - Sync reads the core commit (`HEAD`, or `--ref`), never the working tree, and deletes the files the
-  previous lock listed that the commit dropped.
+  previous lock listed that the commit dropped. It never writes or deletes the consumer's own files, and
+  it refuses a path that would leave the console dir, whether it comes from the core tree or the lock.
 - It refuses when a core file was edited in the consumer, or when an unlisted consumer file would be
   overwritten, and it lists them. A CRLF-only difference is not an edit. `--force` overrides.
-- The first sync has no lock and checks nothing; the log says how many existing files it replaced.
-- `npm test` in the consumer runs `server/core-lock.test.ts`: it fails on an edited core file or on a
-  stray file outside `workspaces/` and `tools/`. In the core it skips, since there is no lock.
+- The first sync has no lock and checks no edits; the log says how many existing files differ from the
+  core and are replaced.
+- `npm test` in the consumer runs `server/core-lock.test.ts`: it fails on an edited or missing core
+  file, on a stray file outside `workspaces/` and `tools/`, and on a missing `core.lock.json` (run the
+  sync). It skips only in the core itself, which has `schemas/` and `packs/` beside `console/`.
 - Rule: a generic change is a core commit, then a consumer commit that only syncs. A workspace change
   touches only `workspaces/<id>/`.

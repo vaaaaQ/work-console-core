@@ -140,18 +140,22 @@ Only `workspaces/page.ts` imports it.
 
 | Step | What happens |
 |---|---|
+| Check target | `--to` must already hold `workspaces/page.ts` and `workspaces/server.ts`, or the sync stops before reading anything |
 | Read | `sync-core.mjs` reads the core at `--ref` (default `HEAD`) with `git ls-tree` and `git cat-file`; the working tree is never read |
 | Write | every file of `console/` except `workspaces/page.ts`, `workspaces/server.ts` and `tools/` |
-| Delete | files the previous lock listed and this commit no longer has |
+| Delete | files the previous lock listed and this commit no longer has; the consumer's own files are never deleted. This runs before the writes, so a file the core renamed only in case is rewritten, not lost on a case-insensitive disk |
 | Lock | `core.lock.json`: `{ core: <sha>, files: { <path>: <sha256> } }` |
 
 - **Refuses** when a locked file was edited in the consumer, or when an unlocked consumer file would be
   overwritten; the message lists the paths. A CRLF-only difference is not an edit, since hashes treat CRLF
-  as LF. `--force` overrides. The first sync has no lock, checks nothing and logs how many existing files
-  it replaces.
-- **Drift test** `server/core-lock.test.ts` runs in `npm test`. It fails when a locked file is missing or
-  differs, or when a file outside `workspaces/`, `tools/` and build output is not in the lock. It skips in
-  the core, which has no lock.
+  as LF. `--force` overrides. The first sync has no lock, checks no edits and logs how many existing files
+  differ from the core and are replaced.
+- **Paths.** Every path of the core tree and every key of the old lock must be a plain relative path that
+  stays under `--to`; otherwise the sync stops before writing and names it.
+- **Drift test** `server/core-lock.test.ts` runs in `npm test` and calls `drift()` of `sync-core.mjs`,
+  which is tested in `scripts/sync-core.test.ts`. It fails when a locked file is missing or differs, when
+  a file outside `workspaces/`, `tools/` and build output is not in the lock, and when there is no lock.
+  It skips only in the core's own layout, with `schemas/` and `packs/` beside `console/`.
 - **Rule.** A generic change is a core commit, then a consumer commit that only syncs. A workspace change
   touches only `workspaces/<id>/`.
 - A workspace command runs as `node --experimental-strip-types workspaces/<id>/…`, never as an npm
