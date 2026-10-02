@@ -52,6 +52,11 @@ const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.ico': 'image/x-icon',
 }
+/** a downloaded artifact's type; every other one, html included, goes as plain text */
+const ART_TYPES: Record<string, string> = {
+  '.md': 'text/markdown; charset=utf-8', '.csv': 'text/csv; charset=utf-8', '.json': 'application/json; charset=utf-8', '.pdf': 'application/pdf',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+}
 const PC_ONLY = /^\/api\/(pair|devices)(\/|$)/
 
 function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
@@ -184,10 +189,15 @@ export function createApp(d: Deps) {
     return { actionId: a.actionId, ...(await d.bridge.act(a)) }
   }
 
+  /** plain text for the page's viewer; ?dl=1 = a download under the file's own name and type */
   function artifact(r: Req, job: string, name: string) {
-    const f = join(d.artifactsDir, safeName(job), safeName(name))
+    const n = safeName(name), f = join(d.artifactsDir, safeName(job), n)
     if (!existsSync(f)) throw new HttpError(404, 'not_found', 'no such artifact')
-    r.res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'content-disposition': 'inline' })
+    const dl = r.q.get('dl') === '1'
+    r.res.writeHead(200, {
+      'content-type': (dl && ART_TYPES[extname(n).toLowerCase()]) || 'text/plain; charset=utf-8', 'cache-control': 'no-store',
+      'content-disposition': dl ? `attachment; filename="${n.replace(/[^\x20-\x7e]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(n)}` : 'inline',
+    })
     createReadStream(f).pipe(r.res)
   }
 

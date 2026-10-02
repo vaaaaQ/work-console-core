@@ -97,6 +97,18 @@ export const cmd = (id: string, c: Cmd, v: number | undefined) =>
 export const job = (id: string) => call<{ job: Job }>('GET', `/api/jobs/${enc(id)}`)
 export const create = (o: NewJob) => call<{ job: Job }>('POST', '/api/jobs', o)
 export const undo = (id: string, v: number, prev: Job) => call<{ job: Job }>('POST', '/api/undo', { job: id, v, prev })
+/** an artifact's text for the viewer; link is the one the runner recorded */
+export async function artText(link: string): Promise<string> {
+  const ac = new AbortController(), t = setTimeout(() => ac.abort(), 15000)
+  try {
+    const r = await fetch(base + link, { signal: ac.signal, credentials: 'same-origin' })
+    if (!r.ok) throw new ApiError(r.status, String(r.status), r.status === 404 ? 'the file is no longer there' : r.statusText)
+    return await r.text()
+  } catch (e) {
+    if (e instanceof ApiError) throw e
+    throw new ApiError(0, 'network', ac.signal.aborted ? 'the console backend did not answer' : String((e as Error).message || e))
+  } finally { clearTimeout(t) }
+}
 /** job = the job the message belongs to, so the backend can find its chat */
 export const act = (action: string, args: Record<string, unknown>, jobId?: string) =>
   call<ActRes>('POST', '/api/act', { action, actionId: crypto.randomUUID(), args, ...(jobId ? { job: jobId } : {}) }, 60000)
