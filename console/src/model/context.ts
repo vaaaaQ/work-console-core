@@ -47,24 +47,26 @@ const latest = (es: Entry[] | undefined, n: number) => (Array.isArray(es) ? es :
   .filter((e) => e && typeof e.text === 'string' && e.text.trim())
   .map((e, i) => ({ e, i })).sort((a, b) => String(a.e.at || '').localeCompare(String(b.e.at || '')) || a.i - b.i)
   .slice(-n).map((x) => x.e)
-const entry = (e: Entry) => `- ${stamp(e.at)} ${e.authorKind === 'me' ? 'the user' : e.author || 'unknown'}: ${clip(e.text!.trim(), ENTRY_MAX).replace(/\n/g, '\n  ')}`
+/** me = what the user's own entries are signed with; unset or empty: "the user", as in the prompt */
+const entry = (me?: string) => (e: Entry) => `- ${stamp(e.at)} ${e.authorKind === 'me' ? me || 'the user' : e.author || 'unknown'}: ${clip(e.text!.trim(), ENTRY_MAX).replace(/\n/g, '\n  ')}`
 const section = (h: string, t: string | undefined) => (t && t.trim() ? [`${h}:`, clip(t.trim(), FIELD_MAX), ''] : [])
 
-export function renderWork(it: CtxItem, d: WorkDetail): string {
+export function renderWork(it: CtxItem, d: WorkDetail, me?: string): string {
   const head = `${d.type || 'Work item'} ${it.id}${d.title ? `: ${d.title}` : ''}`
   const meta = [d.state ? `State ${d.state}` : '', d.assignedTo !== undefined ? `assigned to ${d.assignedTo || 'nobody'}` : ''].filter(Boolean).join(' · ')
   const cs = latest(d.comments, it.n)
   return [head, ...(meta ? [meta] : []), '',
     ...section('Description', d.description), ...section('Acceptance criteria', d.acceptanceCriteria), ...section('Repro steps', d.reproSteps),
-    ...(cs.length ? ['Comments, oldest first:', ...cs.map(entry)] : ['No comments.'])].join('\n')
+    ...(cs.length ? ['Comments, oldest first:', ...cs.map(entry(me))] : ['No comments.'])].join('\n')
 }
-export function renderChat(it: CtxItem, d: ChatDetail): string {
+export function renderChat(it: CtxItem, d: ChatDetail, me?: string): string {
   const ms = latest(d.messages, it.n)
-  return ms.length ? ms.map(entry).join('\n') : 'No messages.'
+  return ms.length ? ms.map(entry(me)).join('\n') : 'No messages.'
 }
-export const renderItem = (it: CtxItem, d: unknown) => (it.k === 'work' ? renderWork(it, (d || {}) as WorkDetail) : renderChat(it, (d || {}) as ChatDetail))
+export const renderItem = (it: CtxItem, d: unknown, me?: string) =>
+  (it.k === 'work' ? renderWork(it, (d || {}) as WorkDetail, me) : renderChat(it, (d || {}) as ChatDetail, me))
 
-export const okItem = (it: CtxItem, d: unknown): Resolved => ({ ...it, status: 'ok', text: renderItem(it, d) })
+export const okItem = (it: CtxItem, d: unknown, me?: string): Resolved => ({ ...it, status: 'ok', text: renderItem(it, d, me) })
 export const badItem = (it: CtxItem, status: string, why: string): Resolved => ({ ...it, status: status === 'ok' ? 'source_error' : status, text: why })
 
 /** the prompt's context block; empty when the job gives none */

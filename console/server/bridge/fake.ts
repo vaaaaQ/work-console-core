@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { started } from '../../src/data/board.ts'
 import type { BoardItem } from '../../src/data/board.ts'
+import type { Board } from '../../src/workspace.ts'
 import { MAIL0, WORK0 } from '../../src/data/demo.ts'
 import { fillMonth } from '../../src/data/time.ts'
 import type { FillArgs, TimeItem } from '../../src/data/time.ts'
@@ -39,10 +40,14 @@ const MAX_DOC = 256 * 1024, MAX_NOTE_TEXT = 64 * 1024
 /** A's concepts; an empty one still answers, a seed may add more */
 const BASE = ['chat', 'mail', 'cal', 'work', 'review', 'board', 'time', 'ci']
 
-/** seed = what A starts with; prefix = what new job ids start with (`<prefix>-NNNN`); me = who Start puts an item on */
-export async function startFakeGateway(o: { port?: number; token?: string; llmToken?: string; statusMs?: number; seed?: FakeSeed; prefix?: string; me?: string } = {}): Promise<FakeGateway> {
+/** seed = what A starts with; prefix = what new job ids start with (`<prefix>-NNNN`); me = who Start puts an item on;
+    board = the workspace's board, whose columns Start moves an item between */
+export async function startFakeGateway(o: {
+  port?: number; token?: string; llmToken?: string; statusMs?: number; seed?: FakeSeed; prefix?: string; me?: string; board?: Pick<Board, 'ready' | 'dev'>
+} = {}): Promise<FakeGateway> {
   const token = o.token ?? 'fake-console-token', llmToken = o.llmToken ?? 'fake-llm-token', prefix = o.prefix ?? 'J', me = o.me ?? 'You'
-  const seed = structuredClone(o.seed ?? { concepts: {}, threads: {} }), threads = seed.threads
+  // the get handlers are functions, so only the items are copied
+  const seed = structuredClone({ concepts: o.seed?.concepts ?? {}, threads: o.seed?.threads ?? {} }), threads = seed.threads, gets = o.seed?.get ?? {}
   const cs: Record<string, Concept> = {}
   for (const k of [...BASE, ...Object.keys(seed.concepts)]) cs[k] ??= { rev: 1, items: seed.concepts[k] ?? [] }
   for (const k of STATE) cs[k] = { rev: 1, items: [] }
@@ -116,12 +121,12 @@ export async function startFakeGateway(o: { port?: number; token?: string; llmTo
     return { status: 'ok', rev: cs[concept].rev, items: { doc: saved, replaced: cur ?? null } }
   }
 
-  // as the pack: a free item or one already on you; a Ready one moves to Dev
+  // as the pack: a free item or one already on you; one in the board's ready column moves to its dev column
   function start(id: string): Reply {
     const it = find('board', id)
     if (!it) return { status: 'source_error', message: `tracker: not_found: no item ${id}` }
     if (it.lane !== 'free' && it.lane !== 'mine') return { status: 'source_error', message: `tracker: bad_args: ${id} is assigned to ${it.assignedTo}` }
-    const up = started(it as unknown as BoardItem, me, now()) as unknown as Item
+    const up = started(it as unknown as BoardItem, me, o.board, now()) as unknown as Item
     change({ concept: 'board', upserts: [up] })
     return { status: 'ok', rev: cs.board.rev, items: { id, type: it.type, title: it.title, state: up.state } }
   }
@@ -207,6 +212,7 @@ export async function startFakeGateway(o: { port?: number; token?: string; llmTo
       }
       const it = c.items.find((i) => i.id === id)
       if (!it) return json(200, { status: 'source_error', message: `no ${concept} ${id}` })
+      if (Object.hasOwn(gets, concept)) return json(200, { status: 'ok', rev: c.rev, items: gets[concept](id, it) })
       if (concept === 'chat') return json(200, { status: 'ok', rev: c.rev, items: { messages: threads[id] || [] } })
       if (concept === 'work') return json(200, { status: 'ok', rev: c.rev, items: WORK0[id] ?? {
         type: it.type, title: it.title, state: it.state, assignedTo: it.assignedTo ?? null, description: '', reproSteps: '', acceptanceCriteria: '', comments: [],

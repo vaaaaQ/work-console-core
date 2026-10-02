@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Job, RunRec } from '../../src/model/types.ts'
 import { Bus } from '../events.ts'
-import { demoCtx, demoSeed } from '../testkit.ts'
+import { acme, demoCtx, demoSeed } from '../testkit.ts'
+import { install } from '../../src/workspace.ts'
+import beta from '../../workspaces/beta/page.ts'
 import { Notify } from './notify.ts'
 import type { Sender, Sub } from './notify.ts'
 
@@ -98,6 +100,17 @@ test('review and ci changes on a job key push; unrelated ones do not', async () 
   await flush()
   assert.deepEqual(sent.map((s) => s.title), ['J-0412: review #482: Priya +1', 'J-0412: build main failed'])
   assert.equal(sent[0].url, '/?job=J-0412&ws=acme', "no ws on the event: the job's own")
+})
+
+test("a review id is written with its workspace's mark, # by default", async () => {
+  install([{ page: acme }, { page: { ...beta, reviewMark: '!' } }])
+  try {
+    const { sent, bus } = setup()
+    const pr = { id: '4821', title: 'feature/ACME-512-rate-limit', votes: [{ reviewer: 'Priya', vote: 1 }] }
+    for (const ws of ['beta', 'acme']) bus.emit({ kind: 'source', concept: 'review', upserts: [pr], removes: [], ws })
+    await flush()
+    assert.deepEqual(sent.map((s) => s.title), ['J-0412: review !4821: Priya +1', 'J-0412: review #4821: Priya +1'])
+  } finally { install([{ page: acme }]) }
 })
 
 test('410 and 404 drop the subscription; a subscription seen twice is kept once', async () => {

@@ -26,8 +26,12 @@ export interface Plugin {
   state?(): unknown
 }
 export interface PluginCtx { id: string; cfg: WsConfig; home: string; jobs: Jobs; source: Source; artifactsDir: string }
-/** what the fake gateway starts with: items per concept, and the messages of each chat thread */
-export type FakeSeed = { concepts: Record<string, GatewayItem[]>; threads: Record<string, GatewayItem[]> }
+/** what the fake gateway starts with: items per concept, and the messages of each chat thread;
+    get = what a get of a concept's item answers, instead of the item itself */
+export type FakeSeed = {
+  concepts: Record<string, GatewayItem[]>; threads: Record<string, GatewayItem[]>
+  get?: Record<string, (id: string, item: GatewayItem) => unknown>
+}
 export interface WorkspaceServer {
   page: WorkspacePage; jobPrefix: string; defaults?: Partial<WsConfig>
   source?(cfg: WsConfig, o: { bus: Bus }): Source          // default: gatewaySource

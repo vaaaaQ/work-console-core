@@ -27,10 +27,15 @@ export interface Demo {
   /** work items by id, as the bridge's work get returns them */
   work?: Record<string, WorkDoc>
 }
-/** start = the playbook Start gives a board item's job; key = the job key of an item id; itemId = the item id in a key, or null */
-export interface Board { start: string; key(id: string): string; itemId(key: string): string | null }
+/** start = the playbook Start gives a board item's job; key = the job key of an item id; itemId = the item id in a key, or null;
+    ready = the column a free item waits in (default Ready); dev = where Start moves it (default Dev, In Progress) */
+export interface Board {
+  start: string; key(id: string): string; itemId(key: string): string | null
+  ready?: string; dev?: { column: string; state: string }
+}
 export interface WorkspacePage {
   id: Ws; pack: Pack; me?: string   // prompts say "the user" and the board says "You" when unset
+  reviewMark?: string               // what a review id is written with, default '#'
   playbooks: Record<string, Playbook>; templates?: Record<string, Tpl[]>
   board: Board; acts?: Record<string, { icon: string; label: string }>; demo: Demo
 }

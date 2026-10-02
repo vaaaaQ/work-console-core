@@ -58,6 +58,15 @@ test('a chat reads as its newest messages, oldest first, me as the user', () => 
   assert.equal(renderChat(C, {}), 'No messages.')
 })
 
+test("me's own entries carry the workspace's name for the user when it has one", () => {
+  const me = { author: 'Someone', authorKind: 'me', at: '2026-09-30T09:05:00Z', text: 'mine' }
+  assert.equal(renderChat(C, { messages: [me] }, 'Robin'), '- 2026-09-30 09:05Z Robin: mine')
+  assert.equal(renderChat(C, { messages: [me] }, ''), '- 2026-09-30 09:05Z the user: mine', 'an empty name is no name')
+  assert.match(renderWork(W, { comments: [me] }, 'Robin'), /\n- 2026-09-30 09:05Z Robin: mine$/)
+  assert.match(okItem(W, { comments: [me] }, 'Robin').text, /Robin: mine$/)
+  assert.match(okItem(W, { comments: [me] }).text, /the user: mine$/)
+})
+
 test('the context section heads each item and marks the unreadable ones', () => {
   assert.equal(contextSection('acme', []), '')
   const s = contextSection('acme', [okItem(C, { messages: [] }), badItem(W, 'signin_required', 'sign in to Jira')])

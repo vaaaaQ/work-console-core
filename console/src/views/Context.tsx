@@ -11,6 +11,7 @@ import { doCmd, failText } from '../actions/flow.tsx'
 import { CancelBtn } from '../ui/bits.tsx'
 import { Ic } from '../ui/Icon.tsx'
 import { closeModal, modal } from '../ui/modal.tsx'
+import { pageOf } from '../workspace.ts'
 
 /* What the job's LLM runs are given. A row expands to the exact text a run would get: live through the
    backend's renderer, in the demo from demo data through the same one. */
@@ -18,10 +19,11 @@ import { closeModal, modal } from '../ui/modal.tsx'
 const chatName = (j: Job, id: string) => (CHATS[j.ws] || []).find((c) => c.id === id)?.name
 
 function demoItem(j: Job, it: CtxItem): Resolved {
-  if (it.k === 'work') return WORK0[it.id] ? okItem(it, WORK0[it.id]) : badItem(it, 'source_error', `no work item ${it.id} in the demo`)
+  const me = pageOf(j.ws)?.me
+  if (it.k === 'work') return WORK0[it.id] ? okItem(it, WORK0[it.id], me) : badItem(it, 'source_error', `no work item ${it.id} in the demo`)
   const c = (CHATS[j.ws] || []).find((x) => x.id === it.id)
   if (!c) return badItem(it, 'source_error', `no chat ${it.id} in the demo`)
-  return okItem(it, { messages: c.msgs.map((m) => ({ author: m.who, authorKind: m.me ? 'me' : m.bot ? 'bot' : 'person', at: m.at, text: m.t })) })
+  return okItem(it, { messages: c.msgs.map((m) => ({ author: m.who, authorKind: m.me ? 'me' : m.bot ? 'bot' : 'person', at: m.at, text: m.t })) }, me)
 }
 
 function Preview({ j, it }: { j: Job; it: CtxItem }) {

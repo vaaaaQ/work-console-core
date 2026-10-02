@@ -143,7 +143,7 @@ export async function artText(link: string): Promise<string> {
 /** job = the job the message belongs to, so the backend can find its chat */
 export const act = (ws: string, action: string, args: Record<string, unknown>, jobId?: string) =>
   wsCall<ActRes>(ws, 'POST', '/act', { action, actionId: crypto.randomUUID(), args, ...(jobId ? { job: jobId } : {}) }, 60000)
-/** A takes the item and moves it to Dev; the job is the open one for its key, or a new one already started */
+/** A takes the item and moves it to the board's dev column; the job is the open one for its key, or a new one already started */
 export const startItem = (ws: string, id: string, pb?: string) =>
   wsCall<{ job: Job; created: boolean }>(ws, 'POST', `/board/${enc(id)}/start`, pb ? { pb } : {}, 60000)
 export const ask = (j: string, step: string, q: string) => call<{ run: RunRec }>('POST', '/api/runs', { job: j, step, instruction: q })

@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { columns } from '../../src/data/board.ts'
 import { KINDS, ctxOf, parseWorkId } from '../../src/model/context.ts'
 import * as T from '../../src/model/transitions.ts'
 import { SESSION_OPS } from '../../src/model/types.ts'
@@ -196,7 +197,8 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
     },
     {
       name: 'start_item',
-      description: 'Start a board item of a workspace: in the tracker assign it to the user and move it from Ready to Dev, then create and start its job, or return the job if one is open. '
+      description: 'Start a board item of a workspace: in the tracker assign it to the user and move it from its ready column to its dev column '
+        + `(${perWs((sp) => { const c = columns(sp.page.board); return `${c.ready} to ${c.dev.column}` })}), then create and start its job, or return the job if one is open. `
         + 'Undo cancels a job this created; the tracker change stays.',
       inputSchema: {
         type: 'object', required: ['key'],

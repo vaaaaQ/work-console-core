@@ -100,7 +100,7 @@ export function onBridgeBack(bus: Bus, load: () => Promise<void>, backoff = [200
 type SpaceOpts = { cfg: WsConfig; home: string; artifactsDir: string; sdk?: Sdk; fake: boolean; push: Push }
 
 export async function makeSpace(w: WorkspaceServer, o: SpaceOpts): Promise<Space> {
-  const fake = o.fake ? await startFakeGateway({ seed: fakeSeed(w), prefix: w.jobPrefix, me: w.page.me }) : null
+  const fake = o.fake ? await startFakeGateway({ seed: fakeSeed(w), prefix: w.jobPrefix, me: w.page.me, board: w.page.board }) : null
   // a workspace hook that throws would leave the fake holding its port
   try { return assemble(w, o, fake) } catch (e) { await fake?.close(); throw e }
 }
@@ -122,7 +122,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   const sdk = o.sdk ?? agentSdk({ gatewayUrl: cfg.gatewayUrl, llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools, mcp: w.llm?.mcp })
   const runner = new Runner({
     store, jobs, bus, sdk, cwd: cfg.workDir, max: cfg.maxSessions, gate, artifactsDir: o.artifactsDir, ctx,
-    context: (j) => resolveContext(source, j), me: w.page.me,
+    context: (j) => resolveContext(source, j, w.page.me), me: w.page.me,
   })
   const offInterrupt = bus.on((e) => {
     if (e.kind === 'bridge' && e.state === 'unavailable')

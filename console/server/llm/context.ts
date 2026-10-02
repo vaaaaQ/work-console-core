@@ -9,14 +9,15 @@ import type { ConceptReply } from '../bridge/wire.ts'
 
 export interface Getter { get(concept: string, id: string): Promise<ConceptReply> }
 
-export async function resolveItem(b: Getter, it: CtxItem): Promise<Resolved> {
+/** me = what the user's own entries are signed with, as the prompt names the user */
+export async function resolveItem(b: Getter, it: CtxItem, me?: string): Promise<Resolved> {
   try {
     const r = await b.get(KINDS[it.k].concept, it.id)
     if (!READY.has(r.status) || !r.items || typeof r.items !== 'object') return badItem(it, r.status, r.message || `the bridge answered ${r.status}`)
-    return okItem(it, r.items)
+    return okItem(it, r.items, me)
   } catch (e) {
     return badItem(it, (e as { code?: string }).code || 'unavailable', (e as Error).message || String(e))
   }
 }
 
-export const resolveContext = (b: Getter, j: Job): Promise<Resolved[]> => Promise.all(ctxOf(j).map((it) => resolveItem(b, it)))
+export const resolveContext = (b: Getter, j: Job, me?: string): Promise<Resolved[]> => Promise.all(ctxOf(j).map((it) => resolveItem(b, it, me)))

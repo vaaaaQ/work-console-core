@@ -99,9 +99,10 @@ no `.tsx` and no DOM at load.
 | `id`, `pack` | name, vocabulary, sources, `tz` and `tzl` (the `Pack`) |
 | `playbooks`, `templates` | built-in playbooks and their planned messages; playbook ids are unique across workspaces and apart from the core's |
 | `demo` | jobs, chats and log, plus optional mail, calendar, board and time, for the mode without a gateway |
-| `board` | `itemId(key)` gives the item id in a key or `null`; `key(id)` gives the job key; `start` names the playbook Start uses |
+| `board` | `itemId(key)` gives the item id in a key or `null`; `key(id)` gives the job key; `start` names the playbook Start uses; `ready` is the column a free item waits in (default `Ready`) and `dev` the column and state Start moves it to (default `Dev`, `In Progress`) |
 | `acts` | step-action buttons beyond the core's `time`; act names are unique across workspaces |
-| `me` | the user's name in prompts and on the board; unset, prompts say `the user` and the board says `You` |
+| `me` | the user's name in prompts, in the context of a run and on the board; unset, prompts and context say `the user` and the board says `You` |
+| `reviewMark` | what a review id is written with, as in `review #482`; default `#` |
 
 `workspaces/<id>/ui.tsx` is optional and page-only: the handlers behind `acts` and the dialogs to mount.
 Only `workspaces/page.ts` imports it.
@@ -116,7 +117,7 @@ Only `workspaces/page.ts` imports it.
 | `store(source, cfg, { bus, home })` | the default is B through the source |
 | `llm` | the default `runTools` and the MCP servers for its LLM runs; `llm.mcp` may not name `bridge` or `run` |
 | `plugins(ctx)` | routes under `/api/ws/<id>/…` and a block in `/api/state` |
-| `fake()` | what the fake gateway starts with; the default is derived from `page.demo` |
+| `fake()` | what the fake gateway starts with; the default is derived from `page.demo`; its optional `get` answers a get of a concept's item instead of the item itself |
 
 - **Registries.** `workspaces/page.ts` lists the pages (`WORKSPACES`) and `workspaces/server.ts` the
   servers (`SERVERS`); the first of each is the default. Startup refuses a malformed or duplicate id, a

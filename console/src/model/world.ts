@@ -43,6 +43,8 @@ export const { isClosed, isLive, flows, hasDraft } = T
 export const atOf = (j: Job) => T.atOf(CTX, j)
 /** the open job in this workspace whose current step carries a console action */
 export const jobAtAct = (act: string) => wsJobs().find((j) => !isClosed(j) && stepOf(j, atOf(j))?.act === act)
+/** the job an act's view links to: the one at a step with the act, else a recurring one whose playbook has such a step */
+export const jobForAct = (act: string) => jobAtAct(act) || wsJobs().find((j) => j.st === 'recurring' && steps(j.pb).some((s) => s.act === act))
 export const openBadges = (j: Job, k?: BadgeKind) => flows(j).reduce((a, f) => a + f.b.filter((b) => b.o && (k ? b.k === k : b.k !== 'p')).length, 0)
 export const unsentAt = (j: Job) => T.unsentAt(CTX, j)
 export const needsYou = (j: Job) => T.needsYou(CTX, j)

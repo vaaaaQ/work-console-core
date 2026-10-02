@@ -9,7 +9,7 @@ import { HttpError } from '../events.ts'
 import type { Jobs, Who } from '../jobs/jobs.ts'
 
 /* Start on a board item, the same for the page and a Claude Code session: the tracker assigns the item to
-   the user and moves it to Dev, then its open job is reused or a new one is created and started.
+   the user and moves it to the board's dev column, then its open job is reused or a new one is created and started.
    One per workspace: page gives the board rule, the start playbook and the project of a new job. */
 
 /** longest input Start looks at, counted after trimming; the board rule limits the characters, not the length */

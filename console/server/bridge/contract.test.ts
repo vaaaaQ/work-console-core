@@ -89,6 +89,44 @@ test('the event stream sends status within 11 s', { timeout: 15000 }, async () =
   assert.match(buf, /event: status\ndata: \{/)
 })
 
+const call = async (f: FakeGateway, method: string, path: string, body?: unknown) => {
+  const r = await fetch(f.url + path, { method, headers: { authorization: `Bearer ${f.token}`, 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) })
+  return (await r.json()) as any
+}
+
+test("the fake's Start moves an item from the board's ready column to its dev column", async () => {
+  const it = (id: string, column: string) => ({ id, type: 'Task', title: id, state: 'New', column, lane: 'free', assignedTo: null, changedAt: '2026-10-01T09:00:00Z', link: '' })
+  const seed = { concepts: { board: [it('T-1', 'Approved'), it('T-2', 'Ready')] }, threads: {} }
+  const own = await startFakeGateway({ seed, me: 'Robin', board: { ready: 'Approved', dev: { column: 'Build', state: 'Active' } } })
+  const plain = await startFakeGateway({ seed })
+  const start = async (f: FakeGateway, id: string) => {
+    await call(f, 'POST', '/api/act', { action: 'work.start', actionId: id, args: { id } })
+    const b = (await call(f, 'GET', '/api/snapshot?concepts=board')).concepts.board.items.find((i: { id: string }) => i.id === id)
+    return [b.column, b.state, b.assignedTo]
+  }
+  try {
+    assert.deepEqual(await start(own, 'T-1'), ['Build', 'Active', 'Robin'])
+    assert.deepEqual(await start(own, 'T-2'), ['Ready', 'New', 'Robin'], "Ready is not this board's ready column")
+    assert.deepEqual(await start(plain, 'T-2'), ['Dev', 'In Progress', 'You'])
+    assert.deepEqual(await start(plain, 'T-1'), ['Approved', 'New', 'You'])
+  } finally { await own.close(); await plain.close() }
+})
+
+test("a seed's get answers a concept's item get; the item lookup and the other concepts stay as they are", async () => {
+  const seen: unknown[] = []
+  const f = await startFakeGateway({ seed: {
+    concepts: { time: [{ id: '2026-09', emptyDays: ['2026-09-02'] }], board: [{ id: 'T-1', title: 'x' }] }, threads: {},
+    get: { time: (id, item) => { seen.push([id, item.emptyDays]); return { entries: [{ id: `${id}-01` }] } } },
+  } })
+  try {
+    const r = await call(f, 'GET', '/api/items/time/2026-09')
+    assert.deepEqual([r.status, typeof r.rev, r.items], ['ok', 'number', { entries: [{ id: '2026-09-01' }] }])
+    assert.deepEqual(seen, [['2026-09', ['2026-09-02']]])
+    assert.equal((await call(f, 'GET', '/api/items/time/2026-10')).status, 'source_error', 'no item, no get')
+    assert.deepEqual((await call(f, 'GET', '/api/items/board/T-1')).items, { id: 'T-1', title: 'x' })
+  } finally { await f.close() }
+})
+
 test('the fake mints job ids with the prefix it was started with, J by default', async () => {
   const mint = async (f: FakeGateway) => {
     const r = await fetch(f.url + '/api/state/new-job-id', { method: 'POST', headers: { authorization: `Bearer ${f.token}`, 'content-type': 'application/json' }, body: '{}' })

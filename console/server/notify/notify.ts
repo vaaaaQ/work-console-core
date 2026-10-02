@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import webpush from 'web-push'
+import { pageOf } from '../../src/data/registry.ts'
 import * as T from '../../src/model/transitions.ts'
 import type { Job, RunRec } from '../../src/model/types.ts'
 import type { Bus } from '../events.ts'
@@ -128,8 +129,9 @@ export class Notify {
         const key = `${concept}:${k(i.id)}`
         if (this.marks.get(key) === mark) continue
         this.marks.set(key, mark)
+        // a review id is written as its workspace writes it
         const change = concept === 'review'
-          ? `review #${i.id}: ${(i.votes as { reviewer: string; vote: number }[] | undefined)?.map((v) => `${v.reviewer} ${v.vote > 0 ? '+' : ''}${v.vote}`).join(', ') || 'updated'}`
+          ? `review ${pageOf(ws ?? j.ws)?.reviewMark ?? '#'}${i.id}: ${(i.votes as { reviewer: string; vote: number }[] | undefined)?.map((v) => `${v.reviewer} ${v.vote > 0 ? '+' : ''}${v.vote}`).join(', ') || 'updated'}`
           : `build ${i.pipeline ?? ''} ${i.result || i.status || ''}`.replace(/\s+/g, ' ').trim()
         await this.push(`${j.id}: ${change}`, j.t, withWs(`/?job=${encodeURIComponent(j.id)}`, ws ?? j.ws))
       }
