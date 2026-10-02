@@ -74,6 +74,7 @@ test('initialize answers the asked protocol, a session id and the tools; a wrong
   assert.equal(s.init.status, 200)
   assert.equal(s.init.body.result.protocolVersion, '2025-03-26')
   assert.equal(s.init.body.result.serverInfo.name, 'work-console')
+  assert.match(s.init.body.result.instructions, /create_job and start_item take ws/)
   assert.ok(s.init.sid)
   assert.equal((await s.post({ jsonrpc: '2.0', method: 'notifications/initialized' })).status, 202)
   const names = (await s.rpc('tools/list')).result.tools.map((x: { name: string }) => x.name)

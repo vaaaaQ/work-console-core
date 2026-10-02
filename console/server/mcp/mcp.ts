@@ -283,7 +283,7 @@ export function mcpHandler(o: { tools: Tool[]; token: () => string; version?: st
         return reply({
           protocolVersion: PROTOCOLS.includes(asked) ? asked : PROTOCOLS[0], capabilities: { tools: { listChanged: false } },
           serverInfo: { name: 'work-console', version: o.version || '1.0.0' },
-          instructions: 'Work Console jobs. Read a job with get_job before changing it. Every change applies at once, shows live in the console and is journaled as Claude Code; undo takes back this session\'s last change.',
+          instructions: 'Work Console jobs. Read a job with get_job before changing it. Every change applies at once, shows live in the console and is journaled as Claude Code; undo takes back this session\'s last change. A job id names its workspace; create_job and start_item take ws, which may be left out while one workspace is registered.',
         })
       }
       case 'ping': return reply({})
