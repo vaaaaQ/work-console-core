@@ -42,6 +42,7 @@ node --test "packs/**/test/*.test.mjs"
 |---|---|
 | `console/src/` | The page: model (jobs, playbooks, transitions), views, and demo data under `data/` |
 | `console/server/` | Backend: job store, LLM runner, notifications, MCP job tools, and the gateway client plus fake |
+| `console/workspaces/` | Workspaces: the registries, and two fictional examples (`acme`, `beta`) a workplace copies |
 | `schemas/` | JSON schemas for every concept item and detail a pack returns |
 | `packs/example/` | A worked pack (Jira `work` read/get and `work.comment`) with contract tests |
 | `docs/` | Architecture, the gateway protocol, how to write a pack, the extension carrier, the roadmap |
