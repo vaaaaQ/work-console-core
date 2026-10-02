@@ -150,7 +150,14 @@ export function createApp(d: Deps) {
   async function block(s: Space) {
     const [[jobs, js], [runs, rs], [marks, ms]] = await Promise.all([part(s.jobs.all(), []), part(s.runner.all(), []), part(s.store.marks(), {})])
     const plugins: Record<string, unknown> = {}
-    for (const p of s.plugins) if (p.state) plugins[p.name] = await p.state()
+    for (const p of s.plugins) if (p.state) {
+      // one broken plugin must not take the whole page down: its block carries the error instead
+      try { plugins[p.name] = await p.state() } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        console.error(`workspace ${s.id}: plugin ${p.name} state failed:`, message)
+        plugins[p.name] = { error: message }
+      }
+    }
     return { jobs, runs, marks, parts: { jobs: js, runs: rs, marks: ms }, playbooks: s.ctx().PB, bridge: bridgeOf(s), plugins }
   }
   async function state(r: Req) {
@@ -351,11 +358,12 @@ export function createApp(d: Deps) {
       hidden: Object.entries(await s.store.marks()).filter(([id, m]) => id.startsWith('chat:') && m.hidden).map(([id, m]) => ({ id: id.slice(5), name: m.name ?? id.slice(5) })),
     })],
     ['PUT', /^\/playbooks\/([^/]+)$/, async (r, s) => {
-      const b = await r.body(), id = r.p[0]
+      const b = await r.body(), id = r.p[0], pb = b.pb as Playbook | null | undefined
+      if (pb && pb.ws != null && pb.ws !== s.id) throw new HttpError(400, 'bad_args', `the playbook names workspace ${pb.ws}, not ${s.id}`)
       // a built-in playbook belongs to the workspace that brings it; another one saving it would shadow it there
       const owner = d.spaces.list.find((o) => o !== s && o.ctx().PB[id]?.ws === o.id)
       if (owner) throw new HttpError(409, 'playbook_taken', `${id} belongs to workspace ${owner.id}`)
-      await s.putPlaybook(id, (b.pb as Playbook) ?? null)
+      await s.putPlaybook(id, pb ?? null)
       return { playbooks: s.ctx().PB }
     }],
     ['DELETE', /^\/playbooks\/([^/]+)$/, async (r, s) => {

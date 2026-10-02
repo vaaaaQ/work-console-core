@@ -84,7 +84,8 @@ export class Jobs {
     if (!cur) throw new HttpError(404, 'not_found', `no job ${id}`)
     if (cur.v !== v) throw new HttpError(409, 'conflict', 'the job changed since; nothing undone')
     // a run the page cannot see from prev must not vanish: the runner owns run state
-    const back: Job = { ...structuredClone(prev), flow: structuredClone(prev.flow) }
+    // the page sends prev back, so it must not move the job into another workspace
+    const back: Job = { ...structuredClone(prev), flow: structuredClone(prev.flow), ws: cur.ws }
     for (const [sid, f] of Object.entries(cur.flow)) if (back.flow[sid]) back.flow[sid].run = f.run
     return this.put(cur, back, v)
   }

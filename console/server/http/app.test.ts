@@ -48,32 +48,41 @@ function expectErrors(t: TestContext, ...pats: RegExp[]) {
 }
 
 type Fakes = Record<string, FakeGateway>
-/** acme and beta (or acme alone), each on its own fake gateway; `before` runs before the sources start */
-async function setup(o: { page?: boolean; one?: boolean; before?: (f: Fakes) => void } = {}) {
+/** acme and beta (or acme alone), each on its own fake gateway; `before` runs before the sources start.
+    A setup that fails partway closes what it opened, so a red run fails instead of hanging. */
+async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[]; before?: (f: Fakes) => void } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'wc-http-')), web = join(dir, 'web')
-  mkdirSync(web)
-  if (o.page !== false) { writeFileSync(join(web, 'index.html'), '<!doctype html><title>Work Console</title>'); writeFileSync(join(web, 'sw.js'), '// sw') }
-  const ws: [WorkspaceServer, string | null][] = o.one ? [[acmeW, 'Europe/Berlin']] : [[acmeW, 'Europe/Berlin'], [betaW, null]]
-  install(ws.map(([w]) => ({ page: w.page })))
-  const list: Space[] = []
-  for (const [w, tz] of ws) list.push(await makeSpace(w, { cfg: wsCfg(dir, tz), home: dir, artifactsDir: join(dir, 'arts'), sdk, fake: true, push: async () => {} }))
-  const spaces = new Spaces(list), bus = new Bus(), unhub = hub(list, bus)
-  const fakes: Fakes = Object.fromEntries(list.map((s) => [s.id, s.fake!]))
-  const pairing = new Pairing(join(dir, 'home'))
-  const notify = new Notify({ dir: join(dir, 'home'), bus, ctx: () => spaces.ctx(), jobFor: () => undefined, sender: { send: async () => ({ status: 201 }) } })
-  let h: ReturnType<typeof createApp> | null = null
-  const loop = createServer((q, s) => h!.loopback(q, s)), lanS = createServer((q, s) => h!.lan(q, s))
-  const lp = await listen(loop), np = await listen(lanS)
-  h = createApp({ loopbackPort: lp, lanPort: 7411, pcName: 'pc', hub: bus, spaces, pairing, notify, staticDirs: [web], artifactsDir: join(dir, 'arts'), tz: 'Asia/Tokyo' })
-  o.before?.(fakes)
-  for (const s of list) s.source.start()
-  await until(() => list.every((s) => s.source.available()))
+  const list: Space[] = [], servers: Server[] = []
+  let h: ReturnType<typeof createApp> | null = null, unhub = () => {}
   const stop = async () => {
-    h!.close(); unhub()
-    await Promise.all(list.map((s) => s.close()))
-    await Promise.all([loop, lanS].map((s) => new Promise((r) => { s.closeAllConnections(); s.close(r) })))
+    h?.close(); unhub()
+    await Promise.allSettled(list.map((s) => s.close()))
+    await Promise.all(servers.map((s) => new Promise((r) => { s.closeAllConnections(); s.close(r) })))
   }
-  return { fakes, spaces, pairing, lp, np, stop, dir }
+  try {
+    mkdirSync(web)
+    if (o.page !== false) { writeFileSync(join(web, 'index.html'), '<!doctype html><title>Work Console</title>'); writeFileSync(join(web, 'sw.js'), '// sw') }
+    const beta = o.betaPlugins ? { ...betaW, plugins: () => o.betaPlugins! } : betaW
+    const ws: [WorkspaceServer, string | null][] = o.one ? [[acmeW, 'Europe/Berlin']] : [[acmeW, 'Europe/Berlin'], [beta, null]]
+    install(ws.map(([w]) => ({ page: w.page })))
+    for (const [w, tz] of ws) list.push(await makeSpace(w, { cfg: wsCfg(dir, tz), home: dir, artifactsDir: join(dir, 'arts'), sdk, fake: true, push: async () => {} }))
+    const spaces = new Spaces(list), bus = new Bus()
+    unhub = hub(list, bus)
+    const fakes: Fakes = Object.fromEntries(list.map((s) => [s.id, s.fake!]))
+    const pairing = new Pairing(join(dir, 'home'))
+    const notify = new Notify({ dir: join(dir, 'home'), bus, ctx: () => spaces.ctx(), jobFor: () => undefined, sender: { send: async () => ({ status: 201 }) } })
+    const loop = createServer((q, s) => h!.loopback(q, s)), lanS = createServer((q, s) => h!.lan(q, s))
+    servers.push(loop, lanS)
+    const lp = await listen(loop), np = await listen(lanS)
+    h = createApp({ loopbackPort: lp, lanPort: 7411, pcName: 'pc', hub: bus, spaces, pairing, notify, staticDirs: [web], artifactsDir: join(dir, 'arts'), tz: 'Asia/Tokyo' })
+    o.before?.(fakes)
+    for (const s of list) s.source.start()
+    await until(() => list.every((s) => s.source.available()))
+    return { fakes, spaces, pairing, lp, np, stop, dir }
+  } catch (e) {
+    await stop().catch(() => {})
+    throw e
+  }
 }
 async function until(f: () => boolean | Promise<boolean>, ms = 3000) {
   const t0 = Date.now()
@@ -177,6 +186,20 @@ test('state: the PC zone in home, one block per workspace with its jobs, playboo
   } finally { await stop() }
 })
 
+test("a plugin whose state() throws keeps /api/state up: its block carries the error, the others are intact", async (t) => {
+  expectErrors(t, /workspace beta: plugin boom state failed/)
+  const boom: Plugin = { name: 'boom', routes: [], state: () => { throw new Error('no billing repo') } }
+  const { lp, stop } = await setup({ betaPlugins: [boom] })
+  try {
+    const st = await call(lp, 'GET', '/api/state')
+    assert.equal(st.status, 200, st.text)
+    assert.deepEqual(st.json.ws.beta.plugins, { boom: { error: 'no billing repo' } })
+    assert.deepEqual(st.json.ws.acme.plugins, { echo: { on: true } })
+    assert.deepEqual(st.json.ws.acme.parts, { jobs: 'ok', runs: 'ok', marks: 'ok' }); assert.equal(st.json.ws.acme.bridge.state, 'ok')
+    assert.deepEqual(st.json.ws.beta.parts, { jobs: 'ok', runs: 'ok', marks: 'ok' })
+  } finally { await stop() }
+})
+
 test('a job id finds its workspace by prefix; an id no workspace owns is 404, never a 500', async () => {
   const { lp, spaces, stop } = await setup()
   try {
@@ -205,6 +228,12 @@ test('a job id finds its workspace by prefix; an id no workspace owns is 404, ne
     const none = await call(lp, 'POST', '/api/jobs', { body: { t: 'where?', key: 'NEW', pb: 'action', prj: 'platform' } })
     assert.equal(none.status, 400); assert.equal(none.json.error.message, 'say which workspace: acme, beta')
     assert.equal((await call(lp, 'POST', '/api/jobs', { body: { t: 'where?', key: 'NEW', pb: 'action', prj: 'platform', ws: 'zzz' } })).json.error.code, 'no_workspace')
+
+    // an A- id sitting in beta's store is still not found: routing goes by prefix, never falls through to another workspace
+    await spaces.get('beta').store.putJob({ ...structuredClone(b.json.job as Job), id: 'A-0005', t: 'stray' }, null)
+    assert.equal((await spaces.get('beta').jobs.get('A-0005'))?.t, 'stray')
+    const stray = await call(lp, 'GET', '/api/jobs/A-0005')
+    assert.equal(stray.status, 404, stray.text); assert.deepEqual(stray.json.error, { code: 'not_found', message: 'no job A-0005' })
   } finally { await stop() }
 })
 
@@ -222,8 +251,10 @@ test('a command round trip, a stale version is 409 with the current job, undo', 
     const bad = await call(lp, 'POST', `/api/jobs/${job.id}/cmd`, { body: { cmd: { op: 'runDraft', step, t: 'x' } } })
     assert.equal(bad.status, 400, 'the page cannot send runner ops')
 
-    const u = await call(lp, 'POST', '/api/undo', { body: { job: job.id, v: r.json.job.v, prev: r.json.prev } })
-    assert.equal(u.status, 200, u.text)
+    // a prev that names another workspace cannot move the job there
+    const u = await call(lp, 'POST', '/api/undo', { body: { job: job.id, v: r.json.job.v, prev: { ...r.json.prev, ws: 'beta' } } })
+    assert.equal(u.status, 200, u.text); assert.equal(u.json.job.ws, 'acme')
+    assert.equal((await call(lp, 'GET', `/api/jobs/${job.id}`)).json.job.ws, 'acme')
     assert.equal(u.json.job.flow[step].b.length, job.flow[step].b.length); assert.equal(r.json.job.flow[step].b.length, job.flow[step].b.length + 1)
     assert.equal((await call(lp, 'POST', '/api/undo', { body: { job: job.id, v: r.json.job.v, prev: r.json.prev } })).status, 409)
   } finally { await stop() }
@@ -295,7 +326,7 @@ test('a state store that cannot be read shows as unavailable, not as no jobs', a
 })
 
 test('SSE opens with one bridge frame per workspace; a job event carries its workspace', async () => {
-  const { lp, stop } = await setup()
+  const { lp, fakes, stop } = await setup()
   try {
     const { job, step } = await openStep(lp, 'beta')
     const got: string[] = []
@@ -314,6 +345,13 @@ test('SSE opens with one bridge frame per workspace; a job event carries its wor
     await until(() => frames().some((f) => f.kind === 'job'))
     const e = frames().find((f) => f.kind === 'job')!.data
     assert.equal(e.job.id, job.id); assert.equal(e.ws, 'beta')
+    // the write's own delta comes back as a source frame; a later delta on the same stream is the barrier behind it
+    fakes.beta.emitDelta({ concept: 'chat', upserts: [] })
+    await until(() => frames().some((f) => f.kind === 'source' && f.data.concept === 'chat'))
+    const src = frames().filter((f) => f.kind === 'source')
+    assert.deepEqual(src.map((f) => [f.data.concept, f.data.ws]), [['jobs', 'beta'], ['chat', 'beta']])
+    assert.deepEqual(src[0].data.upserts, [], 'a source frame tells the page what to re-read, never the documents')
+    assert.equal(frames().filter((f) => f.kind === 'job').length, 1, 'one change, one job frame')
     sse.destroy()
   } finally { await stop() }
 })
@@ -395,8 +433,12 @@ test('playbooks: saved in their own workspace; an id another workspace owns is 4
 
     const mine = await call(lp, 'PUT', '/api/ws/beta/playbooks/mine', { body: { pb: { ...dev, ws: 'beta', n: 'Mine', custom: 1 } } })
     assert.equal(mine.status, 200, mine.text); assert.ok(mine.json.playbooks.mine)
+    // a body that names another workspace is refused, and nothing is saved in either
+    const other = await call(lp, 'PUT', '/api/ws/beta/playbooks/mine2', { body: { pb: { ...dev, ws: 'acme', n: 'Mine 2', custom: 1 } } })
+    assert.equal(other.status, 400, other.text); assert.equal(other.json.error.code, 'bad_args')
     const st = (await call(lp, 'GET', '/api/state')).json
     assert.ok(st.ws.beta.playbooks.mine); assert.equal(st.ws.acme.playbooks.mine, undefined)
+    assert.equal(st.ws.beta.playbooks.mine2, undefined); assert.equal(st.ws.acme.playbooks.mine2, undefined)
     const del = await call(lp, 'DELETE', '/api/ws/beta/playbooks/mine')
     assert.equal(del.status, 200, del.text); assert.equal(del.json.playbooks.mine, undefined)
   } finally { await stop() }
