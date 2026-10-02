@@ -20,10 +20,12 @@ export function Knowledge() {
   const [sel, setSel] = React.useState<Note | null>(null)
   // notes are the workspace's on screen: a switch drops what the other one showed
   const ws = S.ws
-  React.useEffect(() => { setSel(null) }, [ws])
+  React.useEffect(() => { setSel(null); setHits(null) }, [ws])
+  // a reply for a workspace no longer on screen is dropped
+  const mine = <T,>(f: (x: T) => void) => (x: T) => { if (S.ws === ws) f(x) }
   React.useEffect(() => {
     if (!LIVE.on || !q.trim()) { setHits(null); return }
-    const t = setTimeout(() => { api.searchNotes(ws, q.trim()).then(setHits, (e) => toast((e as Error).message)) }, 250)
+    const t = setTimeout(() => { api.searchNotes(ws, q.trim()).then(mine(setHits), mine((e: unknown) => toast((e as Error).message))) }, 250)
     return () => clearTimeout(t)
   }, [q, ws])
   const head = (acts?: React.ReactNode) => (
@@ -31,7 +33,7 @@ export function Knowledge() {
       <p>Notes an LLM reads on the workplace: the domain, and the machine itself. An LLM only proposes; proposals wait in Approvals.</p></div>{acts}</div>
   )
   if (!LIVE.on) return <>{head()}{box('Knowledge lives in the bridge on the workplace. This demo has no backend.')}</>
-  const open = (id: string) => api.note(ws, id).then(setSel, (e) => toast((e as Error).message))
+  const open = (id: string) => api.note(ws, id).then(mine(setSel), mine((e: unknown) => toast((e as Error).message)))
   const l = L(ws), list: (NoteIndex | Hit)[] = hits ?? l.notes
   return <>
     {head(<div className="acts"><button className="btn pri" onClick={() => editNote(null, setSel)}><Ic n="plus" sm />New note</button></div>)}

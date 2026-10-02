@@ -11,19 +11,21 @@ import type { Sdk } from '../../server/llm/sdk.ts'
 import type { WorkspaceServer } from '../../server/workspace.ts'
 import acmeServer from '../../workspaces/acme/server.ts'
 import { acme } from '../testkit.ts'
-import { CHATS, JOBS, S } from '../model/world.ts'
+import { CHATS, JOBS, PB, S } from '../model/world.ts'
 import * as T from '../model/transitions.ts'
 import type { Playbook } from '../model/types.ts'
 import * as api from './api.ts'
-import { zone } from '../lib/zone.ts'
+import { setZone, zone } from '../lib/zone.ts'
+import { HID, hiddenOf, hideIn, loadHidden, unhideIn } from '../actions/hidden.ts'
 import { L, applyState, fromQuery, loadSources, onEvent, pbWs, srcState } from './boot.ts'
 
 /* The page's client against the real backend (fake gateways, scripted SDK): the shapes the page
    sends and reads are the ones the server speaks. Two workspaces: acme mints A-NNNN, beta is Acme
-   under another id and prefix, on its own fake gateway. */
+   under another id and prefix, with one playbook of its own, on its own fake gateway. */
 
 const sdk: Sdk = { async *start({ tools }) { yield { k: 'session', id: 'sess-1' }; await tools.submitDraft('a draft'); yield { k: 'result', ok: true } } }
-const betaW: WorkspaceServer = { ...acmeServer, page: { ...acme, id: 'beta', playbooks: {} }, jobPrefix: 'B' }
+const betaPb = { n: 'Beta only', ph: [{ c: 'A', n: 'One', s: [{ id: 'b1', t: 'Do it', m: 'you', x: 'done' }] }] } as unknown as Playbook
+const betaW: WorkspaceServer = { ...acmeServer, page: { ...acme, id: 'beta', playbooks: { 'beta-only': betaPb } }, jobPrefix: 'B' }
 
 async function until(f: () => boolean | Promise<boolean>, ms = 3000) {
   const t0 = Date.now()
@@ -141,6 +143,32 @@ test('a chat thread is hidden and unhidden through the backend', async () => {
   } finally { await m.close() }
 })
 
+test('hidden chats: one list per workspace; an Unhide acts on the workspace whose list held the thread', async () => {
+  const m = await backend()
+  const sel = S.ws
+  try {
+    applyState(await api.state())
+    api.LIVE.on = true
+    await loadSources('acme'); await loadSources('beta')
+    const id = CHATS.acme[0].id
+    assert.ok(CHATS.beta.some((x) => x.id === id), 'beta has a thread under the same id')
+    S.ws = 'acme'
+    const r = hideIn('acme', id)!
+    assert.equal(await r.done, null)
+    assert.deepEqual(hiddenOf('acme').map((h) => h.id), [id])
+    S.ws = 'beta'
+    await loadHidden('beta'); await loadHidden('acme')
+    assert.deepEqual(hiddenOf('beta'), [], "acme's hidden thread is not in beta's list")
+    assert.deepEqual(hiddenOf('acme').map((h) => h.id), [id], "a list that lands after the switch stays its own workspace's")
+    // the Unhide clicked in acme's list runs while beta is on screen
+    assert.equal(await unhideIn('acme', id), null)
+    assert.deepEqual(await api.hiddenChats('acme'), [], 'unhidden in acme')
+    assert.deepEqual(hiddenOf('acme'), [])
+    assert.deepEqual(await api.hiddenChats('beta'), [], 'beta was never asked')
+    assert.ok(CHATS.beta.some((x) => x.id === id))
+  } finally { S.ws = sel; api.LIVE.on = false; api.LIVE.ws = {}; HID.list = {}; await m.close() }
+})
+
 test('an act, a run with its feed, cancel without a body, playbooks and pairing', async () => {
   const m = await backend()
   try {
@@ -204,6 +232,14 @@ test('applyState fills one live block per workspace; sources load into their own
     assert.equal(L('beta').sources.chat, 'ok')
     assert.equal(srcState('chat', 'acme'), 'loading', "acme's sources are not loaded yet")
     assert.equal(srcState('chat', 'nowhere'), 'not served by the console backend')
+    // a source frame reloads that concept in its own workspace only
+    L('beta').sources.mail = 'stale'
+    const seen = await paths(m.loopbackPort, async () => {
+      onEvent({ kind: 'source', ws: 'beta', concept: 'mail' })
+      await until(() => L('beta').sources.mail === 'ok')
+    })
+    assert.deepEqual(seen, ['/api/ws/beta/sources'])
+    assert.equal(L('acme').sources.mail, undefined, "acme's block is not touched")
     // a bridge frame moves only its own workspace
     onEvent({ kind: 'bridge', ws: 'beta', state: 'unavailable', concepts: {} })
     assert.equal(L('beta').bridge, 'unavailable'); assert.equal(L('acme').bridge, 'ok')
@@ -214,15 +250,25 @@ test('applyState fills one live block per workspace; sources load into their own
 
 test('applyState takes the home zone and remembers which workspace holds each playbook', async () => {
   const m = await backend()
-  const sel = S.ws
+  const sel = S.ws, was = zone()
   try {
     const st = await api.state()
+    // a home zone unlike the one test.env pins, so only applyState can have set it
+    const home = was === 'Asia/Tokyo' ? 'Europe/Lisbon' : 'Asia/Tokyo'
+    applyState({ ...st, home: { ...st.home, tz: home } })
+    assert.equal(zone(), home)
+    applyState({ ...st, home: { ...st.home, tz: 'Nowhere/Atlantis' } })
+    assert.equal(zone(), home, 'a zone this runtime does not know leaves the one it had')
     applyState(st)
-    assert.equal(zone(), st.home.tz)
+    S.ws = 'acme'
+    assert.equal(PB['beta-only']?.n, 'Beta only', "beta's own playbook is in PB")
+    assert.equal(pbWs('beta-only'), 'beta', 'and is saved to beta from any workspace')
     S.ws = 'beta'
     assert.equal(pbWs('dev-item'), 'acme', "acme's playbook is saved to acme from any workspace")
+    assert.ok('action' in st.ws.acme.playbooks && 'action' in st.ws.beta.playbooks)
+    assert.equal(pbWs('action'), 'beta', "a key both carry is the last block's, the copy PB holds")
     assert.equal(pbWs('not-yet'), 'beta', 'a new one goes to the workspace on screen')
-  } finally { S.ws = sel; await m.close() }
+  } finally { S.ws = sel; setZone(was); await m.close() }
 })
 
 test('fromQuery: a job opens in its workspace; ws= opens that workspace', async () => {

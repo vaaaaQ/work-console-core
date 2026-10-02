@@ -105,7 +105,7 @@ async function call<T>(method: string, path: string, body?: unknown, timeout = 1
 }
 
 /** a workspace-bound route: /api/ws/<ws><path> */
-const wsCall = <T>(ws: string, method: string, path: string, body?: unknown, timeout?: number) =>
+export const wsCall = <T>(ws: string, method: string, path: string, body?: unknown, timeout?: number) =>
   call<T>(method, `/api/ws/${enc(ws)}${path}`, body, timeout)
 
 /** null = no backend (demo); 'unpaired' = this device has no pairing yet */

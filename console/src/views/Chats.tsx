@@ -5,7 +5,7 @@ import { LIVE } from '../live/api.ts'
 import { loadThread, srcState } from '../live/boot.ts'
 import { repaint } from '../store.ts'
 import { go } from '../actions/nav.tsx'
-import { HID, chatSubmit, curChat, hideChat, loadHidden, msgDraft, msgJob, pickChat, summarize, toggleHidden, unhideChat } from '../actions/sources.tsx'
+import { HID, chatSubmit, curChat, hiddenOf, hideChat, loadHidden, msgDraft, msgJob, pickChat, summarize, toggleHidden, unhideChat } from '../actions/sources.tsx'
 import { Ic } from '../ui/Icon.tsx'
 
 /** the LLM summary of a thread or a mail, made only on request */
@@ -28,10 +28,10 @@ export function Unavailable({ what, st }: { what: string; st: string }) {
 }
 
 export function Chats() {
-  const w = W(), L = CHATS[S.ws] || [], c = curChat(), st = srcState('chat'), hid = HID.list
+  const w = W(), ws = S.ws, L = CHATS[ws] || [], c = curChat(), st = srcState('chat'), hid = hiddenOf(ws)
   React.useEffect(() => { if (c) loadThread(c.id) }, [c?.id, st])
   // a hide or unhide anywhere changes the list, so the count follows it
-  React.useEffect(() => { loadHidden() }, [S.ws, st, L.length])
+  React.useEffect(() => { void loadHidden(ws) }, [ws, st, L.length])
   if (st && st !== 'ok') return <Unavailable what="Chats" st={st} />
   if (!c && !hid.length) return <div className="empty">{LIVE.on ? 'No chats.' : `No chat source in ${w.n}.`}</div>
   const jobs = c ? JOBS.filter((j) => j.chat === c.id) : [], tool = w.src.chat?.n
@@ -42,7 +42,7 @@ export function Chats() {
       <div className="list">
         <div className="list-tg"><button className="fb" aria-pressed={HID.open} onClick={toggleHidden}><Ic n="archive" sm />Hidden<span className="n">{hid.length}</span></button></div>
         {HID.open ? (hid.length ? hid.map((h) => (
-          <div key={h.id} className="li"><span className="r1"><span className="nm">{h.name}</span><span className="fsp" /><button className="btn sm ghost" onClick={() => unhideChat(h.id)}><Ic n="inbox" sm />Unhide</button></span></div>))
+          <div key={h.id} className="li"><span className="r1"><span className="nm">{h.name}</span><span className="fsp" /><button className="btn sm ghost" onClick={() => unhideChat(h.id, ws)}><Ic n="inbox" sm />Unhide</button></span></div>))
           : <div className="empty">No hidden threads.</div>)
           : L.map((x) => {
             const l = last(x)
@@ -55,7 +55,7 @@ export function Chats() {
           })}</div>
       {c ? <div className="pane">
         <div className="mail-h"><div className="row"><h2>{c.name}</h2><span className="src">{tool} · {c.kind}</span><span className="fsp" />
-          {c.hidden ? <button className="btn sm ghost" onClick={() => unhideChat(c.id)}><Ic n="inbox" sm />Unhide</button>
+          {c.hidden ? <button className="btn sm ghost" onClick={() => unhideChat(c.id, ws)}><Ic n="inbox" sm />Unhide</button>
             : <button className="btn sm ghost" title="Hide this thread here; the chat tool is not changed" onClick={() => hideChat(c.id)}><Ic n="archive" sm />Hide</button>}</div>
           {jobs.length ? <div className="row">{jobs.map((j) => <button key={j.id} className="btn sm ghost" onClick={() => go('job', j.id)}><Ic n="list" sm />{j.id} · {j.key}</button>)}</div> : null}</div>
         <SumBox id={c.id} text={c.sum} />

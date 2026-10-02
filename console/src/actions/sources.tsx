@@ -7,13 +7,14 @@ import * as api from '../live/api.ts'
 import { refreshThread } from '../live/boot.ts'
 import { CHATS, MAIL, S, W, byId } from '../model/world.ts'
 import { doCmd, sendVia } from './flow.tsx'
-import type { Chat, MailCat, Ws } from '../model/types.ts'
+import type { MailCat, Ws } from '../model/types.ts'
 import { commit } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
 import { CancelBtn } from '../ui/bits.tsx'
 import { closeModal, modal } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
 import { newJob } from './playbooks.tsx'
+import { HID, hideIn, loadHidden, unhideIn } from './hidden.ts'
 
 export const curChat = () => { const L = CHATS[S.ws] || []; return L.find((x) => x.id === S.chat[S.ws]) || L[0] }
 export const mailOf = (id: string) => (MAIL[S.ws] || []).find((x) => x.id === id)
@@ -27,40 +28,20 @@ export function summarize(id: string) {
 /* ----- chats ----- */
 export function pickChat(id: string) { commit(() => { S.chat[S.ws] = id }) }
 
-/* hidden threads: the console's own mark (B when live, memory in the demo), never the chat tool's */
-export const HID = { open: false, list: [] as { id: string; name: string }[], demo: [] as { c: Chat; i: number }[] }
-
-/** the list is the current workspace's; one that lands after a switch is dropped */
-export function loadHidden(ws: Ws = S.ws) {
-  if (LIVE.on) void api.hiddenChats(ws).then((l) => { if (S.ws === ws) commit(() => { HID.list = l }) }).catch(() => undefined)
-}
-export function toggleHidden() { commit(() => { HID.open = !HID.open }); if (HID.open) loadHidden() }
+/* hidden threads: one list per workspace, kept in hidden.ts */
+export { HID, hiddenOf, loadHidden } from './hidden.ts'
+export function toggleHidden() { commit(() => { HID.open = !HID.open }); if (HID.open) void loadHidden() }
 
 export function hideChat(id: string) {
-  const ws = S.ws, L = CHATS[ws] || [], i = L.findIndex((x) => x.id === id), c = L[i]
-  if (!c) return
-  commit(() => {
-    CHATS[ws] = L.filter((x) => x !== c)
-    HID.list = [...HID.list.filter((h) => h.id !== id), { id, name: c.name }]
-    if (!LIVE.on) HID.demo.push({ c, i })
-  })
-  if (LIVE.on) void api.hideChat(ws, id, true, c.name).catch((e) => {
-    commit(() => { const now = CHATS[ws] || []; if (!now.some((x) => x.id === id)) now.splice(Math.min(i, now.length), 0, c); HID.list = HID.list.filter((h) => h.id !== id) })
-    toast(`Not hidden: ${(e as Error).message}`)
-  })
-  toast(<>Hid <b>{c.name}</b> · it comes back when someone mentions you</>, 'Undo', () => unhideChat(id, ws))
+  const ws = S.ws, r = hideIn(ws, id)
+  if (!r) return
+  void r.done.then((why) => { if (why) toast(`Not hidden: ${why}`) })
+  toast(<>Hid <b>{r.c.name}</b> · it comes back when someone mentions you</>, 'Undo', () => unhideChat(id, ws))
 }
 
-export function unhideChat(id: string, ws: Ws = S.ws) {
-  const h = HID.list.find((x) => x.id === id), back = HID.demo.find((x) => x.c.id === id)
-  commit(() => {
-    HID.list = HID.list.filter((x) => x.id !== id)
-    const L = CHATS[ws] || [], on = L.find((x) => x.id === id)
-    if (on) { delete on.hidden; delete on.mentioned }
-    if (back) { HID.demo = HID.demo.filter((x) => x !== back); if (!on) L.splice(Math.min(back.i, L.length), 0, back.c) }
-  })
-  // live: the thread comes back with the next chat reload, once B has rejoined it
-  if (LIVE.on) void api.hideChat(ws, id, false).catch((e) => { commit(() => { if (h && !HID.list.some((x) => x.id === id)) HID.list.push(h) }); toast(`Not unhidden: ${(e as Error).message}`) })
+/** ws is the workspace whose list the thread is in, not necessarily the one on screen by the time it runs */
+export function unhideChat(id: string, ws: Ws) {
+  void unhideIn(ws, id).then((why) => { if (why) toast(`Not unhidden: ${why}`) })
 }
 
 export function msgJob(i: number) {

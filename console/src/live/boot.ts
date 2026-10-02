@@ -34,7 +34,7 @@ function rereadLater() {
   rereading = setTimeout(() => void api.state().then((s) => commit(() => applyState(s)), rereadLater), 10000)
 }
 
-/** the workspace whose store holds a playbook: the first block that carried it */
+/** the workspace whose store holds a playbook: the block PB took it from */
 const PB_WS: Record<string, Ws> = {}
 /** where a playbook is saved or removed; one not loaded yet goes to its own workspace, else the one on screen */
 export const pbWs = (k: string): Ws => PB_WS[k] || PB[k]?.ws || S.ws
@@ -45,7 +45,8 @@ export function applyState(st: State) {
   const blocks = Object.entries(st.ws)
   for (const k of Object.keys(PB)) delete PB[k]
   for (const k of Object.keys(PB_WS)) delete PB_WS[k]
-  for (const [id, b] of blocks) { for (const k of Object.keys(b.playbooks)) PB_WS[k] ||= id; Object.assign(PB, b.playbooks) }
+  // a key two blocks carry is the last block's, as in the server's Spaces.ctx(), in PB and PB_WS alike
+  for (const [id, b] of blocks) { for (const k of Object.keys(b.playbooks)) PB_WS[k] = id; Object.assign(PB, b.playbooks) }
   // a job event may have landed while the state was on its way: keep whichever copy is newer
   const have = new Map(JOBS.map((j) => [j.id, j]))
   setJobs(blocks.flatMap(([, b]) => b.jobs).map((j) => { const o = have.get(j.id); return o && o.v != null && j.v != null && o.v > j.v ? o : j }))
