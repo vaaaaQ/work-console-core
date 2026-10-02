@@ -4,27 +4,26 @@ import { extname, join, resolve, sep } from 'node:path'
 import { adapt } from '../../src/live/adapt.ts'
 import { ctxOf } from '../../src/model/context.ts'
 import type * as T from '../../src/model/transitions.ts'
-import type { Cmd, Job, Playbook } from '../../src/model/types.ts'
-import type { WorkspacePage } from '../../src/workspace.ts'
-import { startItem } from '../board/start.ts'
+import type { Cmd, Job, Playbook, RunRec } from '../../src/model/types.ts'
 import { resolveAct } from '../bridge/actions.ts'
 import { GatewayError, READY } from '../bridge/wire.ts'
 import type { ActRes, ConceptReply } from '../bridge/wire.ts'
 import { HttpError } from '../events.ts'
 import type { Bus, Ev } from '../events.ts'
-import type { Jobs } from '../jobs/jobs.ts'
 import { knowledge, noteIn } from '../knowledge/knowledge.ts'
 import { resolveItem } from '../llm/context.ts'
 import { safeName } from '../llm/runner.ts'
-import type { Runner } from '../llm/runner.ts'
 import type { Notify } from '../notify/notify.ts'
 import { qrSvg } from '../pairing/pairing.ts'
 import type { Pairing } from '../pairing/pairing.ts'
-import type { Store } from '../store/port.ts'
+import type { Space, Spaces } from '../spaces.ts'
+import type { PluginReq } from '../workspace.ts'
 
 /* Two listeners over one router. Loopback trusts the PC but checks Host and Origin, so a web page
    the browser happens to have open cannot drive it (DNS rebinding, cross-site POST). LAN serves the
-   page to anyone and the API only to a paired device cookie; pairing and devices stay PC-only. */
+   page to anyone and the API only to a paired device cookie; pairing and devices stay PC-only.
+   Job and run routes are shared and find their workspace by the job id's prefix or by asking each
+   runner; the workspace-bound ones live under /api/ws/<id>/, then that workspace's plugin routes. */
 
 export interface Bridge {
   available(): boolean
@@ -36,21 +35,21 @@ export interface Bridge {
 }
 export interface Deps {
   loopbackPort: number; lanPort: number; pcName: string
-  bus: Bus; store: Store; jobs: Jobs; runner: Runner; bridge: Bridge; pairing: Pairing; notify?: Notify
-  ctx: () => T.Ctx
-  /** stores a playbook (null deletes it) and refreshes what ctx() returns */
-  putPlaybook(id: string, pb: Playbook | null): Promise<void>
+  /** every space's events on one bus, each tagged with its workspace id */
+  hub: Bus
+  spaces: Spaces
+  pairing: Pairing; notify?: Notify
   staticDirs: string[]; artifactsDir: string
-  /** the pack's team zone for calendar times; null when it has none */
-  tz?: string | null
-  /** the workspace Start reads the board rule, the start playbook and a new job's project from */
-  page: WorkspacePage
+  /** the PC's zone, for /api/state's home */
+  tz: string
   /** the job tools for Claude Code sessions, served on loopback only */
   mcp?: RequestListener
 }
 
 type Side = 'loopback' | 'lan'
 type Req = { side: Side; m: string; path: string; q: URLSearchParams; p: string[]; body: () => Promise<Record<string, unknown>>; device: string | null; req: IncomingMessage; res: ServerResponse }
+type Route<A extends unknown[] = []> = readonly [method: string, path: RegExp, run: (r: Req, ...a: A) => Promise<unknown> | unknown]
+type Part = 'ok' | 'unavailable'
 
 const COOKIE = 'wc_dev'
 const MIME: Record<string, string> = {
@@ -63,6 +62,8 @@ const ART_TYPES: Record<string, string> = {
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 }
 const PC_ONLY = /^\/api\/(pair|devices)(\/|$)/
+/** a workspace-bound route: the workspace id, then the path the per-space table and plugins match */
+const IN_WS = /^\/api\/ws\/([^/]+)(\/.*)$/
 
 function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
   if (res.headersSent) return
@@ -104,6 +105,19 @@ const str = (v: unknown, what: string) => {
   if (typeof v !== 'string' || !v) throw new HttpError(400, 'bad_args', `${what} is missing`)
   return v
 }
+const BAD_PATH = () => new HttpError(400, 'bad_path', 'bad path')
+
+/** the first route of the method whose path matches, its params decoded; 'method' when only another method's does */
+function find<R extends readonly [string, RegExp, unknown]>(table: readonly R[], m: string, path: string): { run: R[2]; p: string[] } | 'method' | null {
+  let other = false
+  for (const [rm, re, run] of table) {
+    const hit = path.match(re)
+    if (!hit) continue
+    if (rm !== m) { other = true; continue }
+    try { return { run, p: hit.slice(1).map(decodeURIComponent) } } catch { throw BAD_PATH() }
+  }
+  return other ? 'method' : null
+}
 
 export function createApp(d: Deps) {
   /** open event streams and the paired device each belongs to (null = the PC) */
@@ -127,21 +141,56 @@ export function createApp(d: Deps) {
   }
 
   /** a part B cannot give is empty and marked unavailable, so the page never reads it as "no jobs" */
-  const part = async <T>(p: Promise<T>, empty: T): Promise<[T, 'ok' | 'unavailable']> => {
+  const part = async <T>(p: Promise<T>, empty: T): Promise<[T, Part]> => {
     try { return [await p, 'ok'] } catch (e) { if (e instanceof GatewayError) return [empty, 'unavailable']; throw e }
   }
+  const bridgeOf = (s: Space) => ({ state: (s.source.available() ? 'ok' : 'unavailable') as Part, concepts: s.source.concepts() })
+
+  /** one workspace's block in /api/state */
+  async function block(s: Space) {
+    const [[jobs, js], [runs, rs], [marks, ms]] = await Promise.all([part(s.jobs.all(), []), part(s.runner.all(), []), part(s.store.marks(), {})])
+    const plugins: Record<string, unknown> = {}
+    for (const p of s.plugins) if (p.state) plugins[p.name] = await p.state()
+    return { jobs, runs, marks, parts: { jobs: js, runs: rs, marks: ms }, playbooks: s.ctx().PB, bridge: bridgeOf(s), plugins }
+  }
   async function state(r: Req) {
-    const [[jobs, js], [runs, rs], [marks, ms]] = await Promise.all([part(d.jobs.all(), []), part(d.runner.all(), []), part(d.store.marks(), {})])
+    const list = d.spaces.list, blocks = await Promise.all(list.map(block))
+    const every = (f: (b: typeof blocks[number]) => Part): Part => (blocks.every((b) => f(b) === 'ok') ? 'ok' : 'unavailable')
     return {
-      jobs, runs, marks, parts: { jobs: js, runs: rs, marks: ms }, playbooks: d.ctx().PB,
-      bridge: { state: d.bridge.available() ? 'ok' : 'unavailable', concepts: d.bridge.concepts() },
+      home: { tz: d.tz, pc: d.pcName },
       side: r.side, device: r.device, push: d.notify ? { key: d.notify.publicKey() } : null,
+      ws: Object.fromEntries(list.map((s, i) => [s.id, blocks[i]])),
+      // R6: until Task 10 — the one-workspace shape the page still reads, merged across the spaces
+      jobs: blocks.flatMap((b) => b.jobs), runs: blocks.flatMap((b) => b.runs), marks: Object.assign({}, ...blocks.map((b) => b.marks)),
+      parts: { jobs: every((b) => b.parts.jobs), runs: every((b) => b.parts.runs), marks: every((b) => b.parts.marks) },
+      playbooks: d.spaces.ctx().PB,
+      bridge: { state: every((b) => b.bridge.state), concepts: Object.assign({}, ...blocks.map((b) => b.bridge.concepts)) },
     }
   }
 
-  async function sources(concepts: string[]) {
+  /** every space's list in one; a space B cannot answer for is left out and named in parts, never a 503 for all */
+  async function merged<T>(f: (s: Space) => Promise<T[]>) {
+    const got = await Promise.all(d.spaces.list.map((s) => part(f(s), [] as T[])))
+    return { items: got.flatMap(([x]) => x), parts: Object.fromEntries(d.spaces.list.map((s, i) => [s.id, got[i][1]])) }
+  }
+
+  /** the run and the space whose runner knows it; a space that cannot answer is skipped, and when no other
+      knows the run its failure is the answer, since the run may be there */
+  async function runOf(id: string): Promise<[Space, RunRec]> {
+    let failed: unknown
+    for (const s of d.spaces.list) {
+      try {
+        const run = await s.runner.get(id)
+        if (run) return [s, run]
+      } catch (e) { if (!(e instanceof GatewayError)) throw e; failed ??= e }
+    }
+    if (failed) throw failed
+    throw new HttpError(404, 'not_found', `no run ${id}`)
+  }
+
+  async function sources(s: Space, concepts: string[]) {
     let raw: Record<string, ConceptReply>
-    try { raw = await d.bridge.read(concepts) } catch (e) {
+    try { raw = await s.source.read(concepts) } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       raw = Object.fromEntries(concepts.map((c) => [c, { status: 'unavailable', message }]))
     }
@@ -154,15 +203,15 @@ export function createApp(d: Deps) {
         status: 'ok', rev: r.rev,
         items: c === 'chat' ? items.map((i) => adapt.chat(i))
           : c === 'mail' ? items.map((i) => adapt.mail(i, { done: i.done === true || undefined, job: typeof i.job === 'string' ? i.job : undefined }))
-            : c === 'cal' ? items.map((i) => ({ id: i.id, ...adapt.cal(i, d.tz ?? null) }))
+            : c === 'cal' ? items.map((i) => ({ id: i.id, ...adapt.cal(i, s.cfg.teamTz ?? null) }))
               : items,
       }
     }
     return { concepts: out }
   }
 
-  async function item(concept: string, id: string, cursor?: string) {
-    const r = await d.bridge.get(concept, id, cursor)
+  async function item(s: Space, concept: string, id: string, cursor?: string) {
+    const r = await s.source.get(concept, id, cursor)
     if (!READY.has(r.status)) throw new HttpError(503, r.status, r.message || `${concept} is unavailable`)
     const it = (r.items || {}) as Record<string, unknown>
     if (concept === 'chat' && Array.isArray(it.messages)) return { ...it, messages: (it.messages as Record<string, unknown>[]).map((m) => adapt.msg(m)) }
@@ -175,23 +224,23 @@ export function createApp(d: Deps) {
     // a source event only tells the page what to re-read; B's deltas can carry whole jobs
     const out = (e: Ev) => {
       if (r.res.writableEnded) return
-      const x = e.kind === 'source' ? { kind: e.kind, concept: e.concept, upserts: [], removes: [] } : e
+      const x = e.kind === 'source' ? { kind: e.kind, concept: e.concept, upserts: [], removes: [], ws: e.ws } : e
       r.res.write(`event: ${e.kind}\ndata: ${JSON.stringify(x)}\n\n`)
     }
-    out({ kind: 'bridge', state: d.bridge.available() ? 'ok' : 'unavailable', concepts: d.bridge.concepts() })
-    const off = d.bus.on(out), ping = setInterval(() => r.res.write(': ping\n\n'), 25000)
+    for (const s of d.spaces.list) out({ kind: 'bridge', ...bridgeOf(s), ws: s.id })
+    const off = d.hub.on(out), ping = setInterval(() => r.res.write(': ping\n\n'), 25000)
     streams.set(r.res, r.device)
     r.res.on('close', () => { off(); clearInterval(ping); streams.delete(r.res) })
   }
 
-  async function act(b: Record<string, unknown>) {
-    if (!d.bridge.available()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; nothing was sent')
+  async function act(s: Space, b: Record<string, unknown>) {
+    if (!s.source.available()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; nothing was sent')
     const chats = async () => {
-      const c = (await d.bridge.read(['chat'])).chat
+      const c = (await s.source.read(['chat'])).chat
       return READY.has(c?.status) && Array.isArray(c.items) ? (c.items as { id: string; name: string }[]) : []
     }
     const a = await resolveAct(b as { action: string; actionId?: string; args?: Record<string, unknown> }, chats)
-    return { actionId: a.actionId, ...(await d.bridge.act(a)) }
+    return { actionId: a.actionId, ...(await s.source.act(a)) }
   }
 
   /** plain text for the page's viewer; ?dl=1 = a download under the file's own name and type */
@@ -207,98 +256,53 @@ export function createApp(d: Deps) {
   }
 
   async function cmd(id: string, b: Record<string, unknown>) {
-    try { return await d.jobs.cmd(id, b.cmd as Cmd, typeof b.v === 'number' ? b.v : undefined) } catch (e) {
-      if (e instanceof HttpError && e.status === 409) throw Object.assign(e, { job: await d.jobs.get(id) })
+    const { jobs } = d.spaces.byJob(id)
+    try { return await jobs.cmd(id, b.cmd as Cmd, typeof b.v === 'number' ? b.v : undefined) } catch (e) {
+      if (e instanceof HttpError && e.status === 409) throw Object.assign(e, { job: await jobs.get(id) })
       throw e
     }
   }
+  async function jobOf(id: string) {
+    const s = d.spaces.byJob(id), job = await s.jobs.get(id)
+    if (!job) throw new HttpError(404, 'not_found', `no job ${id}`)
+    return { s, job }
+  }
 
-  const kn = knowledge(d.bridge)
-  const start = startItem({ jobs: d.jobs, ctx: d.ctx, bridge: d.bridge, page: d.page })
-
-  const routes: [string, RegExp, (r: Req) => Promise<unknown> | unknown][] = [
+  /** shared: matched against the whole path */
+  const routes: Route[] = [
     ['GET', /^\/api\/state$/, state],
-    ['GET', /^\/api\/jobs$/, async () => ({ jobs: await d.jobs.all() })],
+    ['GET', /^\/api\/jobs$/, async () => { const m = await merged((s) => s.jobs.all()); return { jobs: m.items, parts: m.parts } }],
     ['POST', /^\/api\/jobs$/, async (r) => {
       const b = await r.body()
       // Date.parse would read a number as a year
       for (const k of ['ev', 'due']) if (b[k] != null && typeof b[k] !== 'string') throw new HttpError(400, 'bad_args', `${k} is not a string`)
-      return { job: await d.jobs.create(b as unknown as T.NewJob) }
+      const s = d.spaces.pick(b.ws)
+      return { job: await s.jobs.create({ ...b, ws: s.id } as unknown as T.NewJob) }
     }],
-    ['GET', /^\/api\/jobs\/([^/]+)$/, async (r) => {
-      const job = await d.jobs.get(r.p[0])
-      if (!job) throw new HttpError(404, 'not_found', `no job ${r.p[0]}`)
-      return { job }
-    }],
+    ['GET', /^\/api\/jobs\/([^/]+)$/, async (r) => ({ job: (await jobOf(r.p[0])).job })],
     ['POST', /^\/api\/jobs\/([^/]+)\/cmd$/, async (r) => cmd(r.p[0], await r.body())],
     // the text a run would get for one of the job's context items, from the run's own renderer
     ['GET', /^\/api\/jobs\/([^/]+)\/context\/([^/]+)\/([^/]+)$/, async (r) => {
-      const job = await d.jobs.get(r.p[0])
-      if (!job) throw new HttpError(404, 'not_found', `no job ${r.p[0]}`)
+      const { s, job } = await jobOf(r.p[0])
       const it = ctxOf(job).find((c) => c.k === r.p[1] && c.id === r.p[2])
       if (!it) throw new HttpError(404, 'not_found', `${r.p[1]} ${r.p[2]} is not in ${job.id}'s context`)
-      return { item: await resolveItem(d.bridge, it) }
+      return { item: await resolveItem(s.source, it) }
     }],
     ['POST', /^\/api\/undo$/, async (r) => {
-      const b = await r.body()
-      return { job: await d.jobs.undo(str(b.job, 'job'), Number(b.v), b.prev as Job) }
+      const b = await r.body(), id = str(b.job, 'job')
+      return { job: await d.spaces.byJob(id).jobs.undo(id, Number(b.v), b.prev as Job) }
     }],
-    ['POST', /^\/api\/act$/, async (r) => act(await r.body())],
-    ['POST', /^\/api\/board\/([^/]+)\/start$/, async (r) => {
-      const b = await r.body()
-      return start(r.p[0], typeof b.pb === 'string' && b.pb ? b.pb : undefined, 'page')
-    }],
-    ['GET', /^\/api\/sources$/, (r) => sources((r.q.get('concepts') || 'chat,mail,cal').split(',').map((s) => s.trim()).filter(Boolean))],
-    ['GET', /^\/api\/sources\/([^/]+)\/([^/]+)$/, async (r) => ({ item: await item(r.p[0], r.p[1], r.q.get('cursor') || undefined) })],
-    ['POST', /^\/api\/mail\/([^/]+)\/mark$/, async (r) => {
-      const b = await r.body()
-      await d.store.putMark(r.p[0], { done: b.done === true || undefined, job: typeof b.job === 'string' ? b.job : undefined })
-      return { ok: true }
-    }],
-    // hiding is the console's own mark in B, never the chat tool's; unhiding deletes the mark
-    ['POST', /^\/api\/chats\/([^/]+)\/hide$/, async (r) => {
-      const b = await r.body()
-      await d.store.putMark(`chat:${r.p[0]}`, b.hidden === true ? { hidden: true, name: typeof b.name === 'string' ? b.name : r.p[0] } : null)
-      return { ok: true }
-    }],
-    ['GET', /^\/api\/chats\/hidden$/, async () => ({
-      hidden: Object.entries(await d.store.marks()).filter(([id, m]) => id.startsWith('chat:') && m.hidden).map(([id, m]) => ({ id: id.slice(5), name: m.name ?? id.slice(5) })),
-    })],
-    ['PUT', /^\/api\/playbooks\/([^/]+)$/, async (r) => {
-      const b = await r.body()
-      await d.putPlaybook(r.p[0], (b.pb as Playbook) ?? null)
-      return { playbooks: d.ctx().PB }
-    }],
-    ['DELETE', /^\/api\/playbooks\/([^/]+)$/, async (r) => {
-      await d.putPlaybook(r.p[0], null)
-      return { playbooks: d.ctx().PB }
-    }],
-    ['GET', /^\/api\/knowledge$/, async () => ({ notes: await kn.list() })],
-    ['GET', /^\/api\/knowledge\/search$/, async (r) => ({ hits: await kn.search(r.q.get('q') || '', (r.q.get('tags') || '').split(',').map((s) => s.trim()).filter(Boolean)) })],
-    ['GET', /^\/api\/knowledge\/notes\/([^/]+)$/, async (r) => ({ note: await kn.read(r.p[0]) })],
-    ['POST', /^\/api\/knowledge\/notes$/, async (r) => ({ note: await kn.save(null, noteIn(await r.body()), null) })],
-    ['PUT', /^\/api\/knowledge\/notes\/([^/]+)$/, async (r) => {
-      const b = await r.body()
-      if (typeof b.v !== 'number') throw new HttpError(400, 'bad_args', 'an edit names the v it replaces')
-      return { note: await kn.save(r.p[0], noteIn(b), b.v) }
-    }],
-    ['GET', /^\/api\/knowledge\/proposals$/, async () => ({ proposals: await kn.proposals() })],
-    ['POST', /^\/api\/knowledge\/proposals\/([^/]+)\/decide$/, async (r) => {
-      const b = await r.body()
-      return { note: await kn.decide(r.p[0], b.accept === true, typeof b.text === 'string' ? b.text : undefined) }
-    }],
-    ['GET', /^\/api\/runs$/, async () => ({ runs: await d.runner.all() })],
+    ['GET', /^\/api\/runs$/, async () => { const m = await merged((s) => s.runner.all()); return { runs: m.items, parts: m.parts } }],
     ['POST', /^\/api\/runs$/, async (r) => {
-      const b = await r.body()
-      return { run: await d.runner.ask(str(b.job, 'job'), str(b.step, 'step'), String(b.instruction ?? '')) }
+      const b = await r.body(), job = str(b.job, 'job')
+      return { run: await d.spaces.byJob(job).runner.ask(job, str(b.step, 'step'), String(b.instruction ?? '')) }
     }],
     ['GET', /^\/api\/runs\/([^/]+)$/, async (r) => {
-      const run = await d.runner.get(r.p[0])
-      if (!run) throw new HttpError(404, 'not_found', `no run ${r.p[0]}`)
-      return { run, feed: d.runner.feed(run.id) }
+      const [s, run] = await runOf(r.p[0])
+      return { run, feed: s.runner.feed(run.id) }
     }],
-    ['POST', /^\/api\/runs\/([^/]+)\/cancel$/, async (r) => ({ run: await d.runner.cancel(r.p[0]) })],
-    ['POST', /^\/api\/runs\/([^/]+)\/resume$/, async (r) => ({ run: await d.runner.resume(r.p[0]) })],
+    ['POST', /^\/api\/runs\/([^/]+)\/cancel$/, async (r) => ({ run: await (await runOf(r.p[0]))[0].runner.cancel(r.p[0]) })],
+    ['POST', /^\/api\/runs\/([^/]+)\/resume$/, async (r) => ({ run: await (await runOf(r.p[0]))[0].runner.resume(r.p[0]) })],
     ['GET', /^\/api\/artifacts\/([^/]+)\/([^/]+)$/, (r) => artifact(r, r.p[0], r.p[1])],
     ['POST', /^\/api\/push\/subscribe$/, async (r) => {
       if (!d.notify) throw new HttpError(404, 'not_found', 'push is off')
@@ -322,6 +326,80 @@ export function createApp(d: Deps) {
     }],
     ['GET', /^\/api\/events$/, events],
   ]
+
+  /** one workspace's: matched against the path after /api/ws/<id> */
+  const wsRoutes: Route<[Space]>[] = [
+    ['POST', /^\/act$/, async (r, s) => act(s, await r.body())],
+    ['POST', /^\/board\/([^/]+)\/start$/, async (r, s) => {
+      const b = await r.body()
+      return s.start(r.p[0], typeof b.pb === 'string' && b.pb ? b.pb : undefined, 'page')
+    }],
+    ['GET', /^\/sources$/, (r, s) => sources(s, (r.q.get('concepts') || 'chat,mail,cal').split(',').map((x) => x.trim()).filter(Boolean))],
+    ['GET', /^\/sources\/([^/]+)\/([^/]+)$/, async (r, s) => ({ item: await item(s, r.p[0], r.p[1], r.q.get('cursor') || undefined) })],
+    ['POST', /^\/mail\/([^/]+)\/mark$/, async (r, s) => {
+      const b = await r.body()
+      await s.store.putMark(r.p[0], { done: b.done === true || undefined, job: typeof b.job === 'string' ? b.job : undefined })
+      return { ok: true }
+    }],
+    // hiding is the console's own mark in B, never the chat tool's; unhiding deletes the mark
+    ['POST', /^\/chats\/([^/]+)\/hide$/, async (r, s) => {
+      const b = await r.body()
+      await s.store.putMark(`chat:${r.p[0]}`, b.hidden === true ? { hidden: true, name: typeof b.name === 'string' ? b.name : r.p[0] } : null)
+      return { ok: true }
+    }],
+    ['GET', /^\/chats\/hidden$/, async (_r, s) => ({
+      hidden: Object.entries(await s.store.marks()).filter(([id, m]) => id.startsWith('chat:') && m.hidden).map(([id, m]) => ({ id: id.slice(5), name: m.name ?? id.slice(5) })),
+    })],
+    ['PUT', /^\/playbooks\/([^/]+)$/, async (r, s) => {
+      const b = await r.body(), id = r.p[0]
+      // a built-in playbook belongs to the workspace that brings it; another one saving it would shadow it there
+      const owner = d.spaces.list.find((o) => o !== s && o.ctx().PB[id]?.ws === o.id)
+      if (owner) throw new HttpError(409, 'playbook_taken', `${id} belongs to workspace ${owner.id}`)
+      await s.putPlaybook(id, (b.pb as Playbook) ?? null)
+      return { playbooks: s.ctx().PB }
+    }],
+    ['DELETE', /^\/playbooks\/([^/]+)$/, async (r, s) => {
+      await s.putPlaybook(r.p[0], null)
+      return { playbooks: s.ctx().PB }
+    }],
+    ['GET', /^\/knowledge$/, async (_r, s) => ({ notes: await knowledge(s.source).list() })],
+    ['GET', /^\/knowledge\/search$/, async (r, s) => ({ hits: await knowledge(s.source).search(r.q.get('q') || '', (r.q.get('tags') || '').split(',').map((x) => x.trim()).filter(Boolean)) })],
+    ['GET', /^\/knowledge\/notes\/([^/]+)$/, async (r, s) => ({ note: await knowledge(s.source).read(r.p[0]) })],
+    ['POST', /^\/knowledge\/notes$/, async (r, s) => ({ note: await knowledge(s.source).save(null, noteIn(await r.body()), null) })],
+    ['PUT', /^\/knowledge\/notes\/([^/]+)$/, async (r, s) => {
+      const b = await r.body()
+      if (typeof b.v !== 'number') throw new HttpError(400, 'bad_args', 'an edit names the v it replaces')
+      return { note: await knowledge(s.source).save(r.p[0], noteIn(b), b.v) }
+    }],
+    ['GET', /^\/knowledge\/proposals$/, async (_r, s) => ({ proposals: await knowledge(s.source).proposals() })],
+    ['POST', /^\/knowledge\/proposals\/([^/]+)\/decide$/, async (r, s) => {
+      const b = await r.body()
+      return { note: await knowledge(s.source).decide(r.p[0], b.accept === true, typeof b.text === 'string' ? b.text : undefined) }
+    }],
+  ]
+
+  /** what answers a request, or the 400/404/405 that says why nothing does */
+  function route(r: Omit<Req, 'p'>): unknown {
+    const req = (p: string[]): Req => ({ ...r, p })
+    const none = (...found: unknown[]) => found.includes('method')
+      ? new HttpError(405, 'method', `${r.m} is not allowed on ${r.path}`) : new HttpError(404, 'not_found', `no route ${r.m} ${r.path}`)
+    const ws = r.path.match(IN_WS)
+    if (ws) {
+      let id: string
+      try { id = decodeURIComponent(ws[1]) } catch { throw BAD_PATH() }
+      const s = d.spaces.get(id), own = find(wsRoutes, r.m, ws[2])
+      if (own && own !== 'method') return own.run(req(own.p), s)
+      const plug = find(s.plugins.flatMap((p) => p.routes), r.m, ws[2])
+      if (plug && plug !== 'method') return plug.run({ q: r.q, p: plug.p, body: r.body } satisfies PluginReq)
+      throw none(own, plug)
+    }
+    const shared = find(routes, r.m, r.path)
+    if (shared && shared !== 'method') return shared.run(req(shared.p))
+    // R6: until Task 10 — the unprefixed workspace routes, answered while exactly one workspace is registered
+    const old = find(wsRoutes, r.m, r.path.slice('/api'.length))
+    if (old && old !== 'method') return old.run(req(old.p), d.spaces.pick(undefined))
+    throw none(shared, old)
+  }
 
   function pair(side: Side, req: IncomingMessage, res: ServerResponse, q: URLSearchParams) {
     if (side !== 'lan') return fail(res, 404, 'not_found', 'pairing links open on the phone')
@@ -369,24 +447,15 @@ export function createApp(d: Deps) {
       if (!path.startsWith('/api/')) return m === 'GET' || m === 'HEAD' ? file(res, path) : fail(res, 405, 'method', 'method not allowed')
       if (m !== 'GET' && m !== 'DELETE' && !/^application\/json\b/i.test(req.headers['content-type'] || ''))
         return fail(res, 415, 'json_only', 'send application/json')
-      for (const [rm, re, h] of routes) {
-        const hit = path.match(re)
-        if (!hit || rm !== m) continue
-        let p: string[]
-        try { p = hit.slice(1).map(decodeURIComponent) } catch { return fail(res, 400, 'bad_path', 'bad path') }
-        const r: Req = { side, m, path, q: u.searchParams, p, body: () => readBody(req), device: g.device, req, res }
-        Promise.resolve().then(() => h(r)).then((out) => { if (out !== undefined) send(res, 200, out) }, (e) => {
-          if (e instanceof HttpError || e instanceof GatewayError) {
-            const extra = (e as { job?: Job }).job
-            return send(res, e.status, { error: { code: e.code, message: e.message }, ...(extra ? { job: extra } : {}) })
-          }
-          console.error('request failed', m, path, e)
-          fail(res, 500, 'internal', 'the console hit an error; see its log')
-        })
-        return
-      }
-      if (routes.some(([, re]) => re.test(path))) return fail(res, 405, 'method', `${m} is not allowed on ${path}`)
-      fail(res, 404, 'not_found', `no route ${m} ${path}`)
+      const r = { side, m, path, q: u.searchParams, body: () => readBody(req), device: g.device, req, res }
+      Promise.resolve().then(() => route(r)).then((out) => { if (out !== undefined) send(res, 200, out) }, (e) => {
+        if (e instanceof HttpError || e instanceof GatewayError) {
+          const extra = (e as { job?: Job }).job
+          return send(res, e.status, { error: { code: e.code, message: e.message }, ...(extra ? { job: extra } : {}) })
+        }
+        console.error('request failed', m, path, e)
+        fail(res, 500, 'internal', 'the console hit an error; see its log')
+      })
     }
   }
 

@@ -104,12 +104,10 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
     throw e
   }
 
-  // first space until Task 8: the routes still serve one workspace
   const first = list[0]
   app = createApp({
-    loopbackPort, lanPort: lanPort ?? cfg.lanPort, pcName: cfg.pcName, bus: first.bus, store: first.store, jobs: first.jobs, runner: first.runner,
-    bridge: first.source, pairing, notify, ctx: first.ctx, putPlaybook: first.putPlaybook,
-    staticDirs: [join(PKG, 'dist'), join(PKG, 'public')], artifactsDir, tz: first.cfg.teamTz, page: first.page,
+    loopbackPort, lanPort: lanPort ?? cfg.lanPort, pcName: cfg.pcName, hub: bus, spaces, pairing, notify,
+    staticDirs: [join(PKG, 'dist'), join(PKG, 'public')], artifactsDir, tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
     // first space until Task 9: the job tools still serve one workspace
     mcp: mcpHandler({ tools: jobTools({ jobs: first.jobs, ctx: first.ctx, start: first.start }), token: () => readToken(mcpToken) }),
   })

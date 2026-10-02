@@ -1,4 +1,5 @@
 import { test } from 'node:test'
+import type { TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { createServer, request } from 'node:http'
@@ -7,55 +8,72 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as T from '../../src/model/transitions.ts'
-import { PB0 } from '../../src/data/playbooks.ts'
 import type { Job } from '../../src/model/types.ts'
-import { BridgeClient } from '../bridge/client.ts'
-import { startFakeGateway } from '../bridge/fake.ts'
+import { install } from '../../src/workspace.ts'
+import type { FakeGateway } from '../bridge/fake.ts'
 import { Bus } from '../events.ts'
-import { Jobs } from '../jobs/jobs.ts'
-import { Runner } from '../llm/runner.ts'
 import type { Sdk } from '../llm/sdk.ts'
 import { Notify } from '../notify/notify.ts'
 import { Pairing } from '../pairing/pairing.ts'
-import { bridgeStore } from '../store/bridge.ts'
-import { fileStore } from '../store/file.ts'
-import { acme, demoCtx, demoFake, demoSeed } from '../testkit.ts'
+import { hub, makeSpace, Spaces } from '../spaces.ts'
+import type { Space } from '../spaces.ts'
+import { acme, acmeServer } from '../testkit.ts'
+import type { Plugin, WorkspaceServer, WsConfig } from '../workspace.ts'
 import { createApp } from './app.ts'
 
-/* The whole backend over real sockets: fake gateway, file store, a scripted SDK that drafts at once. */
+/* The whole backend over real sockets: two workspaces, each on its own fake gateway with its store in B,
+   and a scripted SDK that drafts at once. acme mints A-NNNN and mounts a test plugin; beta is Acme under
+   another id, prefix B, no playbooks of its own and no team zone. */
 
 const sdk: Sdk = { async *start({ tools }) { yield { k: 'session', id: 'sess-1' }; await tools.submitDraft('a draft'); yield { k: 'result', ok: true } } }
 
+const echo: Plugin = {
+  name: 'echo',
+  routes: [
+    ['GET', /^\/echo$/, async (r) => ({ x: r.q.get('x') })],
+    ['POST', /^\/echo\/([^/]+)$/, async (r) => ({ id: r.p[0], body: await r.body() })],
+  ],
+  state: () => ({ on: true }),
+}
+const acmeW: WorkspaceServer = { ...acmeServer, plugins: () => [echo] }
+const betaW: WorkspaceServer = { ...acmeServer, page: { ...acme, id: 'beta', playbooks: {} }, jobPrefix: 'B' }
+const wsCfg = (dir: string, teamTz: string | null): WsConfig => ({ gatewayUrl: 'http://127.0.0.1:9', consoleTokenPath: join(dir, 'none'), llmTokenPath: join(dir, 'none'), workDir: dir, runTools: [], teamTz, maxSessions: 3 })
+
 async function listen(s: Server) { await new Promise<void>((r) => s.listen(0, '127.0.0.1', r)); return (s.address() as AddressInfo).port }
 
-async function setup(o: { page?: boolean; store?: 'file' | 'bridge' } = {}) {
+/** swallows only the console.error lines a test expects; anything else still prints */
+function expectErrors(t: TestContext, ...pats: RegExp[]) {
+  const print = console.error
+  t.mock.method(console, 'error', (...a: unknown[]) => { if (!pats.some((p) => p.test(a.map(String).join(' ')))) print(...a) })
+}
+
+type Fakes = Record<string, FakeGateway>
+/** acme and beta (or acme alone), each on its own fake gateway; `before` runs before the sources start */
+async function setup(o: { page?: boolean; one?: boolean; before?: (f: Fakes) => void } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'wc-http-')), web = join(dir, 'web')
   mkdirSync(web)
   if (o.page !== false) { writeFileSync(join(web, 'index.html'), '<!doctype html><title>Work Console</title>'); writeFileSync(join(web, 'sw.js'), '// sw') }
-  const fake = await startFakeGateway({ statusMs: 50, seed: demoFake() })
-  const bus = new Bus()
-  const bridge = new BridgeClient({ url: fake.url, token: () => fake.token, bus, backoff: [30, 60] })
-  // marks join into mail on the bridge side, so a test of them needs the store that lives there
-  const store = o.store === 'bridge' ? bridgeStore({ bridge, bus, playbooks: PB0 }) : fileStore(join(dir, 's.json'), demoSeed)
-  const gate = () => bridge.available(), ctx = demoCtx
-  const jobs = new Jobs({ store, bus, ctx, gate })
-  const runner = new Runner({ store, jobs, bus, sdk, cwd: dir, gate, artifactsDir: join(dir, 'arts'), ctx })
+  const ws: [WorkspaceServer, string | null][] = o.one ? [[acmeW, 'Europe/Berlin']] : [[acmeW, 'Europe/Berlin'], [betaW, null]]
+  install(ws.map(([w]) => ({ page: w.page })))
+  const list: Space[] = []
+  for (const [w, tz] of ws) list.push(await makeSpace(w, { cfg: wsCfg(dir, tz), home: dir, artifactsDir: join(dir, 'arts'), sdk, fake: true, push: async () => {} }))
+  const spaces = new Spaces(list), bus = new Bus(), unhub = hub(list, bus)
+  const fakes: Fakes = Object.fromEntries(list.map((s) => [s.id, s.fake!]))
   const pairing = new Pairing(join(dir, 'home'))
-  const notify = new Notify({ dir: join(dir, 'home'), bus, ctx, jobFor: () => undefined, sender: { send: async () => ({ status: 201 }) } })
+  const notify = new Notify({ dir: join(dir, 'home'), bus, ctx: () => spaces.ctx(), jobFor: () => undefined, sender: { send: async () => ({ status: 201 }) } })
   let h: ReturnType<typeof createApp> | null = null
   const loop = createServer((q, s) => h!.loopback(q, s)), lanS = createServer((q, s) => h!.lan(q, s))
   const lp = await listen(loop), np = await listen(lanS)
-  h = createApp({
-    loopbackPort: lp, lanPort: 7411, pcName: 'pc', bus, store, jobs, runner, bridge, pairing, notify, ctx,
-    putPlaybook: (id, pb) => store.putPlaybook(id, pb), staticDirs: [web], artifactsDir: join(dir, 'arts'), tz: 'Europe/Berlin', page: acme,
-  })
-  bridge.start()
-  await until(() => bridge.available())
+  h = createApp({ loopbackPort: lp, lanPort: 7411, pcName: 'pc', hub: bus, spaces, pairing, notify, staticDirs: [web], artifactsDir: join(dir, 'arts'), tz: 'Asia/Tokyo' })
+  o.before?.(fakes)
+  for (const s of list) s.source.start()
+  await until(() => list.every((s) => s.source.available()))
   const stop = async () => {
-    h!.close(); bridge.stop(); await fake.close()
+    h!.close(); unhub()
+    await Promise.all(list.map((s) => s.close()))
     await Promise.all([loop, lanS].map((s) => new Promise((r) => { s.closeAllConnections(); s.close(r) })))
   }
-  return { fake, jobs, runner, pairing, store, lp, np, stop, dir }
+  return { fakes, spaces, pairing, lp, np, stop, dir }
 }
 async function until(f: () => boolean | Promise<boolean>, ms = 3000) {
   const t0 = Date.now()
@@ -78,14 +96,14 @@ function call(port: number, method: string, path: string, o: { host?: string; he
     q.end(body)
   })
 }
-/** an open step without a run on a job that is not closed */
-async function openStep(jobs: Jobs) {
-  const x = demoCtx()
-  for (const j of await jobs.all()) {
-    if (T.isClosed(j) || j.st === 'recurring') continue
-    for (const s of T.steps(x, j.pb)) if (j.flow[s.id] && T.isLive(j.flow[s.id]) && !j.flow[s.id].run) return { job: j, step: s.id }
-  }
-  throw new Error('no open step in the demo')
+/** a started job in the workspace, made over HTTP, and its open step */
+async function openStep(lp: number, ws = 'acme', t = 'An open step') {
+  const made = await call(lp, 'POST', '/api/jobs', { body: { t, key: 'NEW', pb: 'action', prj: 'platform', ws } })
+  assert.equal(made.status, 200, made.text)
+  const r = await call(lp, 'POST', `/api/jobs/${made.json.job.id}/cmd`, { body: { cmd: { op: 'start' }, v: made.json.job.v } })
+  assert.equal(r.status, 200, r.text)
+  const job = r.json.job as Job
+  return { job, step: Object.keys(job.flow).find((k) => T.isLive(job.flow[k]))! }
 }
 
 test('loopback refuses a foreign Host (DNS rebinding) and a cross-site Origin, allows its own', async () => {
@@ -98,6 +116,7 @@ test('loopback refuses a foreign Host (DNS rebinding) and a cross-site Origin, a
     assert.equal((await call(lp, 'GET', '/api/state', { host: `localhost:${lp}` })).status, 200)
     const form = await call(lp, 'POST', '/api/undo', { headers: { 'content-type': 'text/plain' } })
     assert.equal(form.status, 415, 'a form post cannot reach the API')
+    assert.equal((await call(lp, 'POST', '/api/ws/acme/act', { headers: { 'content-type': 'text/plain' } })).status, 415)
   } finally { await stop() }
 })
 
@@ -107,6 +126,7 @@ test('LAN: the page is public, the API needs a paired cookie, pairing and device
   try {
     assert.equal((await call(np, 'GET', '/', { host })).status, 200)
     assert.equal((await call(np, 'GET', '/api/state', { host })).status, 401)
+    assert.equal((await call(np, 'GET', '/api/ws/acme/sources', { host })).status, 401)
     assert.equal((await call(np, 'POST', '/api/pair/new', { host, body: {} })).status, 403)
     assert.equal((await call(np, 'GET', '/api/devices', { host })).status, 403)
 
@@ -135,14 +155,63 @@ test('LAN: the page is public, the API needs a paired cookie, pairing and device
   } finally { await stop() }
 })
 
-test('state, a command round trip, a stale version is 409 with the current job, undo', async () => {
-  const { lp, jobs, stop } = await setup()
+test('state: the PC zone in home, one block per workspace with its jobs, playbooks, bridge and plugins', async () => {
+  const { lp, stop } = await setup()
   try {
+    await openStep(lp, 'acme')
     const st = await call(lp, 'GET', '/api/state')
-    assert.ok(st.json.jobs.length > 0); assert.ok(st.json.playbooks); assert.deepEqual(st.json.runs, [])
-    assert.equal(st.json.bridge.state, 'ok'); assert.ok(st.json.push.key)
+    assert.equal(st.status, 200, st.text)
+    assert.deepEqual(st.json.home, { tz: 'Asia/Tokyo', pc: 'pc' })
+    assert.ok(st.json.push.key); assert.equal(st.json.side, 'loopback')
+    assert.deepEqual(Object.keys(st.json.ws), ['acme', 'beta'])
+    const { acme: a, beta: b } = st.json.ws
+    for (const w of [a, b]) {
+      for (const k of ['jobs', 'runs', 'marks', 'parts', 'playbooks', 'bridge', 'plugins']) assert.ok(k in w, k)
+      assert.deepEqual(w.parts, { jobs: 'ok', runs: 'ok', marks: 'ok' }); assert.equal(w.bridge.state, 'ok')
+      assert.ok(Object.keys(w.bridge.concepts).length > 0)
+    }
+    assert.deepEqual(a.jobs.map((j: Job) => j.id), ['A-0001']); assert.deepEqual(b.jobs, [])
+    assert.ok(a.playbooks['dev-item']); assert.equal(b.playbooks['dev-item'], undefined, "beta brings none of acme's playbooks")
+    assert.ok(a.playbooks.action && b.playbooks.action, 'the core playbooks are in both')
+    assert.deepEqual(a.plugins, { echo: { on: true } }); assert.deepEqual(b.plugins, {})
+  } finally { await stop() }
+})
 
-    const { job, step } = await openStep(jobs)
+test('a job id finds its workspace by prefix; an id no workspace owns is 404, never a 500', async () => {
+  const { lp, spaces, stop } = await setup()
+  try {
+    const a = await call(lp, 'POST', '/api/jobs', { body: { t: 'in acme', key: 'NEW', pb: 'action', prj: 'platform', ws: 'acme' } })
+    const b = await call(lp, 'POST', '/api/jobs', { body: { t: 'in beta', key: 'NEW', pb: 'action', prj: 'platform', ws: 'beta' } })
+    assert.equal(a.json.job.id, 'A-0001'); assert.equal(b.json.job.id, 'B-0001')
+    assert.equal(a.json.job.ws, 'acme'); assert.equal(b.json.job.ws, 'beta')
+
+    const ga = await call(lp, 'GET', '/api/jobs/A-0001')
+    assert.equal(ga.status, 200, ga.text); assert.equal(ga.json.job.t, 'in acme')
+    assert.equal((await call(lp, 'GET', '/api/jobs/B-0001')).json.job.t, 'in beta')
+    // acme's store holds A-0001 and beta's does not
+    assert.ok(await spaces.get('acme').jobs.get('A-0001')); assert.equal(await spaces.get('beta').jobs.get('A-0001'), undefined)
+
+    const x = await call(lp, 'GET', '/api/jobs/X-0001')
+    assert.equal(x.status, 404); assert.deepEqual(x.json.error, { code: 'not_found', message: 'no job X-0001' })
+    assert.equal((await call(lp, 'GET', '/api/jobs/A-0099')).status, 404)
+    assert.equal((await call(lp, 'GET', '/api/jobs/nodash')).status, 404)
+    assert.equal((await call(lp, 'POST', '/api/jobs/X-0001/cmd', { body: { cmd: { op: 'start' }, v: 1 } })).status, 404)
+    assert.equal((await call(lp, 'POST', '/api/undo', { body: { job: 'X-0001', v: 2, prev: {} } })).status, 404)
+
+    const all = await call(lp, 'GET', '/api/jobs')
+    assert.deepEqual(all.json.jobs.map((j: Job) => j.id).sort(), ['A-0001', 'B-0001'])
+    assert.deepEqual(all.json.parts, { acme: 'ok', beta: 'ok' })
+
+    const none = await call(lp, 'POST', '/api/jobs', { body: { t: 'where?', key: 'NEW', pb: 'action', prj: 'platform' } })
+    assert.equal(none.status, 400); assert.equal(none.json.error.message, 'say which workspace: acme, beta')
+    assert.equal((await call(lp, 'POST', '/api/jobs', { body: { t: 'where?', key: 'NEW', pb: 'action', prj: 'platform', ws: 'zzz' } })).json.error.code, 'no_workspace')
+  } finally { await stop() }
+})
+
+test('a command round trip, a stale version is 409 with the current job, undo', async () => {
+  const { lp, stop } = await setup()
+  try {
+    const { job, step } = await openStep(lp)
     const r = await call(lp, 'POST', `/api/jobs/${job.id}/cmd`, { body: { cmd: { op: 'noteAdd', step, k: 'q', t: 'why?' }, v: job.v } })
     assert.equal(r.status, 200, r.text)
     assert.equal(r.json.job.v, job.v! + 1); assert.equal(r.json.prev.v, job.v)
@@ -157,60 +226,102 @@ test('state, a command round trip, a stale version is 409 with the current job, 
     assert.equal(u.status, 200, u.text)
     assert.equal(u.json.job.flow[step].b.length, job.flow[step].b.length); assert.equal(r.json.job.flow[step].b.length, job.flow[step].b.length + 1)
     assert.equal((await call(lp, 'POST', '/api/undo', { body: { job: job.id, v: r.json.job.v, prev: r.json.prev } })).status, 409)
-    assert.equal((await call(lp, 'GET', '/api/jobs/NOPE')).status, 404)
   } finally { await stop() }
 })
 
-test('with the bridge down a command, an act and an ask are 503; sources say unavailable', async () => {
-  const { lp, jobs, fake, stop } = await setup()
+test("runs: found in whichever workspace's runner knows them; an unknown run is 404", async () => {
+  const { lp, fakes, stop } = await setup()
   try {
-    const { job, step } = await openStep(jobs)
-    fake.setDown(true)
-    await until(async () => (await call(lp, 'GET', '/api/state')).json.bridge.state === 'unavailable')
+    assert.equal((await call(lp, 'GET', '/api/runs/nope')).status, 404)
+    assert.deepEqual((await call(lp, 'GET', '/api/runs/nope')).json.error, { code: 'not_found', message: 'no run nope' })
+    assert.equal((await call(lp, 'POST', '/api/runs/nope/cancel', { body: {} })).status, 404)
+    assert.equal((await call(lp, 'POST', '/api/runs', { body: { job: 'X-0001', step: 's', instruction: 'go' } })).status, 404)
+
+    const { job, step } = await openStep(lp, 'beta')
+    const a = await call(lp, 'POST', '/api/runs', { body: { job: job.id, step, instruction: 'draft it' } })
+    assert.equal(a.status, 200, a.text)
+    const id = a.json.run.id as string
+    await until(async () => (await call(lp, 'GET', `/api/runs/${id}`)).json.run?.state === 'draft')
+    const all = await call(lp, 'GET', '/api/runs')
+    assert.deepEqual(all.json.runs.map((r: { id: string }) => r.id), [id]); assert.deepEqual(all.json.parts, { acme: 'ok', beta: 'ok' })
+    assert.equal((await call(lp, 'POST', `/api/runs/${id}/cancel`, { body: {} })).status, 409, 'cancel reaches the owning runner')
+
+    // acme going away does not hide beta's run; a run nobody can vouch for is not "no run"
+    fakes.acme.setDown(true)
+    await until(async () => (await call(lp, 'GET', '/api/state')).json.ws.acme.bridge.state === 'unavailable')
+    assert.equal((await call(lp, 'GET', `/api/runs/${id}`)).status, 200)
+    assert.equal((await call(lp, 'GET', '/api/runs/nope')).status, 503)
+    const some = await call(lp, 'GET', '/api/runs')
+    assert.equal(some.status, 200); assert.deepEqual(some.json.parts, { acme: 'unavailable', beta: 'ok' })
+  } finally { await stop() }
+})
+
+test('with one bridge down its command, act and ask are 503 and its block says unavailable; the other carries on', async () => {
+  const { lp, fakes, stop } = await setup()
+  try {
+    const { job, step } = await openStep(lp, 'acme')
+    await openStep(lp, 'beta')
+    fakes.acme.setDown(true)
+    await until(async () => (await call(lp, 'GET', '/api/state')).json.ws.acme.bridge.state === 'unavailable')
     assert.equal((await call(lp, 'POST', `/api/jobs/${job.id}/cmd`, { body: { cmd: { op: 'noteAdd', step, k: 'q', t: 'x' } } })).status, 503)
-    assert.equal((await call(lp, 'POST', '/api/act', { body: { action: 'work.comment', args: { id: 'x', text: 'hi' } } })).status, 503)
+    assert.equal((await call(lp, 'POST', '/api/ws/acme/act', { body: { action: 'work.comment', args: { id: 'x', text: 'hi' } } })).status, 503)
     assert.equal((await call(lp, 'POST', '/api/runs', { body: { job: job.id, step, instruction: 'go' } })).status, 503)
-    const src = await call(lp, 'GET', '/api/sources?concepts=chat,mail')
+    const src = await call(lp, 'GET', '/api/ws/acme/sources?concepts=chat,mail')
     assert.equal(src.status, 200)
     assert.notEqual(src.json.concepts.chat.status, 'ok'); assert.notEqual(src.json.concepts.mail.status, 'ok')
+    assert.equal((await call(lp, 'GET', '/api/ws/beta/sources?concepts=chat')).json.concepts.chat.status, 'ok')
+
+    const st = (await call(lp, 'GET', '/api/state')).json
+    assert.deepEqual(st.ws.acme.parts, { jobs: 'unavailable', runs: 'unavailable', marks: 'unavailable' })
+    assert.equal(st.ws.beta.bridge.state, 'ok'); assert.deepEqual(st.ws.beta.parts, { jobs: 'ok', runs: 'ok', marks: 'ok' })
+    assert.deepEqual(st.ws.beta.jobs.map((j: Job) => j.id), ['B-0001'])
+    const jobs = await call(lp, 'GET', '/api/jobs')
+    assert.equal(jobs.status, 200); assert.deepEqual(jobs.json.jobs.map((j: Job) => j.id), ['B-0001'])
+    assert.deepEqual(jobs.json.parts, { acme: 'unavailable', beta: 'ok' })
   } finally { await stop() }
 })
 
-test('a state store that cannot be read shows as unavailable, not as no jobs', async () => {
-  const { lp, fake, stop } = await setup({ store: 'bridge' })
+test('a state store that cannot be read shows as unavailable, not as no jobs', async (t) => {
+  expectErrors(t, /loading the state from the bridge failed/)
+  const { lp, fakes, stop } = await setup({ before: (f) => f.acme.setSource('runs', 'source_unavailable') })
   try {
-    fake.setSource('runs', 'source_unavailable')
     const st = await call(lp, 'GET', '/api/state')
-    assert.equal(st.status, 200); assert.equal(st.json.bridge.state, 'ok')
-    assert.deepEqual(st.json.parts, { jobs: 'unavailable', runs: 'unavailable', marks: 'unavailable' })
-    fake.setSource('runs', null)
-    assert.deepEqual((await call(lp, 'GET', '/api/state')).json.parts, { jobs: 'ok', runs: 'ok', marks: 'ok' })
+    assert.equal(st.status, 200); assert.equal(st.json.ws.acme.bridge.state, 'ok')
+    assert.deepEqual(st.json.ws.acme.parts, { jobs: 'unavailable', runs: 'unavailable', marks: 'unavailable' })
+    assert.deepEqual(st.json.ws.beta.parts, { jobs: 'ok', runs: 'ok', marks: 'ok' })
+    fakes.acme.setSource('runs', null)
+    assert.deepEqual((await call(lp, 'GET', '/api/state')).json.ws.acme.parts, { jobs: 'ok', runs: 'ok', marks: 'ok' })
   } finally { await stop() }
 })
 
-test('SSE delivers the bridge state and then a job event after a command', async () => {
-  const { lp, jobs, stop } = await setup()
+test('SSE opens with one bridge frame per workspace; a job event carries its workspace', async () => {
+  const { lp, stop } = await setup()
   try {
-    const { job, step } = await openStep(jobs)
+    const { job, step } = await openStep(lp, 'beta')
     const got: string[] = []
     const sse = request({ host: '127.0.0.1', port: lp, path: '/api/events', headers: { host: `127.0.0.1:${lp}` } }, (res) => {
       assert.match(String(res.headers['content-type']), /text\/event-stream/)
       res.setEncoding('utf8'); res.on('data', (c: string) => { got.push(c) })
     })
     sse.end()
-    await until(() => got.join('').includes('event: bridge'))
+    const frames = () => got.join('').split('\n\n').filter((f) => f.startsWith('event: ')).map((f) => {
+      const [ev, data] = f.split('\n')
+      return { kind: ev.slice(7), data: JSON.parse(data.slice(6)) }
+    })
+    await until(() => frames().filter((f) => f.kind === 'bridge').length === 2)
+    assert.deepEqual(frames().slice(0, 2).map((f) => [f.kind, f.data.ws, f.data.state]), [['bridge', 'acme', 'ok'], ['bridge', 'beta', 'ok']])
     await call(lp, 'POST', `/api/jobs/${job.id}/cmd`, { body: { cmd: { op: 'noteAdd', step, k: 'q', t: 'sse' }, v: job.v } })
-    await until(() => got.join('').includes('event: job'))
-    const data = got.join('').split('event: job\ndata: ')[1].split('\n')[0]
-    assert.equal((JSON.parse(data) as { job: Job }).job.id, job.id)
+    await until(() => frames().some((f) => f.kind === 'job'))
+    const e = frames().find((f) => f.kind === 'job')!.data
+    assert.equal(e.job.id, job.id); assert.equal(e.ws, 'beta')
     sse.destroy()
   } finally { await stop() }
 })
 
-test('sources come in page shapes; an act resolves the chat name and returns the gateway answer', async () => {
-  const { lp, fake, store, stop } = await setup({ store: 'bridge' })
+test('sources come in page shapes; an act resolves the chat name and reaches only its own gateway', async () => {
+  const { lp, fakes, spaces, stop } = await setup()
   try {
-    const src = await call(lp, 'GET', '/api/sources?concepts=chat,mail,cal,work')
+    const src = await call(lp, 'GET', '/api/ws/acme/sources?concepts=chat,mail,cal,work')
     assert.equal(src.json.concepts.chat.status, 'ok')
     const chat = src.json.concepts.chat.items[0]
     assert.ok(chat.name && Array.isArray(chat.msgs))
@@ -218,26 +329,83 @@ test('sources come in page shapes; an act resolves the chat name and returns the
     assert.ok(['reply', 'wait', 'fyi', 'auto'].includes(mail.cat))
     assert.ok(src.json.concepts.cal.items.every((e: { b: string }) => /^\d\d:\d\d$/.test(e.b)))
 
-    await call(lp, 'POST', `/api/mail/${encodeURIComponent(mail.id)}/mark`, { body: { done: true } })
-    await until(async () => (await call(lp, 'GET', '/api/sources?concepts=mail')).json.concepts.mail.items.find((m: { id: string }) => m.id === mail.id).done === true)
-    assert.equal((await store.marks())[mail.id].done, true)
+    await call(lp, 'POST', `/api/ws/acme/mail/${encodeURIComponent(mail.id)}/mark`, { body: { done: true } })
+    await until(async () => (await call(lp, 'GET', '/api/ws/acme/sources?concepts=mail')).json.concepts.mail.items.find((m: { id: string }) => m.id === mail.id).done === true)
+    assert.equal((await spaces.get('acme').store.marks())[mail.id].done, true)
+    assert.equal((await spaces.get('beta').store.marks())[mail.id], undefined, "a mark lands in its own workspace's store")
 
-    const one = await call(lp, 'GET', `/api/sources/chat/${encodeURIComponent(chat.id)}`)
+    const one = await call(lp, 'GET', `/api/ws/acme/sources/chat/${encodeURIComponent(chat.id)}`)
     assert.equal(one.status, 200, one.text)
     assert.ok(Array.isArray(one.json.item.messages))
 
-    const a = await call(lp, 'POST', '/api/act', { body: { action: 'chat.post', actionId: 'act-1', args: { chatName: chat.name.toUpperCase(), text: 'hello' } } })
+    const a = await call(lp, 'POST', '/api/ws/acme/act', { body: { action: 'chat.post', actionId: 'act-1', args: { chatName: chat.name.toUpperCase(), text: 'hello' } } })
     assert.equal(a.status, 200, a.text); assert.equal(a.json.status, 'ok'); assert.equal(a.json.actionId, 'act-1')
-    assert.deepEqual(fake.acts.at(-1), { action: 'chat.post', actionId: 'act-1', args: { chat: chat.id, text: 'hello' } })
-    assert.equal((await call(lp, 'POST', '/api/act', { body: { action: 'chat.post', args: { chatName: 'no such chat', text: 'x' } } })).json.error.code, 'unknown_chat')
-    assert.equal((await call(lp, 'POST', '/api/act', { body: { action: 'rm -rf', args: {} } })).status, 400)
+    assert.deepEqual(fakes.acme.acts.at(-1), { action: 'chat.post', actionId: 'act-1', args: { chat: chat.id, text: 'hello' } })
+    assert.deepEqual(fakes.beta.acts, [], "an act in acme never reaches beta's gateway")
+    assert.equal((await call(lp, 'POST', '/api/ws/acme/act', { body: { action: 'chat.post', args: { chatName: 'no such chat', text: 'x' } } })).json.error.code, 'unknown_chat')
+    assert.equal((await call(lp, 'POST', '/api/ws/acme/act', { body: { action: 'rm -rf', args: {} } })).status, 400)
+    assert.equal((await call(lp, 'DELETE', '/api/ws/acme/sources')).status, 405)
+  } finally { await stop() }
+})
+
+test("calendar times read in the workspace's team zone; a workspace without one gets none", async () => {
+  const { lp, stop } = await setup()
+  try {
+    const a = (await call(lp, 'GET', '/api/ws/acme/sources?concepts=cal')).json.concepts.cal.items as { v: string }[]
+    const b = (await call(lp, 'GET', '/api/ws/beta/sources?concepts=cal')).json.concepts.cal.items as { v: string }[]
+    assert.ok(a.length > 0 && a.every((e) => /^\d\d:\d\d$/.test(e.v)), JSON.stringify(a))
+    assert.ok(b.length > 0 && b.every((e) => e.v === ''), JSON.stringify(b))
+  } finally { await stop() }
+})
+
+test('an unknown workspace is 404 no_workspace; a malformed one is 400', async () => {
+  const { lp, stop } = await setup()
+  try {
+    const z = await call(lp, 'GET', '/api/ws/zzz/sources')
+    assert.equal(z.status, 404); assert.deepEqual(z.json.error, { code: 'no_workspace', message: 'no workspace zzz' })
+    assert.equal((await call(lp, 'POST', '/api/ws/zzz/act', { body: {} })).json.error.code, 'no_workspace')
+    assert.equal((await call(lp, 'GET', '/api/ws/%ZZ/sources')).status, 400)
+    assert.equal((await call(lp, 'GET', '/api/ws/acme/nothing-here')).status, 404)
+  } finally { await stop() }
+})
+
+test("a plugin's routes answer under its own workspace only, and its state() is that workspace's block", async () => {
+  const { lp, stop } = await setup()
+  try {
+    const g = await call(lp, 'GET', '/api/ws/acme/echo?x=hi')
+    assert.equal(g.status, 200, g.text); assert.deepEqual(g.json, { x: 'hi' })
+    const p = await call(lp, 'POST', `/api/ws/acme/echo/${encodeURIComponent('a b')}`, { body: { k: 1 } })
+    assert.deepEqual(p.json, { id: 'a b', body: { k: 1 } })
+    assert.equal((await call(lp, 'DELETE', '/api/ws/acme/echo')).status, 405)
+    const b = await call(lp, 'GET', '/api/ws/beta/echo')
+    assert.equal(b.status, 404); assert.equal(b.json.error.code, 'not_found')
+  } finally { await stop() }
+})
+
+test('playbooks: saved in their own workspace; an id another workspace owns is 409 playbook_taken', async () => {
+  const { lp, stop } = await setup()
+  try {
+    const dev = structuredClone(acme.playbooks['dev-item'])
+    const taken = await call(lp, 'PUT', '/api/ws/beta/playbooks/dev-item', { body: { pb: { ...dev, ws: 'beta', custom: 1 } } })
+    assert.equal(taken.status, 409, taken.text)
+    assert.deepEqual(taken.json.error, { code: 'playbook_taken', message: 'dev-item belongs to workspace acme' })
+
+    const own = await call(lp, 'PUT', '/api/ws/acme/playbooks/dev-item', { body: { pb: { ...dev, n: 'Dev item, edited' } } })
+    assert.equal(own.status, 200, own.text); assert.equal(own.json.playbooks['dev-item'].n, 'Dev item, edited')
+
+    const mine = await call(lp, 'PUT', '/api/ws/beta/playbooks/mine', { body: { pb: { ...dev, ws: 'beta', n: 'Mine', custom: 1 } } })
+    assert.equal(mine.status, 200, mine.text); assert.ok(mine.json.playbooks.mine)
+    const st = (await call(lp, 'GET', '/api/state')).json
+    assert.ok(st.ws.beta.playbooks.mine); assert.equal(st.ws.acme.playbooks.mine, undefined)
+    const del = await call(lp, 'DELETE', '/api/ws/beta/playbooks/mine')
+    assert.equal(del.status, 200, del.text); assert.equal(del.json.playbooks.mine, undefined)
   } finally { await stop() }
 })
 
 test('a job made from a meeting carries the event and is due when it starts', async () => {
   const { lp, stop } = await setup()
   try {
-    const items = (await call(lp, 'GET', '/api/sources?concepts=cal')).json.concepts.cal.items
+    const items = (await call(lp, 'GET', '/api/ws/acme/sources?concepts=cal')).json.concepts.cal.items
     const e = items.find((x: { start?: string }) => Date.parse(x.start!) > Date.now()) ?? items[0]
     assert.ok(e.id && e.day && e.start && e.end && e.org, JSON.stringify(e))
     const base = { t: e.t, key: 'NEW', pb: 'action', prj: 'platform', ws: 'acme' }
@@ -251,63 +419,73 @@ test('a job made from a meeting carries the event and is due when it starts', as
   } finally { await stop() }
 })
 
-test('board Start: A moves a free item to Dev on the user and its job starts; a taken item is refused', async () => {
-  const { lp, fake, jobs, stop } = await setup()
+test("board Start: the workspace's own Start moves a free item on its own gateway; a taken item is refused", async () => {
+  const { lp, fakes, spaces, stop } = await setup()
   try {
-    const r = await call(lp, 'POST', '/api/board/ACME-603/start', { body: {} })
+    const r = await call(lp, 'POST', '/api/ws/acme/board/ACME-603/start', { body: {} })
     assert.equal(r.status, 200, r.text)
     assert.equal(r.json.created, true); assert.equal(r.json.job.key, 'ACME-603'); assert.equal(r.json.job.st, 'active')
-    assert.equal(r.json.job.t, 'Projects grid: export ignores the filter')
-    assert.equal((await jobs.get(r.json.job.id))!.pb, 'dev-item')
-    assert.deepEqual(fake.acts.map((a) => [a.action, a.args]), [['work.start', { id: 'ACME-603' }]])
-    const item = (await call(lp, 'GET', '/api/sources?concepts=board')).json.concepts.board.items.find((i: { id: string }) => i.id === 'ACME-603')
+    assert.equal(r.json.job.t, 'Projects grid: export ignores the filter'); assert.equal(r.json.job.id, 'A-0001')
+    assert.equal((await spaces.get('acme').jobs.get(r.json.job.id))!.pb, 'dev-item')
+    assert.deepEqual(fakes.acme.acts.map((a) => [a.action, a.args]), [['work.start', { id: 'ACME-603' }]])
+    const item = (await call(lp, 'GET', '/api/ws/acme/sources?concepts=board')).json.concepts.board.items.find((i: { id: string }) => i.id === 'ACME-603')
     assert.deepEqual([item.lane, item.column, item.assignedTo], ['mine', 'Dev', 'You'])
-    const no = await call(lp, 'POST', '/api/board/ACME-530/start', { body: {} })
+    const no = await call(lp, 'POST', '/api/ws/acme/board/ACME-530/start', { body: {} })
     assert.equal(no.status, 400); assert.equal(no.json.error.code, 'refused'); assert.equal(no.json.error.message, 'ACME-530 is assigned to Sam Rivera')
+
+    // beta has no dev-item of its own; with a playbook named, its Start mints B and acts on beta's gateway only
+    const acmeActs = fakes.acme.acts.length
+    const nb = await call(lp, 'POST', '/api/ws/beta/board/ACME-603/start', { body: {} })
+    assert.equal(nb.status, 400); assert.equal(nb.json.error.message, 'no playbook dev-item')
+    const b = await call(lp, 'POST', '/api/ws/beta/board/ACME-603/start', { body: { pb: 'action' } })
+    assert.equal(b.status, 200, b.text); assert.equal(b.json.job.id, 'B-0001'); assert.equal(b.json.job.ws, 'beta')
+    assert.deepEqual(fakes.beta.acts.map((a) => [a.action, a.args]), [['work.start', { id: 'ACME-603' }]])
+    assert.equal(fakes.acme.acts.length, acmeActs)
   } finally { await stop() }
 })
 
 test('chats: a thread is hidden in B from the PC and unhidden from a paired device', async () => {
-  const { lp, np, store, stop } = await setup({ store: 'bridge' })
-  const host = 'pc:7411'
+  const { lp, np, spaces, stop } = await setup()
+  const host = 'pc:7411', store = spaces.get('acme').store
   const ids = async (port = lp, headers: Record<string, string> = {}) =>
-    ((await call(port, 'GET', '/api/sources?concepts=chat', { host: port === np ? host : undefined, headers })).json.concepts.chat.items as { id: string }[]).map((c) => c.id)
+    ((await call(port, 'GET', '/api/ws/acme/sources?concepts=chat', { host: port === np ? host : undefined, headers })).json.concepts.chat.items as { id: string }[]).map((c) => c.id)
   try {
     assert.ok((await ids()).includes('c1'))
-    const hid = await call(lp, 'POST', '/api/chats/c1/hide', { body: { hidden: true, name: 'Team Dev' } })
+    const hid = await call(lp, 'POST', '/api/ws/acme/chats/c1/hide', { body: { hidden: true, name: 'Team Dev' } })
     assert.equal(hid.status, 200, hid.text)
     await until(async () => !(await ids()).includes('c1'))
     assert.deepEqual((await store.marks())['chat:c1'], { hidden: true, name: 'Team Dev' })
-    assert.deepEqual((await call(lp, 'GET', '/api/chats/hidden')).json, { hidden: [{ id: 'c1', name: 'Team Dev' }] })
+    assert.deepEqual((await call(lp, 'GET', '/api/ws/acme/chats/hidden')).json, { hidden: [{ id: 'c1', name: 'Team Dev' }] })
+    assert.deepEqual((await call(lp, 'GET', '/api/ws/beta/chats/hidden')).json, { hidden: [] })
 
     const code = new URL((await call(lp, 'POST', '/api/pair/new', { body: {} })).json.url).searchParams.get('code')!
     const cookie = String((await call(np, 'GET', `/pair?code=${code}`, { host })).headers['set-cookie']).split(';')[0]
-    assert.deepEqual((await call(np, 'GET', '/api/chats/hidden', { host, headers: { cookie } })).json.hidden.map((h: { id: string }) => h.id), ['c1'])
-    const un = await call(np, 'POST', '/api/chats/c1/hide', { host, headers: { cookie }, body: { hidden: false } })
+    assert.deepEqual((await call(np, 'GET', '/api/ws/acme/chats/hidden', { host, headers: { cookie } })).json.hidden.map((h: { id: string }) => h.id), ['c1'])
+    const un = await call(np, 'POST', '/api/ws/acme/chats/c1/hide', { host, headers: { cookie }, body: { hidden: false } })
     assert.equal(un.status, 200, un.text)
     await until(async () => (await ids(np, { cookie })).includes('c1'))
     assert.equal((await store.marks())['chat:c1'], undefined)
-    assert.deepEqual((await call(lp, 'GET', '/api/chats/hidden')).json, { hidden: [] })
-    assert.equal((await call(np, 'GET', '/api/chats/hidden', { host })).status, 401)
+    assert.deepEqual((await call(lp, 'GET', '/api/ws/acme/chats/hidden')).json, { hidden: [] })
+    assert.equal((await call(np, 'GET', '/api/ws/acme/chats/hidden', { host })).status, 401)
   } finally { await stop() }
 })
 
 test('time months pass through as the bridge gives them; a fill hands its result to the page', async () => {
-  const { lp, stop } = await setup({ store: 'bridge' })
+  const { lp, stop } = await setup()
   try {
-    const [cur, prev] = (await call(lp, 'GET', '/api/sources?concepts=time')).json.concepts.time.items
+    const [cur, prev] = (await call(lp, 'GET', '/api/ws/acme/sources?concepts=time')).json.concepts.time.items
     assert.ok(cur.id > prev.id && prev.emptyDays.length > 0 && prev.top, JSON.stringify(prev))
     const args = { month: prev.id, days: prev.emptyDays, workItemId: prev.top.workItemId, activityId: prev.top.activityId, hours: 8 }
-    const a = await call(lp, 'POST', '/api/act', { body: { action: 'time.fill', actionId: 'fill-1', args } })
+    const a = await call(lp, 'POST', '/api/ws/acme/act', { body: { action: 'time.fill', actionId: 'fill-1', args } })
     assert.equal(a.json.status, 'ok', a.text)
     assert.deepEqual(a.json.result, { month: prev.id, filled: prev.emptyDays, skipped: [], failed: [] })
   } finally { await stop() }
 })
 
 test('an ask runs to a draft; its artifact is served as text; path tricks stay inside', async () => {
-  const { lp, jobs, dir, stop } = await setup()
+  const { lp, dir, stop } = await setup()
   try {
-    const { job, step } = await openStep(jobs)
+    const { job, step } = await openStep(lp)
     const a = await call(lp, 'POST', '/api/runs', { body: { job: job.id, step, instruction: 'draft it' } })
     assert.equal(a.status, 200, a.text)
     await until(async () => (await call(lp, 'GET', `/api/runs/${a.json.run.id}`)).json.run.state === 'draft')
@@ -331,7 +509,7 @@ test('an ask runs to a draft; its artifact is served as text; path tricks stay i
     assert.equal((await call(lp, 'GET', `/api/artifacts/${job.id}/..%2F..%2Fs.json`)).status, 404)
     const up = await call(lp, 'GET', '/..%2F..%2Fs.json')
     assert.equal(up.status, 404); assert.ok(!up.text.includes('"jobs"'), 'nothing outside the web root')
-    assert.match((await call(lp, 'GET', '/jobs/J-1')).text, /Work Console/, 'a page route falls back to the page')
+    assert.match((await call(lp, 'GET', '/jobs/A-1')).text, /Work Console/, 'a page route falls back to the page')
     assert.equal((await call(lp, 'GET', '/sw.js')).headers['service-worker-allowed'], '/')
   } finally { await stop() }
 })
@@ -353,6 +531,7 @@ test('a malformed cookie is 401 and a malformed path is 400; the process keeps s
   try {
     assert.equal((await call(np, 'GET', '/api/state', { host: 'pc:7411', headers: { cookie: 'wc_dev=%E0%A4%A' } })).status, 401)
     assert.equal((await call(lp, 'POST', '/api/jobs/%ZZ/cmd', { body: { cmd: { op: 'start' }, v: 1 } })).status, 400)
+    assert.equal((await call(lp, 'GET', '/api/ws/acme/sources/chat/%ZZ')).status, 400)
     assert.equal((await call(lp, 'GET', '/api/state')).status, 200)
   } finally { await stop() }
 })
@@ -387,21 +566,22 @@ test('without a built page a route is 404, not a crash', async () => {
 })
 
 test('knowledge: an LLM proposes, the user accepts in Approvals, then edits the note by hand', async () => {
-  const { lp, fake, stop } = await setup()
+  const { lp, fakes, stop } = await setup()
   try {
-    const r = await fetch(`${fake.url}/api/knowledge/propose`, { method: 'POST', headers: { authorization: `Bearer ${fake.llmToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Test note', tags: ['smoke'], text: 'one', reason: 'a test' }) })
+    const r = await fetch(`${fakes.acme.url}/api/knowledge/propose`, { method: 'POST', headers: { authorization: `Bearer ${fakes.acme.llmToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Test note', tags: ['smoke'], text: 'one', reason: 'a test' }) })
     const p = ((await r.json()) as { items: { doc: { id: string } } }).items.doc
-    await until(async () => (await call(lp, 'GET', '/api/knowledge/proposals')).json.proposals.length === 1)
-    const d = await call(lp, 'POST', `/api/knowledge/proposals/${p.id}/decide`, { body: { accept: true, text: 'one, edited' } })
+    await until(async () => (await call(lp, 'GET', '/api/ws/acme/knowledge/proposals')).json.proposals.length === 1)
+    assert.deepEqual((await call(lp, 'GET', '/api/ws/beta/knowledge/proposals')).json.proposals, [])
+    const d = await call(lp, 'POST', `/api/ws/acme/knowledge/proposals/${p.id}/decide`, { body: { accept: true, text: 'one, edited' } })
     assert.equal(d.status, 200, d.text); assert.equal(d.json.note.text, 'one, edited')
-    await until(async () => (await call(lp, 'GET', '/api/knowledge')).json.notes.length === 1)
+    await until(async () => (await call(lp, 'GET', '/api/ws/acme/knowledge')).json.notes.length === 1)
     const id = d.json.note.id as string
-    assert.equal((await call(lp, 'GET', `/api/knowledge/notes/${id}`)).json.note.v, 1)
-    const e = await call(lp, 'PUT', `/api/knowledge/notes/${id}`, { body: { title: 'Test note', tags: ['smoke'], text: 'two', v: 1 } })
+    assert.equal((await call(lp, 'GET', `/api/ws/acme/knowledge/notes/${id}`)).json.note.v, 1)
+    const e = await call(lp, 'PUT', `/api/ws/acme/knowledge/notes/${id}`, { body: { title: 'Test note', tags: ['smoke'], text: 'two', v: 1 } })
     assert.equal(e.json.note.v, 2)
-    assert.equal((await call(lp, 'PUT', `/api/knowledge/notes/${id}`, { body: { title: 'Test note', tags: [], text: 'x', v: 1 } })).status, 409)
-    assert.equal((await call(lp, 'POST', '/api/knowledge/notes', { body: { title: '', text: 'x' } })).status, 400)
-    assert.deepEqual((await call(lp, 'GET', '/api/knowledge/search?q=two')).json.hits.map((h: { id: string }) => h.id), [id])
+    assert.equal((await call(lp, 'PUT', `/api/ws/acme/knowledge/notes/${id}`, { body: { title: 'Test note', tags: [], text: 'x', v: 1 } })).status, 409)
+    assert.equal((await call(lp, 'POST', '/api/ws/acme/knowledge/notes', { body: { title: '', text: 'x' } })).status, 400)
+    assert.deepEqual((await call(lp, 'GET', '/api/ws/acme/knowledge/search?q=two')).json.hits.map((h: { id: string }) => h.id), [id])
   } finally { await stop() }
 })
 
@@ -421,4 +601,26 @@ test("context preview: a job's item reads as the run would get it; an item not o
     assert.equal((await call(lp, 'GET', `/api/jobs/${id}/context/chat/c1`)).status, 404)
     assert.equal((await call(lp, 'GET', '/api/jobs/J-NOPE/context/chat/c4')).status, 404)
   } finally { await stop() }
+})
+
+// R6: until Task 10
+test('the unprefixed workspace routes answer only while one workspace is registered', async () => {
+  const two = await setup()
+  try {
+    const a = await call(two.lp, 'POST', '/api/act', { body: { action: 'chat.post', args: { chatName: 'x', text: 'x' } } })
+    assert.equal(a.status, 400); assert.equal(a.json.error.message, 'say which workspace: acme, beta')
+    assert.equal((await call(two.lp, 'GET', '/api/sources?concepts=chat')).status, 400)
+    const st = (await call(two.lp, 'GET', '/api/state')).json
+    assert.deepEqual(st.parts, { jobs: 'ok', runs: 'ok', marks: 'ok' }); assert.equal(st.bridge.state, 'ok')
+    assert.ok(st.playbooks['dev-item'] && st.playbooks.action)
+  } finally { await two.stop() }
+  const one = await setup({ one: true })
+  try {
+    await openStep(one.lp)
+    assert.equal((await call(one.lp, 'GET', '/api/sources?concepts=chat')).json.concepts.chat.status, 'ok')
+    assert.equal((await call(one.lp, 'GET', '/api/chats/hidden')).status, 200)
+    const st = (await call(one.lp, 'GET', '/api/state')).json
+    assert.deepEqual(st.jobs.map((j: Job) => j.id), ['A-0001']); assert.equal(st.bridge.state, 'ok'); assert.ok(st.playbooks['dev-item'])
+    assert.deepEqual(Object.keys(st.ws), ['acme'])
+  } finally { await one.stop() }
 })
