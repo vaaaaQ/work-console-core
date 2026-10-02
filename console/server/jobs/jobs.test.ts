@@ -71,6 +71,20 @@ test('the page cannot send runner commands; bad steps are 400', async () => {
   await assert.rejects(jobs.cmd('J-9999', { op: 'start' }), code(404))
 })
 
+test('the console may tick a step, record an artifact and a journal line, and nothing else of the page', async () => {
+  const { jobs } = setup(), j = await openJob(jobs), at = T.atOf(demoCtx(), j)!
+  const a = await jobs.cmd(j.id, { op: 'artifact', step: at, n: 'out.pdf', link: '/api/artifacts/x/out.pdf' }, undefined, 'console')
+  assert.equal(a.job.flow[at].arts.find((x) => x.n === 'out.pdf')!.ok, true)
+  const m = await jobs.cmd(j.id, { op: 'artifact', step: at, n: 'out.pdf', ok: false }, undefined, 'console')
+  assert.equal(m.job.flow[at].arts.find((x) => x.n === 'out.pdf')!.ok, false)
+  const l = await jobs.cmd(j.id, { op: 'journal', o: 'Console wrote a file.', c: '-', n: '-' }, undefined, 'console')
+  assert.ok(l.job.jr.some((e) => e.o === 'Console wrote a file.'))
+  const d = await jobs.cmd(j.id, { op: 'stepDone', step: at }, undefined, 'console')
+  assert.equal(d.job.flow[at].s, 'done')
+  await assert.rejects(jobs.cmd(j.id, { op: 'close', st: 'done' }, undefined, 'console'), code(400, 'bad_args'))
+  await assert.rejects(jobs.cmd(j.id, { op: 'stepSkip', step: T.atOf(demoCtx(), d.job)! }, undefined, 'console'), code(400, 'bad_args'))
+})
+
 test('a runner command retries over a concurrent page change', async () => {
   const { jobs } = setup(), j = await openJob(jobs), at = T.atOf(demoCtx(), j)!
   const [a, b] = await Promise.all([

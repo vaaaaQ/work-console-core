@@ -5,7 +5,7 @@ import { PACKS } from '../data/packs.ts'
 import { hm, initials, tfmt } from '../lib/util.ts'
 import { S, TPL, byId, chName, isClosed, isLive, phaseOf, rvState, stepOf } from '../model/world.ts'
 import type { Flow, Job, Step } from '../model/types.ts'
-import { closeDrawer } from '../actions/nav.tsx'
+import { closeDrawer, go } from '../actions/nav.tsx'
 import {
   acceptDraft, askLlm, bAdd, bAnswer, bReopen, editDraft, llmCancel, nudge, rejectDraft, rvOpen, rvVote, stepDoneHere, stepReopen,
   stepResume, stepSkip, stepWait, tplSend,
@@ -92,6 +92,18 @@ function BadgeSec({ j, f }: P) {
   )
 }
 
+/** the console actions the core knows: icon, label, what the button does. An act it does not know shows no button */
+const ACT = new Map<string, [string, string, () => void]>([['time', ['hourglass', 'Open Time', () => go('time')]]])
+/** a step the console does itself: its button */
+function ConsoleSec({ j, s, f }: P) {
+  const a = s.act ? ACT.get(s.act) : undefined
+  if (!a || isClosed(j) || !isLive(f)) return null
+  return (
+    <section className="sec"><div className="eyebrow">Console</div>
+      <div className="row"><button className="btn sm pri" onClick={a[2]}><Ic n={a[0]} sm />{a[1]}</button></div></section>
+  )
+}
+
 /** the step's buttons: what the step is waiting for goes first */
 function StepActs({ j, s, f }: P) {
   if (isClosed(j)) return <span className="why">The job is closed. Reopen it to change steps.</span>
@@ -116,7 +128,7 @@ function DrawerBody({ j, sid }: { j: Job; sid: string }) {
     <div className="dr-b">
       <dl className="kv"><dt>Who does it</dt><dd><Ic n={MODES[s.m].i} sm /> {MODES[s.m].l}<div className="why">{EXEC[s.m]}</div></dd>
         <dt>Done when</dt><dd>{s.x}</dd>{s.a ? <><dt>Produces</dt><dd>{s.a.join(', ')}</dd></> : null}{f.m ? <><dt>Note</dt><dd>{f.m}</dd></> : null}</dl>
-      <LlmSec {...p} />{s.rv ? <ReviewSec {...p} /> : null}<TplSec {...p} /><BadgeSec {...p} />
+      <ConsoleSec {...p} /><LlmSec {...p} />{s.rv ? <ReviewSec {...p} /> : null}<TplSec {...p} /><BadgeSec {...p} />
     </div>
     <div className="dr-f"><StepActs {...p} /></div>
   </>

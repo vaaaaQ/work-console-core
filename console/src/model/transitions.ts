@@ -157,7 +157,7 @@ function advance(x: Ctx, j: Job, sid: string, state: NodeState) {
   const nx = atOf(x, j)
   if (nx) { const g = j.flow[nx]; if (g.s === 'fut' || g.s === 'tpl') { g.s = 'cur'; g.nw = 1 } }
   else if (j.st === 'recurring') {
-    steps(x, j.pb).forEach((s) => { const g = j.flow[s.id]; g.s = s.msg ? 'tpl' : 'fut'; g.out = null; g.sent = {}; g.m = ''; g.arts.forEach((a) => { a.ok = false }) })
+    steps(x, j.pb).forEach((s) => { const g = j.flow[s.id]; g.s = s.msg ? 'tpl' : 'fut'; g.out = null; g.sent = {}; g.m = ''; g.arts.forEach((a) => { a.ok = false; delete a.link }) })
     const first = steps(x, j.pb)[0]; j.flow[first.id].s = 'cur'
     if (j.due && j.every === 'month') j.due = nextMonth(j.due)
     jr(x, j, 'Period complete.', `all steps done; the flow starts again${j.due && j.every ? `, due ${tfmt(j.due)}` : ''}.`, `next period: “${first.t}”.`, by(x), 'ok')
@@ -252,8 +252,17 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     }
     case 'schedule': {
       needOpen()
+      // a monthly repeat makes the job recurring, so finishing its last step rolls the period; dropping it returns the job to its step
+      const recur = (on: boolean) => {
+        if (on === (j.st === 'recurring')) return
+        j.st = on ? 'recurring' : 'active'
+        const a = atOf(x, j)
+        if (on && a && (j.flow[a].s === 'fut' || j.flow[a].s === 'tpl')) j.flow[a].s = 'cur'
+        syncStatus(x, j)
+      }
       if (cmd.due === null) {
         delete j.due; delete j.lead; delete j.remind; delete j.every
+        recur(false)
         jr(x, j, 'Removed the due date.', 'no reminder.', nextTxt(x, j, atOf(x, j)), by(x), 'ok')
         break
       }
@@ -266,6 +275,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       if (cmd.lead) j.lead = cmd.lead; else delete j.lead
       if (cmd.remind !== undefined && cmd.remind !== 60) j.remind = cmd.remind; else delete j.remind
       if (cmd.every) j.every = cmd.every; else delete j.every
+      recur(!!j.every)
       jr(x, j, `Due ${tfmt(j.due)}.`, `${j.lead ? `needs you from ${j.lead} days before; ` : ''}reminder ${j.remind ?? 60} min before${j.every ? '; repeats monthly' : ''}.`,
         nextTxt(x, j, atOf(x, j)), by(x), 'ok')
       break
@@ -385,7 +395,9 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       const n = (cmd.n || '').trim()
       if (!n) throw new CmdError('bad_args', 'an artifact needs a name')
       const a = F.arts.find((a) => a.n === n)
-      if (a) { a.ok = true; a.nw = 1; if (cmd.link) a.link = cmd.link } else F.arts.push({ n, ok: true, nw: 1, ...(cmd.link ? { link: cmd.link } : {}) })
+      // ok: false = planned again; its file is gone, so is the link
+      if (cmd.ok === false) { if (a) { a.ok = false; delete a.link } }
+      else if (a) { a.ok = true; a.nw = 1; if (cmd.link) a.link = cmd.link } else F.arts.push({ n, ok: true, nw: 1, ...(cmd.link ? { link: cmd.link } : {}) })
       j.ts = nowOf(x).getTime()
       break
     }

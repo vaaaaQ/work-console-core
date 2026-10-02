@@ -1,7 +1,8 @@
 import type { Playbook } from '../model/types.ts'
 
 /* playbooks: ws = owning pack; none = core, offered in every workspace.
-   step: m = who does it by default, x = exit criterion, a = artifacts, msg = messages, rv = review, out = variable its accepted draft fills */
+   step: m = who does it by default, x = exit criterion, a = artifacts, msg = messages, rv = review, out = variable its accepted draft fills,
+   act = the console action its inspector offers ('time' opens the Time view). Step ids are global (message templates key on them), so a new playbook takes new ids */
 export const PB0: Record<string, Playbook> ={
  action:{n:'Action',d:'Short task: reply, triage, one-off request',ph:[
   {c:'TR',n:'Triage',s:[{id:'tr',t:'Understand the request',m:'llm',x:'Clear what is being asked'}]},
@@ -35,5 +36,10 @@ export const PB0: Record<string, Playbook> ={
   {c:'FX',n:'Fix',s:[
    {id:'cf3',t:'Fix or rerun',m:'you',x:'The build is green',a:['build']}]},
   {c:'RP',n:'Report',s:[
-   {id:'cf4',t:'Tell the channel',m:'you',x:'Post sent',msg:1}]}]}
+   {id:'cf4',t:'Tell the channel',m:'you',x:'Post sent',msg:1}]}]},
+ 'acme-timesheet':{ws:'acme',ks:'time',n:'Timesheet',d:'Month end: fill the hours, then send the timesheet',ph:[
+  {c:'TM',n:'Time',s:[
+   {id:'ts1',t:'Fill the month',m:'you',x:'Every day you worked has hours',act:'time'}]},
+  {c:'SN',n:'Send',s:[
+   {id:'ts2',t:'Send the timesheet',m:'you',x:'The timesheet is sent'}]}]}
 };

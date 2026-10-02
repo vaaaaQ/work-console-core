@@ -15,8 +15,9 @@ export type SrcKey = 'work' | 'review' | 'chat' | 'mail' | 'cal' | 'ci' | 'ticke
 type New = { nw?: 0 | 1 }
 
 /** m = who does it by default, x = exit criterion, a = artifacts, msg = messages,
- *  rv = review, out = variable its accepted draft fills; fid = id inside an added playbook's file */
-export interface Step { id: string; fid?: string; t: string; m: Mode; x: string; a?: string[]; msg?: number; rv?: 1; out?: string }
+ *  rv = review, out = variable its accepted draft fills; fid = id inside an added playbook's file;
+ *  act = the console action its inspector offers: 'time' opens the Time view, a workspace adds its own */
+export interface Step { id: string; fid?: string; t: string; m: Mode; x: string; a?: string[]; msg?: number; rv?: 1; out?: string; act?: string }
 export interface Phase { c: string; n: string; s: Step[] }
 /** ws = owning pack; none = core, offered in every workspace */
 export interface Playbook { ws?: Ws; ks?: SrcKey; n: string; d?: string; ph: Phase[]; custom?: 1 }
@@ -82,7 +83,7 @@ export type Cmd =
   | { op: 'runStart'; step: string; q: string; id: string; resumed?: boolean }
   | { op: 'runDraft'; step: string; t: string }
   | { op: 'runEnd'; step: string; why: 'cancelled' | 'failed' | 'interrupted'; detail?: string }
-  | { op: 'artifact'; step: string; n: string; link?: string }
+  | { op: 'artifact'; step: string; n: string; link?: string; ok?: false }
   | { op: 'journal'; o: string; c: string; n: string; a?: string }
   | { op: 'returnTo'; step: string; why: string }
   | { op: 'schedule'; due: string | null; lead?: number; remind?: number; every?: 'month' | null }

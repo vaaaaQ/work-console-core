@@ -4,7 +4,7 @@ import { PB0 } from '../data/playbooks.ts'
 import { JOBS0, JR, OVR, TPL0 } from '../data/demo.ts'
 import { clone } from '../lib/util.ts'
 import type { Job } from './types.ts'
-import { CmdError, apply, atOf, freshJob, isClosed, needsYou, nextMonth, seedFlow, steps } from './transitions.ts'
+import { CmdError, apply, atOf, freshJob, isClosed, isLive, needsYou, nextMonth, seedFlow, steps } from './transitions.ts'
 import type { Ctx } from './transitions.ts'
 
 const T0 = new Date('2026-09-30T12:00:00Z')
@@ -107,6 +107,32 @@ test('a recurring job starts its flow again after the last step', () => {
   assert.equal(j.st, 'recurring')
 })
 
+test("a new period's artifacts are planned again and lose last period's links", () => {
+  let j = find((j) => j.st === 'recurring')
+  const sid = steps(X, j.pb)[0].id
+  j = apply(X, j, { op: 'artifact', step: sid, n: 'report.md', link: '/api/artifacts/x/report.md' }).job
+  for (let i = 0; i < 50 && !j.jr.some((e) => e.o === 'Period complete.'); i++) j = apply(X, j, { op: 'stepDone', step: atOf(X, j)! }).job
+  assert.deepEqual(j.flow[sid].arts.find((a) => a.n === 'report.md'), { n: 'report.md', ok: false, nw: 1 })
+})
+
+test('an artifact with ok: false goes back to planned and drops its link', () => {
+  const j = find((j) => j.st === 'done'), sid = steps(X, j.pb)[0].id
+  const k = apply(X, j, { op: 'artifact', step: sid, n: 'a.pdf', link: '/api/artifacts/x/a.pdf' }).job
+  const a = apply(X, k, { op: 'artifact', step: sid, n: 'a.pdf', ok: false }).job.flow[sid].arts.find((a) => a.n === 'a.pdf')!
+  assert.equal(a.ok, false); assert.equal(a.link, undefined)
+  assert.equal(apply(X, k, { op: 'artifact', step: sid, n: 'none.pdf', ok: false }).job.flow[sid].arts.some((a) => a.n === 'none.pdf'), false)
+})
+
+test('a missing file leaves its artifact unticked and the step live', () => {
+  const j = open(), at = atOf(X, j)!
+  const made = apply(X, j, { op: 'artifact', step: at, n: 'out.pdf', link: '/api/artifacts/x/out.pdf' }).job
+  assert.equal(made.flow[at].arts.find((a) => a.n === 'out.pdf')!.ok, true)
+  const gone = apply(X, made, { op: 'artifact', step: at, n: 'out.pdf', ok: false }).job
+  assert.deepEqual(gone.flow[at].arts.filter((a) => a.n === 'out.pdf').map((a) => [a.ok, a.link]), [[false, undefined]])
+  assert.equal(isLive(gone.flow[at]), true)
+  assert.equal(atOf(X, gone), at)
+})
+
 test('votes follow the pack rule', () => {
   const j = find((j) => j.ws === 'acme' && Object.values(j.flow).some((f) => f.rv))
   const sid = Object.keys(j.flow).find((k) => j.flow[k].rv)!
@@ -197,6 +223,26 @@ test('a monthly recurring job moves its due date on when its period completes', 
   assert.equal(j.due, '2026-11-03T21:00:00.000Z')
   assert.equal(nextMonth('2027-01-31T15:00:00.000Z'), '2027-02-28T15:00:00.000Z', 'a short month keeps the last day')
   assert.equal(nextMonth('2026-12-01T02:00:00.000Z'), '2026-12-31T02:00:00.000Z', 'counts in the home-zone day (30 Nov 23:00), not the UTC day')
+})
+
+test('a monthly schedule makes the job recurring; dropping the repeat puts it back on its step', () => {
+  const j = open()
+  const r = apply(X, j, { op: 'schedule', due: '2026-10-03T21:00:00Z', lead: 2, every: 'month' }).job
+  assert.equal(r.st, 'recurring')
+  assert.ok(!['fut', 'tpl'].includes(r.flow[atOf(X, r)!].s), 'its step is under way')
+  assert.notEqual(apply(X, r, { op: 'schedule', due: '2026-10-03T21:00:00Z' }).job.st, 'recurring')
+  assert.notEqual(apply(X, r, { op: 'schedule', due: null }).job.st, 'recurring')
+})
+
+test('the timesheet playbook runs through its steps into the next period', () => {
+  let j = freshJob(X, 'J-9100', { t: 'Month end timesheet', key: 'NEW', pb: 'acme-timesheet', prj: '', ws: 'acme' })
+  j = apply(X, j, { op: 'schedule', due: '2026-10-03T21:00:00Z', lead: 2, remind: 3420, every: 'month' }).job
+  assert.equal(atOf(X, j), 'ts1')
+  for (const s of ['ts1', 'ts2']) j = apply(X, j, { op: 'stepDone', step: s }).job
+  assert.equal(j.st, 'recurring')
+  assert.equal(j.due, '2026-11-03T21:00:00.000Z')
+  assert.equal(atOf(X, j), 'ts1')
+  assert.equal(steps(X, 'acme-timesheet')[0].act, 'time')
 })
 
 test('a job made from a calendar event keeps the event and its start as due', () => {

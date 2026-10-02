@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { JOBS, LOG, applyLocal, atOf, byId, initFlow, isClosed, keySrc, putJob, restore, setJobs, snap } from './world.ts'
+import { JOBS, LOG, applyLocal, atOf, byId, createJob, initFlow, isClosed, jobAtAct, keySrc, putJob, restore, setJobs, snap } from './world.ts'
 
 JOBS.forEach(initFlow)
 
@@ -53,4 +53,19 @@ test('a job from a removed workspace lands in the default one and does not break
 
 test('every job knows where its key lives', () => {
   for (const j of JOBS) assert.ok(keySrc(j).n, j.id)
+})
+
+test('jobAtAct finds the open job whose current step carries the act', () => {
+  const x = snap()
+  assert.equal(jobAtAct('time'), undefined, 'no demo job is at a step with an act')
+  const j = createJob({ t: 'Month end timesheet', key: 'NEW', pb: 'acme-timesheet', prj: '', ws: 'acme' })
+  assert.equal(jobAtAct('time')?.id, j.id)
+  assert.equal(jobAtAct('bogus'), undefined)
+  applyLocal(j.id, { op: 'stepDone', step: 'ts1' })
+  assert.equal(jobAtAct('time'), undefined, 'the act is behind the job once its step is done')
+  applyLocal(j.id, { op: 'stepReopen', step: 'ts1' })
+  assert.equal(jobAtAct('time')?.id, j.id)
+  applyLocal(j.id, { op: 'close', st: 'cancelled' })
+  assert.equal(jobAtAct('time'), undefined, 'a closed job is not offered')
+  restore(x)
 })

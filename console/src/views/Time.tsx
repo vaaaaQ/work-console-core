@@ -6,7 +6,7 @@ import { go } from '../actions/nav.tsx'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
 import { srcState } from '../live/boot.ts'
-import { W, wsJobs } from '../model/world.ts'
+import { W, jobAtAct, wsJobs } from '../model/world.ts'
 import { commit } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
 import { CancelBtn } from '../ui/bits.tsx'
@@ -29,7 +29,8 @@ const fmtH = (h: number) => `${Math.round(h * 100) / 100} h`
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
 /** newest first: this month, then the one that just ended */
 const months = () => [...(LIVE.on ? LIVE.time : (demo ||= demoTime(localDay())))].sort((a, b) => b.id.localeCompare(a.id)).slice(0, 2)
-const timesheetJob = () => wsJobs().find((j) => j.st === 'recurring' && /timesheet/i.test(`${j.t} ${j.key}`))
+/** the job whose current step opens this view: the monthly fill starts there; else a recurring timesheet job */
+const timesheetJob = () => jobAtAct('time') || wsJobs().find((j) => j.st === 'recurring' && /timesheet/i.test(`${j.t} ${j.key}`))
 
 function put(id: string, f: (it: TimeItem) => TimeItem) {
   if (LIVE.on) LIVE.time = LIVE.time.map((x) => (x.id === id ? f(x) : x))
@@ -122,6 +123,6 @@ export function TimeView() {
       <p>{srcName()} hours for this month and the last one, Mon–Fri. The month that just ended can be filled with {HOURS} h on each empty working day; you see the days first.</p></div></div>
     {ms.length ? <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', alignItems: 'start' }}>
       {ms.map((it, i) => <MonthCard key={it.id} it={it} last={i === 1} />)}</div> : <div className="empty">No months from {srcName()} yet.</div>}
-    {job ? <p className="hint" style={{ marginTop: 16 }}>Recurring job: <button className="lnk mono" onClick={() => go('job', job.id)}>{job.id}</button> · {job.t}</p> : null}
+    {job ? <p className="hint" style={{ marginTop: 16 }}>{job.st === 'recurring' ? 'Recurring job' : 'Job'}: <button className="lnk mono" onClick={() => go('job', job.id)}>{job.id}</button> · {job.t}</p> : null}
   </>
 }

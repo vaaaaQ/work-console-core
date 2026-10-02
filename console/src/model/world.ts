@@ -33,6 +33,8 @@ export const stepOf = (j: Job, id: string | null) => T.stepOf(CTX, j, id)
 export const phaseOf = (j: Job, id: string) => PB[j.pb].ph.find((p) => p.s.some((s) => s.id === id))
 export const { isClosed, isLive, flows, hasDraft } = T
 export const atOf = (j: Job) => T.atOf(CTX, j)
+/** the open job in this workspace whose current step carries a console action */
+export const jobAtAct = (act: string) => wsJobs().find((j) => !isClosed(j) && stepOf(j, atOf(j))?.act === act)
 export const openBadges = (j: Job, k?: BadgeKind) => flows(j).reduce((a, f) => a + f.b.filter((b) => b.o && (k ? b.k === k : b.k !== 'p')).length, 0)
 export const unsentAt = (j: Job) => T.unsentAt(CTX, j)
 export const needsYou = (j: Job) => T.needsYou(CTX, j)
