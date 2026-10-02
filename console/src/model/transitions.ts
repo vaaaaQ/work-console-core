@@ -127,22 +127,22 @@ function ctxEdit(x: Ctx, j: Job, c: Extract<Cmd, { op: 'ctxAdd' | 'ctxSet' | 'ct
   const list = ctxOf(j).map((it) => ({ ...it })), i = list.findIndex((it) => it.k === c.k && it.id === id), what = K.l.toLowerCase()
   const next = nextTxt(x, j, atOf(x, j))
   if (c.op === 'ctxAdd') {
-    if (i >= 0) throw new CmdError('bad_args', `${what} ${ctxLabel(list[i])} is already in the context`)
+    if (i >= 0) throw new CmdError('bad_args', `${what} ${ctxLabel(j.ws, list[i])} is already in the context`)
     if (list.length >= CTX_MAX) throw new CmdError('bad_args', `the context holds at most ${CTX_MAX} items`)
     const it: CtxItem = { k: c.k, id, n: c.n === undefined ? K.def : count(c.n) }
     const name = typeof c.name === 'string' ? c.name.trim().slice(0, 120) : ''
     if (name) it.name = name
     list.push(it)
-    jr(x, j, `Added ${what} ${ctxLabel(it)} to the context.`, `LLM runs get its ${ctxUnit(it)}.`, next, by(x), 'ok')
+    jr(x, j, `Added ${what} ${ctxLabel(j.ws, it)} to the context.`, `LLM runs get its ${ctxUnit(it)}.`, next, by(x), 'ok')
   } else {
     if (i < 0) throw new CmdError('bad_args', `${what} ${id} is not in the context`)
     const it = list[i]
     if (c.op === 'ctxSet') {
       it.n = count(c.n)
-      jr(x, j, `${K.l} ${ctxLabel(it)} now gives the ${ctxUnit(it)}.`, 'context changed for the next LLM runs.', next, by(x), 'ok')
+      jr(x, j, `${K.l} ${ctxLabel(j.ws, it)} now gives the ${ctxUnit(it)}.`, 'context changed for the next LLM runs.', next, by(x), 'ok')
     } else {
       list.splice(i, 1)
-      jr(x, j, `Removed ${what} ${ctxLabel(it)} from the context.`, 'the next LLM runs no longer get it.', next, by(x), 'ok')
+      jr(x, j, `Removed ${what} ${ctxLabel(j.ws, it)} from the context.`, 'the next LLM runs no longer get it.', next, by(x), 'ok')
     }
   }
   j.ctx = list

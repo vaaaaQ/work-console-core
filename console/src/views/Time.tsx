@@ -1,5 +1,6 @@
 import * as React from 'react'
-import { compactDays, dayLabel, demoTime, fillMonth, localDay } from '../data/time.ts'
+import { compactDays, dayLabel, fillMonth, localDay } from '../data/time.ts'
+import { DEFAULT_WS } from '../data/packs.ts'
 import type { FillArgs, FillResult, TimeItem } from '../data/time.ts'
 import { failText } from '../actions/flow.tsx'
 import { go } from '../actions/nav.tsx'
@@ -13,6 +14,7 @@ import { CancelBtn } from '../ui/bits.tsx'
 import { closeModal, modal } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
 import { Unavailable } from './Chats.tsx'
+import { wsPage } from '../workspace.ts'
 
 /* Time: this month and the last one from the timesheet tool. Only the month that just ended is
    filled, 8 h on each empty working day, after a confirmation; bridge A writes it as one action. */
@@ -28,7 +30,7 @@ const srcName = () => W().src.time?.n || 'Timesheet'
 const fmtH = (h: number) => `${Math.round(h * 100) / 100} h`
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
 /** newest first: this month, then the one that just ended */
-const months = () => [...(LIVE.on ? LIVE.time : (demo ||= demoTime(localDay())))].sort((a, b) => b.id.localeCompare(a.id)).slice(0, 2)
+const months = () => [...(LIVE.on ? LIVE.time : (demo ||= wsPage(DEFAULT_WS).demo.time?.(localDay()) ?? []))].sort((a, b) => b.id.localeCompare(a.id)).slice(0, 2)
 /** the job whose current step opens this view: the monthly fill starts there; else a recurring timesheet job */
 const timesheetJob = () => jobAtAct('time') || wsJobs().find((j) => j.st === 'recurring' && /timesheet/i.test(`${j.t} ${j.key}`))
 

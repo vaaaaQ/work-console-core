@@ -12,14 +12,15 @@ import type { TimeItem } from '../data/time.ts'
    and the event stream keeps both current. The gateway serves one pack, the default
    workspace's; other packs show their sources as not connected. */
 
-export const LIVE_WS: Ws = DEFAULT_WS
+/** the workspace the gateway serves; read on use, since install() sets DEFAULT_WS after this module loads */
+const liveWs = (): Ws => DEFAULT_WS
 const CONCEPTS = ['chat', 'mail', 'cal', 'board', 'time']
 const KNOWLEDGE = ['notes', 'proposals']
 
 /** null = demo data; 'ok'; 'loading'; or why the concept is unavailable */
 export function srcState(concept: string): string | null {
   if (!LIVE.on) return null
-  if (S.ws !== LIVE_WS) return 'not connected in this version'
+  if (S.ws !== liveWs()) return 'not connected in this version'
   if (LIVE.bridge !== 'ok') return 'the bridge is unavailable'
   return LIVE.sources[concept] || 'loading'
 }
@@ -49,12 +50,12 @@ function applyConcept(c: string, r: ConceptState | undefined) {
   LIVE.sources[c] = 'ok'
   if (c === 'chat') {
     // a thread already read keeps its messages until it is opened again
-    const old = new Map((CHATS[LIVE_WS] || []).map((x) => [x.id, x]))
-    CHATS[LIVE_WS] = (r.items as Chat[]).map((x) => ({ ...x, msgs: old.get(x.id)?.msgs || [] }))
+    const old = new Map((CHATS[liveWs()] || []).map((x) => [x.id, x]))
+    CHATS[liveWs()] = (r.items as Chat[]).map((x) => ({ ...x, msgs: old.get(x.id)?.msgs || [] }))
     loaded.chat.clear()
   } else if (c === 'mail') {
-    const old = new Map((MAIL[LIVE_WS] || []).map((x) => [x.id, x]))
-    MAIL[LIVE_WS] = (r.items as Mail[]).map((x) => { const o = old.get(x.id); return { ...x, body: o?.body || x.body, ...(o?.sent ? { sent: o.sent } : {}) } })
+    const old = new Map((MAIL[liveWs()] || []).map((x) => [x.id, x]))
+    MAIL[liveWs()] = (r.items as Mail[]).map((x) => { const o = old.get(x.id); return { ...x, body: o?.body || x.body, ...(o?.sent ? { sent: o.sent } : {}) } })
   } else if (c === 'cal') LIVE.cal = r.items as CalItem[]
   else if (c === 'board') LIVE.board = r.items as BoardItem[]
   else if (c === 'time') LIVE.time = r.items as TimeItem[]
@@ -65,7 +66,7 @@ export async function loadSources(concepts = CONCEPTS) {
     const { concepts: r } = await api.sources(concepts)
     commit(() => concepts.forEach((c) => applyConcept(c, r[c])))
     // the thread on screen may have new messages
-    if (concepts.includes('chat') && S.view === 'chats' && S.ws === LIVE_WS) loadThread(S.chat[LIVE_WS])
+    if (concepts.includes('chat') && S.view === 'chats' && S.ws === liveWs()) loadThread(S.chat[liveWs()])
   } catch (e) {
     commit(() => concepts.forEach((c) => { LIVE.sources[c] = e instanceof api.ApiError ? e.message : 'unavailable' }))
   }
@@ -85,14 +86,14 @@ const loaded = { chat: new Set<string>(), mail: new Set<string>() }
 export function loadThread(id: string) {
   if (!LIVE.on || srcState('chat') !== 'ok' || loaded.chat.has(id)) return
   loaded.chat.add(id)
-  api.chatThread(id).then((msgs) => commit(() => { const c = (CHATS[LIVE_WS] || []).find((x) => x.id === id); if (c) c.msgs = msgs }))
+  api.chatThread(id).then((msgs) => commit(() => { const c = (CHATS[liveWs()] || []).find((x) => x.id === id); if (c) c.msgs = msgs }))
     .catch(() => { loaded.chat.delete(id) })
 }
 export function refreshThread(id: string) { loaded.chat.delete(id); loadThread(id) }
 export function loadMailBody(id: string) {
   if (!LIVE.on || srcState('mail') !== 'ok' || loaded.mail.has(id)) return
   loaded.mail.add(id)
-  api.mailItem(id).then((body) => commit(() => { const m = (MAIL[LIVE_WS] || []).find((x) => x.id === id); if (m) m.body = body || '(no text)' }))
+  api.mailItem(id).then((body) => commit(() => { const m = (MAIL[liveWs()] || []).find((x) => x.id === id); if (m) m.body = body || '(no text)' }))
     .catch(() => { loaded.mail.delete(id) })
 }
 
@@ -123,9 +124,9 @@ export function onEvent(e: Ev) {
 export function fromQuery(q = location.search) {
   const p = new URLSearchParams(q), jid = p.get('job'), view = p.get('view')
   if (jid && byId(jid)) { const j = byId(jid)!; S.ws = j.ws; S.view = 'job'; S.job = j.id; S.sel = p.get('step') || null }
-  else if (view === 'chats') { S.ws = LIVE_WS; S.view = 'chats'; const c = p.get('chat'); if (c) S.chat[LIVE_WS] = c }
-  else if (view === 'mail') { S.ws = LIVE_WS; S.view = 'mail'; const m = p.get('mail'); if (m) { S.mail = m; S.mcat = 'reply' } }
-  else if (view === 'approvals') { S.ws = LIVE_WS; S.view = 'approvals' }
+  else if (view === 'chats') { S.ws = liveWs(); S.view = 'chats'; const c = p.get('chat'); if (c) S.chat[liveWs()] = c }
+  else if (view === 'mail') { S.ws = liveWs(); S.view = 'mail'; const m = p.get('mail'); if (m) { S.mail = m; S.mcat = 'reply' } }
+  else if (view === 'approvals') { S.ws = liveWs(); S.view = 'approvals' }
   else return false
   try { history.replaceState(null, '', location.pathname + (S.view === 'job' ? '#' + S.job : '#' + S.view)) } catch { /* as in setHash */ }
   return true

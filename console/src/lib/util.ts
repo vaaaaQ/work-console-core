@@ -1,6 +1,11 @@
 import { zone } from './zone.ts'
 
 export const clone = <T>(o: T): T => JSON.parse(JSON.stringify(o))
+/** replaces an object's contents in place, so modules holding it see the new ones */
+export function refill<T extends object>(o: T, from: T) {
+  for (const k of Object.keys(o)) delete (o as Record<string, unknown>)[k]
+  return Object.assign(o, from)
+}
 
 /** per-browser conveniences only: storage can be blocked or empty, and then the default applies */
 export const store = {

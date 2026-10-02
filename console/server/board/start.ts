@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { DEFAULT_PB, boardKey } from '../../src/data/board.ts'
 import { DEFAULT_WS, PACKS } from '../../src/data/packs.ts'
-import { itemOf } from '../../src/model/context.ts'
 import * as T from '../../src/model/transitions.ts'
 import type { Job } from '../../src/model/types.ts'
+import { itemOf, wsPage } from '../../src/workspace.ts'
 import { READY } from '../bridge/wire.ts'
 import type { ActReq, ActRes, ConceptReply } from '../bridge/wire.ts'
 import { HttpError } from '../events.ts'
@@ -14,6 +13,8 @@ import type { Jobs, Who } from '../jobs/jobs.ts'
 
 /** longest input Start looks at, counted after trimming; the board rule limits the characters, not the length */
 const KEY_MAX = 64
+/** the board's rule, from the workspace the gateway serves */
+const board = () => wsPage(DEFAULT_WS).board
 export type StartItem = (key: string, pb?: string, who?: Who) => Promise<{ job: Job; created: boolean }>
 interface Deps {
   jobs: Jobs; ctx: () => T.Ctx
@@ -29,15 +30,16 @@ export function startItem(d: Deps): StartItem {
       const hit = READY.has(b?.status) && Array.isArray(b.items) ? (b.items as { id: string; title?: string }[]).find((i) => i.id === id) : undefined
       if (hit?.title?.trim()) return hit.title.trim()
     } catch { /* the key stands in */ }
-    return boardKey(id)
+    return board().key(id)
   }
   // two Starts on one item (two devices, or the page and a session) run one after the other,
   // so the second finds the job the first created
   const queue = new Map<string, Promise<unknown>>()
-  return (key, pb = DEFAULT_PB, who = 'page') => {
-    const raw = String(key ?? '').trim(), id = raw.length <= KEY_MAX ? itemOf(raw) : null
+  return (key, pb, who = 'page') => {
+    const raw = String(key ?? '').trim(), id = raw.length <= KEY_MAX ? itemOf(board(), raw) : null
     if (!id) return Promise.reject(new HttpError(400, 'bad_args', `${key} is not a board item key`))
-    const prev = queue.get(id) ?? Promise.resolve(), run = prev.catch(() => {}).then(() => start(id, pb, who))
+    const p = pb ?? board().start
+    const prev = queue.get(id) ?? Promise.resolve(), run = prev.catch(() => {}).then(() => start(id, p, who))
     queue.set(id, run)
     void run.catch(() => {}).finally(() => { if (queue.get(id) === run) queue.delete(id) })
     return run
@@ -52,7 +54,7 @@ export function startItem(d: Deps): StartItem {
       if (no) throw new HttpError(400, 'refused', m.slice(no.index + no[0].length))
       throw new HttpError(502, r.error?.code || r.status, m)
     }
-    const k = boardKey(id)
+    const k = board().key(id)
     const open = (await d.jobs.all()).find((j) => j.key === k && !T.isClosed(j))
     if (open) return { job: open, created: false }
     const job = await d.jobs.create({ t: await title(id, r.result), key: k, pb, prj: PACKS[DEFAULT_WS].prj[0], ws: DEFAULT_WS }, who)

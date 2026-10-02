@@ -1,22 +1,30 @@
 import { DEFAULT_WS, PACKS } from '../data/packs.ts'
 import { PB0 } from '../data/playbooks.ts'
 import { CHATS0, JOBS0, JR, LLMS, LOG0, MAIL0, OVR, PRI, RET0, TPL0 } from '../data/demo.ts'
-import { clone, hm, norm } from '../lib/util.ts'
+import { clone, hm, norm, refill } from '../lib/util.ts'
 import * as T from './transitions.ts'
 import { KINDS, ctxLabel, ctxOf, ctxUnit } from './context.ts'
 import type { BadgeKind, Chat, Cmd, CtxItem, Flow, Job, LogEntry, Mail, NodeState, Playbook, Src, SrcKey, Step, Tpl, Ui, Ws } from './types.ts'
 
-/* ===== the world: plain mutable data, as in the prototype; the views re-render after each commit() ===== */
-export const PB: Record<string, Playbook> = clone(PB0)
-export const TPL: Record<string, Tpl[]> = clone(TPL0)
-export const JOBS = clone(JOBS0) as Job[]
-export const LOG: Record<Ws, LogEntry[]> = clone(LOG0)
-export const CHATS: Record<Ws, Chat[]> = clone(CHATS0)
-export const MAIL: Partial<Record<Ws, Mail[]>> = clone(MAIL0)
-export const S: Ui = {
+/* ===== the world: plain mutable data, as in the prototype; the views re-render after each commit() =====
+   Empty until install() (src/workspace.ts) seeds it from the registered workspaces through resetWorld(). */
+export const PB: Record<string, Playbook> = {}
+export const TPL: Record<string, Tpl[]> = {}
+export const JOBS: Job[] = []
+export const LOG: Record<Ws, LogEntry[]> = {}
+export const CHATS: Record<Ws, Chat[]> = {}
+export const MAIL: Partial<Record<Ws, Mail[]>> = {}
+const ui = (): Ui => ({
   ws: DEFAULT_WS, view: 'jobs', job: null, sel: null, f: 'all', prj: 'all', q: '', flash: null,
   chat: { [DEFAULT_WS]: 'c1' }, mail: 'm1', mcat: 'reply', pbv: null, sum: {}, focusB: null, cd: {},
   njSrc: '', njChat: '', njMail: '', njEv: '', njDue: '', njDraft: null, pbRet: null,
+})
+export const S: Ui = ui()
+/** the world as the installed workspaces seed it, rebuilt in place so every module keeps its reference */
+export function resetWorld() {
+  refill(PB, clone(PB0)); refill(TPL, clone(TPL0))
+  JOBS.splice(0, JOBS.length, ...(clone(JOBS0) as Job[]))
+  refill(LOG, clone(LOG0)); refill(CHATS, clone(CHATS0)); refill(MAIL, clone(MAIL0)); refill(S, ui())
 }
 
 /* ===== workspace (pack) helpers ===== */
@@ -72,7 +80,7 @@ export function clearNew() {
 }
 
 /** a context item's row label: its name, a loaded chat's name, or its id */
-export const ctxName = (j: Job, it: CtxItem) => it.name || (it.k === 'chat' && (CHATS[j.ws] || []).find((c) => c.id === it.id)?.name) || ctxLabel(it)
+export const ctxName = (j: Job, it: CtxItem) => it.name || (it.k === 'chat' && (CHATS[j.ws] || []).find((c) => c.id === it.id)?.name) || ctxLabel(j.ws, it)
 /** what a run's prompt will carry from the job's context, as [icon, text] */
 export const ctxRows = (j: Job): [string, string][] => ctxOf(j).map((it) => [KINDS[it.k].ic, `${KINDS[it.k].l} ${ctxName(j, it)} · ${ctxUnit(it)}`])
 

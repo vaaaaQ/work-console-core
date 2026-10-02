@@ -1,3 +1,4 @@
+import '../testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { blankFile, checkPb, pbToFile, toInternal } from './playbookFile.ts'

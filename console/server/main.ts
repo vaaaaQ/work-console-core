@@ -9,6 +9,8 @@ import { TPL0 } from '../src/data/demo.ts'
 import { PB0 } from '../src/data/playbooks.ts'
 import * as T from '../src/model/transitions.ts'
 import type { Job, Playbook } from '../src/model/types.ts'
+import { install } from '../src/workspace.ts'
+import acme from '../workspaces/acme/page.ts'
 import { BoardReturns } from './board/returns.ts'
 import { startItem } from './board/start.ts'
 import { BridgeClient } from './bridge/client.ts'
@@ -73,6 +75,8 @@ async function listen(s: Server, port: number, host: string) {
 }
 
 export async function main(o: { cfg?: Config; sdk?: Sdk } = {}) {
+  // the packs, playbooks and demo data come from the registered workspaces
+  install([{ page: acme }])
   const cfg = o.cfg ?? loadConfig()
   const bus = new Bus()
   const fake = cfg.fakeGateway ? await startFakeGateway() : null

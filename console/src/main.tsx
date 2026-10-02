@@ -10,8 +10,11 @@ import { toast } from './ui/toasts.tsx'
 import { App } from './App.tsx'
 import { boot, fromQuery } from './live/boot.ts'
 import { PairScreen } from './views/Devices.tsx'
+import { install } from './workspace.ts'
+import { WORKSPACES } from '../workspaces/page.ts'
 
 /* With a backend the page is live; without one (the artifact, vite dev) it is the demo. */
+install(WORKSPACES)
 const root = createRoot(document.getElementById('root')!)
 applyStoredTheme()
 boot().then((mode) => {

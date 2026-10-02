@@ -1,3 +1,4 @@
+import '../testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { JOBS, LOG, applyLocal, atOf, byId, createJob, initFlow, isClosed, jobAtAct, keySrc, putJob, restore, setJobs, snap } from './world.ts'

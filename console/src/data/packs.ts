@@ -1,14 +1,9 @@
 import type { Pack, Ws } from '../model/types.ts'
 
-/* ===== workspace packs: tools, vocabulary, review rule, playbooks, data =====
-   A pack maps a workplace's tools onto the core concepts. Acme is the fictional demo workplace;
-   a real one adds its own entry here and its bridge pack under packs/ at the repo root. */
-export const PACKS: Record<Ws, Pack> ={
- acme:{n:'Acme',d:'Jira, GitHub, Slack, Jenkins, Zoom, Confluence',tz:null,tzl:'',keyPh:'ACME-123',strip:null,prj:['platform','web','ops'],
-  src:{work:{n:'Jira',item:'issue'},review:{n:'GitHub',item:'pull request'},chat:{n:'Slack'},mail:{n:'Email'},
-   cal:{n:'Zoom',item:'meeting'},ci:{n:'Jenkins',item:'build'},tickets:{n:'Jira',item:'support ticket'},docs:{n:'Confluence',item:'page'},time:{n:'Timesheet'}},
-  votes:{'1':'approved','0':'commented','-1':'changes requested'},ok:1,veto:-1,
-  rule:'Two approvals, and no changes requested.',people:{po:'Dana'}}
-};
-/** the workspace the page opens in, and the one jobs from a removed workspace land in */
-export const DEFAULT_WS: Ws = 'acme'
+/* ===== workspace packs: tools, vocabulary, review rule =====
+   A pack maps a workplace's tools onto the core concepts. Each workspace brings its own under
+   workspaces/<id>/; install() (src/workspace.ts) fills this map from the registered ones. */
+export const PACKS: Record<Ws, Pack> = {}
+/** the workspace the page opens in, and the one jobs from a removed workspace land in: the first registered */
+export let DEFAULT_WS: Ws = ''
+export function setDefaultWs(ws: Ws) { DEFAULT_WS = ws }

@@ -1,12 +1,13 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { BOARD0, ME, started } from '../../src/data/board.ts'
+import { started } from '../../src/data/board.ts'
 import type { BoardItem } from '../../src/data/board.ts'
 import { CAL_ITEMS, CHATS0, JOBS0, MAIL0, PRI, WORK0 } from '../../src/data/demo.ts'
-import { demoTime, fillMonth } from '../../src/data/time.ts'
+import { fillMonth } from '../../src/data/time.ts'
 import type { FillArgs, TimeItem } from '../../src/data/time.ts'
 import { dayOf, fromWall } from '../../src/lib/zone.ts'
+import { wsPage } from '../../src/workspace.ts'
 import type { ActReq, Delta } from './wire.ts'
 
 /* A stand-in for the bridge gateway, speaking its wire: bearer per caller class, concept replies,
@@ -43,8 +44,12 @@ function iso(hm: string, day = 0) {
   return new Date(fromWall(Date.parse(`${ymd}T${hm}:00Z`))).toISOString()
 }
 
+/** the example workspace whose demo the fake serves, and who "me" is there */
+const acme = () => wsPage('acme')
+const meOf = () => acme().me ?? 'You'
+
 function seed() {
-  const chats = CHATS0.acme, threads: Record<string, Item[]> = {}
+  const chats = CHATS0.acme, threads: Record<string, Item[]> = {}, ME = meOf(), demo = acme().demo
   for (const c of chats) threads[c.id] = c.msgs.map((m, i) => ({
     id: `${c.id}-${i}`, author: m.me ? ME : m.who, authorKind: m.me ? 'me' : m.bot ? 'bot' : 'person', at: iso(m.at), text: m.t,
   }))
@@ -64,8 +69,8 @@ function seed() {
     review: { rev: 1, items: Object.values(PRI).filter((p) => p.id.startsWith('#')).map((p) => ({
       id: p.id.slice(1), repo: 'acme/platform', title: p.br, author: ME, myVote: 0, votes: [{ reviewer: 'Priya Shah', vote: 1 }], activeThreads: 1, createdAt: iso('09:12'), link: `https://github.example/acme/platform/pull/${p.id.slice(1)}`,
     })) },
-    board: { rev: 1, items: BOARD0().map((b): Item => ({ ...b })) },
-    time: { rev: 1, items: demoTime(iso('12:00').slice(0, 10)) },
+    board: { rev: 1, items: (demo.board?.() ?? []).map((b): Item => ({ ...b })) },
+    time: { rev: 1, items: demo.time?.(iso('12:00').slice(0, 10)) ?? [] },
     ci: { rev: 1, items: [{ id: 'main#1288', pipeline: 'main', status: 'completed', result: 'succeeded', branch: 'main', startedAt: iso('07:01'), finishedAt: iso('07:15'), link: 'https://jenkins.example/job/main/1288/' }] },
   }
   for (const k of STATE) cs[k] = { rev: 1, items: [] }
@@ -150,7 +155,7 @@ export async function startFakeGateway(o: { port?: number; token?: string; llmTo
     const it = find('board', id)
     if (!it) return { status: 'source_error', message: `tracker: not_found: no item ${id}` }
     if (it.lane !== 'free' && it.lane !== 'mine') return { status: 'source_error', message: `tracker: bad_args: ${id} is assigned to ${it.assignedTo}` }
-    const up = started(it as unknown as BoardItem, ME, now()) as unknown as Item
+    const up = started(it as unknown as BoardItem, meOf(), now()) as unknown as Item
     change({ concept: 'board', upserts: [up] })
     return { status: 'ok', rev: cs.board.rev, items: { id, type: it.type, title: it.title, state: up.state } }
   }

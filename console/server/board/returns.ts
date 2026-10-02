@@ -1,8 +1,9 @@
-import { boardKey } from '../../src/data/board.ts'
+import { DEFAULT_WS } from '../../src/data/packs.ts'
 import * as T from '../../src/model/transitions.ts'
 import type { Job } from '../../src/model/types.ts'
 import type { Bus } from '../events.ts'
 import type { Jobs } from '../jobs/jobs.ts'
+import { wsPage } from '../../src/workspace.ts'
 
 /* QA sending an item back shows on the board as a QA column turning into Dev. The item's job,
    reopened if it was closed, gets an open problem note so it needs the user, and one push names it.
@@ -10,6 +11,8 @@ import type { Jobs } from '../jobs/jobs.ts'
 
 type Item = { id: string; column?: unknown }
 const QA = /\bQA\b/
+/** the job key of a board item, by the rule of the workspace the gateway serves */
+const keyOf = (id: string) => wsPage(DEFAULT_WS).board.key(id)
 
 export class BoardReturns {
   private jobs: Jobs; private ctx: () => T.Ctx; private read: () => Promise<Item[] | null>
@@ -41,11 +44,11 @@ export class BoardReturns {
       this.cols.set(i.id, col)
       if (prev && QA.test(prev) && col === 'Dev') back.push(i.id)
     }
-    for (const id of back) await this.returned(id).catch((e) => console.error(`handling the QA return of ${boardKey(id)} failed:`, (e as Error).message))
+    for (const id of back) await this.returned(id).catch((e) => console.error(`handling the QA return of ${keyOf(id)} failed:`, (e as Error).message))
   }
 
   private async returned(id: string) {
-    const key = boardKey(id), js = (await this.jobs.all()).filter((j) => j.key === key)
+    const key = keyOf(id), js = (await this.jobs.all()).filter((j) => j.key === key)
     const j: Job | undefined = js.find((x) => !T.isClosed(x)) ?? js.sort((a, b) => b.ts - a.ts)[0]
     if (!j) return
     this.busy.add(j.id)

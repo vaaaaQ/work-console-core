@@ -22,7 +22,7 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, ctx: Reso
     ``,
     `Instruction: ${q}`,
     ``,
-    contextSection(ctx),
+    contextSection(j.ws, ctx),
     outs.length ? `## Earlier outputs\n${outs.join('\n\n')}\n` : '',
     jr.length ? `## Journal (latest last)\n${jr.join('\n')}\n` : '',
     `## How to work`,

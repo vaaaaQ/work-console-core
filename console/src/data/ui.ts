@@ -1,12 +1,7 @@
 import type { MailCat, NodeState } from '../model/types.ts'
 
-/** LLM reply drafts for the demo mail */
-export const MDR: Record<string, string> = {
-  m1: 'hi,\nthanks, I am on SUP-77 today and will update the ticket with what I find.',
-  m2: 'hi Priya,\nsure, you will have the Q3 usage export by Friday, in the same format as last time.',
-  m3: 'hi,\na quick follow-up: can ACME-530 go into tomorrow’s staging window?',
-  m4: 'hi,\nthanks, noted.',
-}
+/** LLM reply drafts for the demo mail, from the registered workspaces; install() fills it */
+export const MDR: Record<string, string> = {}
 export const MCAT: [MailCat, string, string][] = [
   ['reply', 'To reply', 'mail'], ['wait', 'Waiting for an answer', 'hourglass'], ['fyi', 'FYI', 'inbox'], ['auto', 'Automatic', 'bot']]
 /** the Jobs filter bar */

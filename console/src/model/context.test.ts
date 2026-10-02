@@ -1,3 +1,4 @@
+import '../testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { PB0 } from '../data/playbooks.ts'
@@ -58,8 +59,8 @@ test('a chat reads as its newest messages, oldest first, me as the user', () => 
 })
 
 test('the context section heads each item and marks the unreadable ones', () => {
-  assert.equal(contextSection([]), '')
-  const s = contextSection([okItem(C, { messages: [] }), badItem(W, 'signin_required', 'sign in to Jira')])
+  assert.equal(contextSection('acme', []), '')
+  const s = contextSection('acme', [okItem(C, { messages: [] }), badItem(W, 'signin_required', 'sign in to Jira')])
   assert.equal(s, '## Context\n### Chat Sam Rivera (last 2 messages)\nNo messages.\n\n### Work item ACME-603 (last 2 comments) — unavailable\nsign in to Jira\n')
   assert.equal(badItem(W, 'ok', 'empty').status, 'source_error')
 })

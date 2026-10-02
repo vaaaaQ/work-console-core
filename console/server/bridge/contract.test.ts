@@ -1,3 +1,4 @@
+import '../testkit.ts'
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { startFakeGateway } from './fake.ts'

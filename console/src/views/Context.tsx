@@ -103,7 +103,7 @@ export function addCtx(j0: Job) {
       if (!item) { const i = f.querySelector<HTMLInputElement>('[name=id]'); if (i) { i.focus(); i.setAttribute('aria-invalid', 'true') } return }
       const name = k === 'work' ? (workId(j0.ws, raw) ? raw : undefined) : chatName(j0, item)
       closeModal()
-      const lb = name || ctxLabel({ k, id: item })
+      const lb = name || ctxLabel(j0.ws, { k, id: item })
       void doCmd(id, { op: 'ctxAdd', k, id: item, n, ...(name ? { name } : {}) }, `Added ${KINDS[k].l.toLowerCase()} ${lb} to the context`)
     },
   })
