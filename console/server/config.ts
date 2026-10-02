@@ -17,6 +17,8 @@ export interface Config {
   fakeGateway: boolean
   /** config.json's workspaces.<id> sections, as written */
   workspaces: Record<string, Partial<WsConfig>>
+  /** what every workspace starts from, with the env loadConfig was given (GATEWAY_URL, WORK_CONSOLE_CWD) */
+  core: WsConfig
 }
 
 const PC_KEYS = new Set(['home', 'loopbackPort', 'lanPort', 'pcName', 'fakeGateway', 'workspaces'])
@@ -59,7 +61,7 @@ export function wsConfig(cfg: Config, w: WorkspaceServer, raw: Record<string, un
   const id = w.page.id, legacy: Record<string, unknown> = {}
   for (const k of legacyKeys(raw)) { legacy[k] = raw[k]; log(`move ${k} to workspaces.${id}.${k} in config.json`) }
   return {
-    ...coreDefaults(),
+    ...cfg.core,
     ...(w.llm?.runTools ? { runTools: w.llm.runTools } : {}),
     ...w.defaults,
     ...legacy,
@@ -89,6 +91,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     fakeGateway: env.WORK_CONSOLE_FAKE_GATEWAY === '1',
     ...pc,
     workspaces: ws && typeof ws === 'object' && !Array.isArray(ws) ? ws as Config['workspaces'] : {},
+    core: coreDefaults(env),
   }
 }
 

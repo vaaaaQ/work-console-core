@@ -79,19 +79,37 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
   const mcpToken = ensureToken(join(cfg.home, 'mcp.token'))
 
   let app: ReturnType<typeof createApp> | null = null
+  const open: Server[] = []
+  /** every space is closed even when one fails; the first failure is rethrown after the rest */
+  async function close() {
+    reminders.stop(); app?.close()
+    const r = await Promise.allSettled(list.map((s) => s.close()))
+    unhub()
+    for (const s of open) { s.closeAllConnections(); await new Promise((ok) => s.close(ok)) }
+    const bad = r.find((x) => x.status === 'rejected')
+    if (bad) throw bad.reason
+  }
+
   const late = (side: 'loopback' | 'lan'): RequestListener => (q, s) => app![side](q, s)
   const loop = createServer(late('loopback'))
-  const loopbackPort = await listen(loop, cfg.loopbackPort, '127.0.0.1')
   const key = join(cfg.home, 'tls', 'server.key'), crt = join(cfg.home, 'tls', 'server.crt')
   const lan = existsSync(key) && existsSync(crt) ? createTls({ key: readFileSync(key), cert: readFileSync(crt) }, late('lan')) : null
-  const lanPort = lan ? await listen(lan, cfg.lanPort, '0.0.0.0') : null
+  let loopbackPort: number, lanPort: number | null = null
+  try {
+    loopbackPort = await listen(loop, cfg.loopbackPort, '127.0.0.1'); open.push(loop)
+    if (lan) { lanPort = await listen(lan, cfg.lanPort, '0.0.0.0'); open.push(lan) }
+  } catch (e) {
+    // a taken port: what was made so far would otherwise keep the process alive
+    await close().catch(() => {})
+    throw e
+  }
 
   // first space until Task 8: the routes still serve one workspace
   const first = list[0]
   app = createApp({
     loopbackPort, lanPort: lanPort ?? cfg.lanPort, pcName: cfg.pcName, bus: first.bus, store: first.store, jobs: first.jobs, runner: first.runner,
     bridge: first.source, pairing, notify, ctx: first.ctx, putPlaybook: first.putPlaybook,
-    staticDirs: [join(PKG, 'dist'), join(PKG, 'public')], artifactsDir, tz: first.cfg.teamTz,
+    staticDirs: [join(PKG, 'dist'), join(PKG, 'public')], artifactsDir, tz: first.cfg.teamTz, page: first.page,
     // first space until Task 9: the job tools still serve one workspace
     mcp: mcpHandler({ tools: jobTools({ jobs: first.jobs, ctx: first.ctx, start: first.start }), token: () => readToken(mcpToken) }),
   })
@@ -100,13 +118,7 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
   console.log(`work console on http://127.0.0.1:${loopbackPort}${lanPort ? ` and https://${cfg.pcName}:${lanPort}` : ' (no LAN: run scripts/install.ps1 for a certificate)'}, workspaces ${list.map((s) => s.id).join(', ')}${cfg.fakeGateway ? ', fake gateways' : ''}`)
 
   return {
-    loopbackPort, lanPort, hub: bus, spaces, fakes, mcpToken,
-    async close() {
-      reminders.stop(); app!.close()
-      for (const s of list) await s.close()
-      unhub()
-      for (const s of [loop, lan]) if (s) { s.closeAllConnections(); await new Promise((r) => s.close(r)) }
-    },
+    loopbackPort, lanPort, hub: bus, spaces, fakes, mcpToken, close,
   }
 }
 

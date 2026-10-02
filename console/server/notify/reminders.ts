@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { hm } from '../../src/lib/util.ts'
 import * as T from '../../src/model/transitions.ts'
 import type { Job } from '../../src/model/types.ts'
+import { withWs } from './notify.ts'
 
 /* Due-date reminders: one push per job and due date, `remind` minutes before it (60 by default).
    A late tick (the console was off) still sends until both the due time and an hour past the
@@ -47,7 +48,7 @@ export class Reminders {
     for (const [k, t] of Object.entries(this.sent)) if (now - t > KEEP) delete this.sent[k]
     if (fire.length || Object.keys(this.sent).length !== n) this.save()
     for (const j of fire)
-      await this.o.push(`${j.t}: due ${hm(new Date(j.due!))}`, j.key && j.key !== 'NEW' ? `${j.id} · ${j.key}` : j.id, `/?job=${encodeURIComponent(j.id)}`)
+      await this.o.push(`${j.t}: due ${hm(new Date(j.due!))}`, j.key && j.key !== 'NEW' ? `${j.id} · ${j.key}` : j.id, withWs(`/?job=${encodeURIComponent(j.id)}`, j.ws))
     return fire.map((j) => `${j.id}@${j.due}`)
   }
 

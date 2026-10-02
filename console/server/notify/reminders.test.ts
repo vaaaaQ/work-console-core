@@ -24,7 +24,7 @@ test('fires once, an hour before by default, with the home-zone time and a link 
   clock.t = DUE - 61 * MIN; assert.deepEqual(await r.tick(), [])
   clock.t = DUE - 60 * MIN; assert.deepEqual(await r.tick(), ['J-1@2026-10-01T15:00:00.000Z'])
   clock.t = DUE - 59 * MIN; assert.deepEqual(await r.tick(), [])
-  assert.deepEqual(sent, [{ title: 'Prep J-1: due 12:00', body: 'J-1 · ACME-512', url: '/?job=J-1' }])
+  assert.deepEqual(sent, [{ title: 'Prep J-1: due 12:00', body: 'J-1 · ACME-512', url: '/?job=J-1&ws=acme' }], "the link opens the job's workspace")
 })
 
 test('a restart remembers what was sent; a moved due date reminds again', async () => {

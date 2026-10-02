@@ -39,12 +39,13 @@ export interface WorkspaceServer {
 
 const WS_ID = /^[a-z][a-z0-9-]{0,31}$/, PREFIX = /^[A-Z][A-Z0-9]{0,7}$/
 
-/** ids well-formed and unique, prefixes well-formed and unique, built-in playbook ids unique across workspaces and apart from the core's */
+/** ids well-formed and unique, prefixes well-formed and unique, built-in playbook ids unique across workspaces and apart from the core's,
+    no own MCP server named bridge or run */
 export function checkWorkspaces(list: WorkspaceServer[]): void {
   const ids = new Set<string>(), prefixes = new Map<string, string>()
   // the core's playbooks belong to every workspace, so none may define one of its own
   const owners = new Map<string, string>(Object.keys(CORE_PB).map((pb) => [pb, 'core']))
-  for (const { page, jobPrefix } of list) {
+  for (const { page, jobPrefix, llm } of list) {
     const id = page.id
     if (typeof id !== 'string' || !WS_ID.test(id)) throw new Error(`workspace id ${id} must match ${WS_ID}`)
     if (ids.has(id)) throw new Error(`workspace ${id} is registered twice`)
@@ -53,6 +54,8 @@ export function checkWorkspaces(list: WorkspaceServer[]): void {
     const other = prefixes.get(jobPrefix)
     if (other) throw new Error(`workspaces ${other} and ${id} both use job prefix ${jobPrefix}`)
     prefixes.set(jobPrefix, id)
+    // a session's servers are bridge and run, then the workspace's own: an own one by those names would replace them
+    for (const name of ['bridge', 'run']) if (llm?.mcp && Object.hasOwn(llm.mcp, name)) throw new Error(`workspace ${id}: llm.mcp may not name ${name}`)
     for (const pb of Object.keys(page.playbooks)) {
       const first = owners.get(pb)
       if (first) throw new Error(`playbook ${pb} is built into both ${first} and ${id}`)

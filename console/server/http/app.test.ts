@@ -19,7 +19,7 @@ import { Notify } from '../notify/notify.ts'
 import { Pairing } from '../pairing/pairing.ts'
 import { bridgeStore } from '../store/bridge.ts'
 import { fileStore } from '../store/file.ts'
-import { demoCtx, demoFake, demoSeed } from '../testkit.ts'
+import { acme, demoCtx, demoFake, demoSeed } from '../testkit.ts'
 import { createApp } from './app.ts'
 
 /* The whole backend over real sockets: fake gateway, file store, a scripted SDK that drafts at once. */
@@ -47,7 +47,7 @@ async function setup(o: { page?: boolean; store?: 'file' | 'bridge' } = {}) {
   const lp = await listen(loop), np = await listen(lanS)
   h = createApp({
     loopbackPort: lp, lanPort: 7411, pcName: 'pc', bus, store, jobs, runner, bridge, pairing, notify, ctx,
-    putPlaybook: (id, pb) => store.putPlaybook(id, pb), staticDirs: [web], artifactsDir: join(dir, 'arts'), tz: 'Europe/Berlin',
+    putPlaybook: (id, pb) => store.putPlaybook(id, pb), staticDirs: [web], artifactsDir: join(dir, 'arts'), tz: 'Europe/Berlin', page: acme,
   })
   bridge.start()
   await until(() => bridge.available())

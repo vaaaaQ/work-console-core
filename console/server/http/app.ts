@@ -5,6 +5,7 @@ import { adapt } from '../../src/live/adapt.ts'
 import { ctxOf } from '../../src/model/context.ts'
 import type * as T from '../../src/model/transitions.ts'
 import type { Cmd, Job, Playbook } from '../../src/model/types.ts'
+import type { WorkspacePage } from '../../src/workspace.ts'
 import { startItem } from '../board/start.ts'
 import { resolveAct } from '../bridge/actions.ts'
 import { GatewayError, READY } from '../bridge/wire.ts'
@@ -42,6 +43,8 @@ export interface Deps {
   staticDirs: string[]; artifactsDir: string
   /** the pack's team zone for calendar times; null when it has none */
   tz?: string | null
+  /** the workspace Start reads the board rule, the start playbook and a new job's project from */
+  page: WorkspacePage
   /** the job tools for Claude Code sessions, served on loopback only */
   mcp?: RequestListener
 }
@@ -211,7 +214,7 @@ export function createApp(d: Deps) {
   }
 
   const kn = knowledge(d.bridge)
-  const start = startItem({ jobs: d.jobs, ctx: d.ctx, bridge: d.bridge })
+  const start = startItem({ jobs: d.jobs, ctx: d.ctx, bridge: d.bridge, page: d.page })
 
   const routes: [string, RegExp, (r: Req) => Promise<unknown> | unknown][] = [
     ['GET', /^\/api\/state$/, state],

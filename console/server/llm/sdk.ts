@@ -1,4 +1,5 @@
 import { createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk'
+import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 
 /* The only module that touches the Agent SDK. A session reads untrusted chat and mail text, so it
@@ -44,7 +45,17 @@ const done = (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
 const failed = (e: unknown) => ({ content: [{ type: 'text' as const, text: `failed: ${(e as Error).message || e}` }], isError: true })
 const wrap = (f: () => Promise<void>, ok: string) => async () => { try { await f(); return done(ok) } catch (e) { return failed(e) } }
 
-export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runTools: string[] }): Sdk {
+/** A's bridge with the LLM's read-only token, the run's own tools, then the workspace's own servers;
+    checkWorkspaces keeps those from taking the name bridge or run */
+export function mcpServers(o: { gatewayUrl: string; llmToken: () => string; mcp?: Record<string, unknown> }, run: McpServerConfig): Record<string, McpServerConfig> {
+  return {
+    bridge: { type: 'http', url: o.gatewayUrl.replace(/\/$/, '') + '/mcp', headers: { Authorization: `Bearer ${o.llmToken()}` } },
+    run,
+    ...(o.mcp as Record<string, McpServerConfig> | undefined),
+  }
+}
+
+export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runTools: string[]; mcp?: Record<string, unknown> }): Sdk {
   return {
     async *start({ prompt, resume, cwd, tools, abort }) {
       const run = createSdkMcpServer({
@@ -63,10 +74,7 @@ export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runToo
         options: {
           cwd, resume, abortController: abort,
           ...permissions(o.runTools),
-          mcpServers: {
-            bridge: { type: 'http', url: o.gatewayUrl.replace(/\/$/, '') + '/mcp', headers: { Authorization: `Bearer ${o.llmToken()}` } },
-            run,
-          },
+          mcpServers: mcpServers(o, run),
         },
       })
       for await (const m of q) {

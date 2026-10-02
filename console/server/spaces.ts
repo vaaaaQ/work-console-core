@@ -54,9 +54,10 @@ export class Spaces {
     return s
   }
 
-  /** the named space; none named, the only one, else a 400 naming them all */
+  /** the named space; none named, the only one, else a 400 naming them all. Only a string names one */
   pick(ws: unknown): Space {
-    if (ws !== undefined && ws !== null && ws !== '') return this.get(String(ws))
+    if (typeof ws === 'string' && ws !== '') return this.get(ws)
+    if (ws !== undefined && ws !== null && ws !== '') throw new HttpError(404, 'no_workspace', `no workspace ${JSON.stringify(ws)}`)
     if (this.list.length === 1) return this.list[0]
     throw new HttpError(400, 'bad_args', `say which workspace: ${this.list.map((s) => s.id).join(', ')}`)
   }
@@ -96,9 +97,16 @@ export function onBridgeBack(bus: Bus, load: () => Promise<void>, backoff = [200
 }
 
 /** a workspace's instance; its source is not started, so the caller can wire what listens first */
-export async function makeSpace(w: WorkspaceServer, o: { cfg: WsConfig; home: string; artifactsDir: string; sdk?: Sdk; fake: boolean; push: Push }): Promise<Space> {
-  const id = w.page.id, bus = new Bus()
+type SpaceOpts = { cfg: WsConfig; home: string; artifactsDir: string; sdk?: Sdk; fake: boolean; push: Push }
+
+export async function makeSpace(w: WorkspaceServer, o: SpaceOpts): Promise<Space> {
   const fake = o.fake ? await startFakeGateway({ seed: fakeSeed(w), prefix: w.jobPrefix, me: w.page.me }) : null
+  // a workspace hook that throws would leave the fake holding its port
+  try { return assemble(w, o, fake) } catch (e) { await fake?.close(); throw e }
+}
+
+function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): Space {
+  const id = w.page.id, bus = new Bus()
   const cfg: WsConfig = fake ? { ...o.cfg, gatewayUrl: fake.url } : o.cfg
   // the fake stands in for whatever source the workspace brings
   const source = fake ? gatewaySource(cfg, { bus, token: () => fake.token }) : w.source?.(cfg, { bus }) ?? gatewaySource(cfg, { bus })
@@ -111,12 +119,12 @@ export async function makeSpace(w: WorkspaceServer, o: { cfg: WsConfig; home: st
   const gate = () => source.available()
 
   const jobs = new Jobs({ store, bus, ctx, gate })
-  const sdk = o.sdk ?? agentSdk({ gatewayUrl: cfg.gatewayUrl, llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools })
+  const sdk = o.sdk ?? agentSdk({ gatewayUrl: cfg.gatewayUrl, llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools, mcp: w.llm?.mcp })
   const runner = new Runner({
     store, jobs, bus, sdk, cwd: cfg.workDir, max: cfg.maxSessions, gate, artifactsDir: o.artifactsDir, ctx,
     context: (j) => resolveContext(source, j), me: w.page.me,
   })
-  bus.on((e) => {
+  const offInterrupt = bus.on((e) => {
     if (e.kind === 'bridge' && e.state === 'unavailable')
       void runner.interruptAll('the bridge went away').catch((err) => console.error(`interrupting the runs of ${id}:`, (err as Error).message))
   })
@@ -140,10 +148,11 @@ export async function makeSpace(w: WorkspaceServer, o: { cfg: WsConfig; home: st
   return {
     id, page: w.page, prefix: w.jobPrefix, cfg, bus, source, store, jobs, runner, ctx, known, fake,
     putPlaybook: async (pid, pb) => { await store.putPlaybook(pid, pb); PB = await store.playbooks() },
-    start: startItem({ jobs, ctx, bridge: source }),
+    start: startItem({ jobs, ctx, bridge: source, page: w.page }),
     plugins: w.plugins?.({ id, cfg, home: o.home, jobs, source, artifactsDir: o.artifactsDir }) ?? [],
     // a QA return pushes its own message; the reopen and note it makes would push a second one
     onNeedsYou: (f) => jobs.onNeedsYou((j) => { if (!returns.handling(j.id)) f(j) }),
-    async close() { stopLoading(); source.stop(); await fake?.close() },
+    // the source going away on close is no reason to interrupt the runs
+    async close() { stopLoading(); offInterrupt(); source.stop(); await fake?.close() },
   }
 }

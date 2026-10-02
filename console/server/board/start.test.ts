@@ -7,7 +7,7 @@ import type { ActReq, ActRes, ConceptReply } from '../bridge/wire.ts'
 import { Bus, HttpError } from '../events.ts'
 import { Jobs } from '../jobs/jobs.ts'
 import { fileStore } from '../store/file.ts'
-import { demoCtx, demoSeed } from '../testkit.ts'
+import { acme, demoCtx, demoSeed } from '../testkit.ts'
 import { startItem } from './start.ts'
 
 function setup(o: { act?: ActRes; board?: ConceptReply; up?: boolean } = {}) {
@@ -19,7 +19,7 @@ function setup(o: { act?: ActRes; board?: ConceptReply; up?: boolean } = {}) {
     act: async (a: ActReq) => { acts.push(a); return o.act ?? { status: 'ok' as const, result: { id: a.args.id, type: 'Bug', title: 'Grid export ignores the filter', state: 'In Progress' } } },
     read: async () => ({ board: o.board ?? { status: 'ok', items: [{ id: 'ACME-631', title: 'From the board' }] } }),
   }
-  return { jobs, acts, start: startItem({ jobs, ctx: demoCtx, bridge }) }
+  return { jobs, acts, start: startItem({ jobs, ctx: demoCtx, bridge, page: acme }) }
 }
 
 test('an item with an open job: A starts it and the job is returned as is', async () => {

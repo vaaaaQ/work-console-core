@@ -11,7 +11,7 @@ import type { ActReq } from '../bridge/wire.ts'
 import { Bus } from '../events.ts'
 import { Jobs } from '../jobs/jobs.ts'
 import { fileStore } from '../store/file.ts'
-import { demoCtx, demoSeed } from '../testkit.ts'
+import { acme, demoCtx, demoSeed } from '../testkit.ts'
 import { jobTools, mcpHandler } from './mcp.ts'
 
 const TOKEN = 'a'.repeat(64)
@@ -21,7 +21,7 @@ async function setup(t: { after(f: () => unknown): void }, open = { v: true }) {
   const jobs = new Jobs({ store, bus: new Bus(), ctx: demoCtx, gate: () => open.v })
   const acts: ActReq[] = []
   const bridge = { available: () => true, read: async () => ({}), act: async (a: ActReq) => { acts.push(a); return { status: 'ok' as const, result: { title: `Item ${a.args.id}` } } } }
-  const srv = createServer(mcpHandler({ tools: jobTools({ jobs, ctx: demoCtx, start: startItem({ jobs, ctx: demoCtx, bridge }) }), token: () => TOKEN }))
+  const srv = createServer(mcpHandler({ tools: jobTools({ jobs, ctx: demoCtx, start: startItem({ jobs, ctx: demoCtx, bridge, page: acme }) }), token: () => TOKEN }))
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r))
   t.after(() => new Promise((r) => srv.close(r)))
   const url = `http://127.0.0.1:${(srv.address() as AddressInfo).port}/mcp`

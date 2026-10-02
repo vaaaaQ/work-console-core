@@ -126,8 +126,29 @@ test('a workspace config: core defaults, then its llm runTools, its defaults, le
   assert.deepEqual([core.runTools, core.teamTz, core.maxSessions], [['Read', 'Glob', 'Grep'], null, 3])
   assert.deepEqual(wsConfig(cfg, { ...acmeServer, llm: { runTools: ['Read'] } }, {}, quiet).runTools, ['Read'])
   const w = { ...acmeServer, llm: { runTools: ['Read'] }, defaults: { runTools: ['Grep'], teamTz: 'Europe/Berlin', maxSessions: 2, billingRepo: 'x' } }
-  const c = wsConfig(cfg, w, { teamTz: 'Asia/Tokyo' }, quiet)
-  assert.deepEqual([c.runTools, c.teamTz, c.maxSessions, c.billingRepo], [['Grep'], 'Asia/Tokyo', 5, 'x'])
+  const c = wsConfig(cfg, w, { teamTz: 'Asia/Tokyo', maxSessions: 4 }, quiet)
+  assert.deepEqual([c.runTools, c.teamTz, c.maxSessions, c.billingRepo], [['Grep'], 'Asia/Tokyo', 5, 'x'], 'the section beats a legacy key')
+})
+
+test("the env given to loadConfig sets every workspace's gateway and work dir", () => {
+  const cfg = loadConfig({ WORK_CONSOLE_HOME: mkdtempSync(join(tmpdir(), 'wc-cfg-')), GATEWAY_URL: 'http://127.0.0.1:47999', WORK_CONSOLE_CWD: 'C:/work' })
+  const c = wsConfig(cfg, acmeServer, {}, () => undefined)
+  assert.deepEqual([c.gatewayUrl, c.workDir], ['http://127.0.0.1:47999', 'C:/work'])
+})
+
+test('a taken port rejects main() and leaves nothing listening behind', async () => {
+  const servers = () => process.getActiveResourcesInfo().filter((r) => r === 'TCPServerWrap').length
+  // the servers earlier tests closed go a turn of the loop after their close callbacks
+  await until(() => servers() === 0)
+  const taken = createServer()
+  await new Promise<void>((r) => taken.listen(0, '127.0.0.1', r))
+  try {
+    const home = mkdtempSync(join(tmpdir(), 'wc-main-'))
+    const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: (taken.address() as { port: number }).port }
+    await assert.rejects(main({ cfg, sdk: unused, workspaces: [acmeServer, beta2] }), /EADDRINUSE/)
+    // only the server holding the port is left
+    await until(() => servers() === 1)
+  } finally { await new Promise((r) => taken.close(r)) }
 })
 
 test('a workspace key at the top of config.json goes to the one workspace with a line saying where; with two, startup refuses', async (t) => {
