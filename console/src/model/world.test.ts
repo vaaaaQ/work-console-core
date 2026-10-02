@@ -69,3 +69,9 @@ test('jobAtAct finds the open job whose current step carries the act', () => {
   assert.equal(jobAtAct('time'), undefined, 'a closed job is not offered')
   restore(x)
 })
+
+test('a timesheet job keeps its key in the time source of its pack', () => {
+  const x = snap()
+  assert.equal(keySrc(createJob({ t: 'Month end timesheet', key: 'NEW', pb: 'acme-timesheet', prj: '', ws: 'acme' })).n, 'Timesheet')
+  restore(x)
+})
