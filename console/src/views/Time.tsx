@@ -6,8 +6,8 @@ import { failText } from '../actions/flow.tsx'
 import { go } from '../actions/nav.tsx'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
-import { srcState } from '../live/boot.ts'
-import { W, jobAtAct, wsJobs } from '../model/world.ts'
+import { L, srcState } from '../live/boot.ts'
+import { S, W, jobAtAct, wsJobs } from '../model/world.ts'
 import { commit } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
 import { CancelBtn } from '../ui/bits.tsx'
@@ -30,12 +30,12 @@ const srcName = () => W().src.time?.n || 'Timesheet'
 const fmtH = (h: number) => `${Math.round(h * 100) / 100} h`
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
 /** newest first: this month, then the one that just ended */
-const months = () => [...(LIVE.on ? LIVE.time : (demo ||= wsPage(DEFAULT_WS).demo.time?.(localDay()) ?? []))].sort((a, b) => b.id.localeCompare(a.id)).slice(0, 2)
+const months = () => [...(LIVE.on ? L().time : (demo ||= wsPage(DEFAULT_WS).demo.time?.(localDay()) ?? []))].sort((a, b) => b.id.localeCompare(a.id)).slice(0, 2)
 /** the job whose current step opens this view: the monthly fill starts there; else a recurring timesheet job */
 const timesheetJob = () => jobAtAct('time') || wsJobs().find((j) => j.st === 'recurring' && /timesheet/i.test(`${j.t} ${j.key}`))
 
-function put(id: string, f: (it: TimeItem) => TimeItem) {
-  if (LIVE.on) LIVE.time = LIVE.time.map((x) => (x.id === id ? f(x) : x))
+function put(id: string, f: (it: TimeItem) => TimeItem, ws = S.ws) {
+  if (LIVE.on) { const l = L(ws); l.time = l.time.map((x) => (x.id === id ? f(x) : x)) }
   else demo = (demo || []).map((x) => (x.id === id ? f(x) : x))
 }
 
@@ -53,13 +53,15 @@ async function fill(it: TimeItem, args: FillArgs) {
     toast(`Filled ${plural(args.days.length, 'day')} of ${it.period} · demo, nothing left this page`)
     return
   }
+  // the month is the workspace's on screen; the answer lands there even after a switch
+  const ws = S.ws
   commit(() => { filling = it.id })
   try {
-    const r = await api.act('time.fill', args)
+    const r = await api.act(ws, 'time.fill', args)
     if (r.status === 'ok') {
       const res = r.result as FillResult | undefined
       // A re-reads the month after the act; until it lands the card shows the days A reported filled
-      if (res && Array.isArray(res.filled)) commit(() => put(it.id, (x) => fillMonth(x, { ...args, days: res.filled }).item))
+      if (res && Array.isArray(res.filled)) commit(() => put(it.id, (x) => fillMonth(x, { ...args, days: res.filled }).item, ws))
       toast(fillText(it, res), undefined, undefined, res?.failed?.length ? 12000 : undefined)
     } else if (r.status === 'outcome_unknown') {
       toast(`Not sure the fill went through — check ${srcName()} first. Filling again skips the days that already have hours.`, undefined, undefined, 12000)

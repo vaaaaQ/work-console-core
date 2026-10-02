@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { tfmt } from '../lib/util.ts'
-import { TPL, W, approvals, chName } from '../model/world.ts'
+import { S, TPL, W, approvals, chName } from '../model/world.ts'
 import type { Approval } from '../model/world.ts'
 import { go } from '../actions/nav.tsx'
 import { acceptDraft, editDraft, rejectDraft, tplSend } from '../actions/flow.tsx'
@@ -8,6 +8,7 @@ import { lineDiff } from '../lib/diff.ts'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
 import type { Proposal } from '../live/api.ts'
+import { L } from '../live/boot.ts'
 import { decide, editProposal } from '../actions/knowledge.tsx'
 import { FillT } from '../ui/bits.tsx'
 import { Ic } from '../ui/Icon.tsx'
@@ -42,7 +43,7 @@ function ApCard({ x }: { x: Approval }) {
 function KnCard({ p }: { p: Proposal }) {
   // undefined while the note's current text loads; a new note is compared with nothing
   const [old, setOld] = React.useState<string | undefined>(p.note ? undefined : '')
-  React.useEffect(() => { if (p.note) api.note(p.note).then((n) => setOld(n.text), () => setOld('')) }, [p.note])
+  React.useEffect(() => { if (p.note) api.note(S.ws, p.note).then((n) => setOld(n.text), () => setOld('')) }, [p.note])
   const d = old === undefined ? null : lineDiff(old, p.text)
   return (
     <article className="dc">
@@ -58,12 +59,12 @@ function KnCard({ p }: { p: Proposal }) {
 }
 
 export function Approvals() {
-  const w = W(), L = approvals(), K = LIVE.on ? LIVE.proposals : []
+  const w = W(), A = approvals(), K = LIVE.on ? L().proposals : []
   return <>
     <div className="vh"><div><div className="eyebrow">{w.n} · work</div><h1>Approvals</h1>
       <p>LLM drafts, planned messages and knowledge proposals that wait for you. Nothing is kept or sent until you press a button, here or on the step.</p></div></div>
     <div className="dl">{K.map((p) => <KnCard key={p.id} p={p} />)}
-      {L.map((x) => <ApCard key={`${x.j.id}/${x.s.id}${x.k === 'msg' ? '/' + x.i : ''}`} x={x} />)}
-      {!K.length && !L.length ? <div className="dc empty">Nothing waits for you. A draft lands here after you ask the LLM on a step; a knowledge proposal after an LLM suggests a note.</div> : null}</div>
+      {A.map((x) => <ApCard key={`${x.j.id}/${x.s.id}${x.k === 'msg' ? '/' + x.i : ''}`} x={x} />)}
+      {!K.length && !A.length ? <div className="dc empty">Nothing waits for you. A draft lands here after you ask the LLM on a step; a knowledge proposal after an LLM suggests a note.</div> : null}</div>
   </>
 }

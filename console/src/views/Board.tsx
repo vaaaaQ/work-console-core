@@ -3,12 +3,12 @@ import { started } from '../data/board.ts'
 import { DEFAULT_WS, PACKS } from '../data/packs.ts'
 import type { BoardItem, Lane } from '../data/board.ts'
 import { ago } from '../lib/util.ts'
-import { JOBS, W, applyLocal, createJob, isClosed, putJob } from '../model/world.ts'
+import { JOBS, S, W, applyLocal, createJob, isClosed, putJob } from '../model/world.ts'
 import type { Job } from '../model/types.ts'
 import { commit, repaint } from '../store.ts'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
-import { srcState } from '../live/boot.ts'
+import { L, srcState } from '../live/boot.ts'
 import { go } from '../actions/nav.tsx'
 import { failText } from '../actions/flow.tsx'
 import { Pill } from '../ui/bits.tsx'
@@ -25,8 +25,9 @@ const LANES: [Lane, string, string][] = [
   ['mine', 'On me', 'Assigned to you and not closed.'],
   ['qa', 'Handed to QA', 'Was yours and went through QA in the last 3 months; the column is where it is now.'],
 ]
-/** the board's workspace: the gateway serves the default one */
-const page = () => wsPage(DEFAULT_WS)
+/** the board's workspace: live, the one on screen (each has its gateway); the demo's board is the default one's */
+const boardWs = () => (LIVE.on ? S.ws : DEFAULT_WS)
+const page = () => wsPage(boardWs())
 const keyOf = (id: string) => page().board.key(id)
 /** the demo's items, made on first show and kept in memory for the page's lifetime */
 let demo: BoardItem[] | null = null
@@ -34,7 +35,7 @@ const demoItems = () => (demo ||= page().demo.board?.() ?? [])
 const busy = new Set<string>()
 
 /** the item's job: the open one for its key, else the latest */
-const jobOf = (id: string): Job | undefined => JOBS.filter((j) => j.key === keyOf(id))
+const jobOf = (id: string): Job | undefined => JOBS.filter((j) => j.key === keyOf(id) && (!LIVE.on || j.ws === S.ws))
   .sort((a, b) => Number(isClosed(a)) - Number(isClosed(b)) || b.ts - a.ts)[0]
 
 async function start(it: BoardItem) {
@@ -50,7 +51,7 @@ async function start(it: BoardItem) {
   }
   busy.add(it.id); repaint()
   try {
-    const r = await api.startItem(it.id)
+    const r = await api.startItem(S.ws, it.id)
     commit(() => { putJob(r.job) })
     toast(`${keyOf(it.id)} is on you, in Dev · ${r.job.id} ${r.created ? 'started' : 'already open'}`, 'Open', () => go('job', r.job.id))
   } catch (e) { toast(failText(e)) } finally { busy.delete(it.id); repaint() }
@@ -76,7 +77,7 @@ function Card({ it }: { it: BoardItem }) {
 export function BoardView() {
   const w = W(), st = srcState('board')
   if (st && st !== 'ok') return <Unavailable what="Board" st={st} />
-  const items = LIVE.on ? LIVE.board : demoItems()
+  const items = LIVE.on ? L().board : demoItems()
   return <>
     <div className="vh"><div><div className="eyebrow">{w.n} · sources</div><h1>Board</h1>
       <p>{w.src.work?.n} items: what you can take, what is on you, and what you handed to QA. Start assigns the item to you, moves it to Dev and starts its job.</p></div></div>

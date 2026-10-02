@@ -3,6 +3,7 @@ import type { NewJob } from '../model/transitions.ts'
 import type { Resolved } from '../model/context.ts'
 import type { BoardItem } from '../data/board.ts'
 import type { TimeItem } from '../data/time.ts'
+import { S } from '../model/world.ts'
 
 /* The page's side of the backend. Without a backend (the published artifact, `vite dev`) detect()
    answers null and the page stays the in-memory demo. */
@@ -12,18 +13,26 @@ export type CalItem = CalEvent & { id: string }
 export type ConceptState = { status: string; rev?: string; items?: unknown[]; message?: string }
 export type Device = { id: string; name: string; at: string; lastSeen?: string }
 export type Part = 'ok' | 'unavailable'
-export interface State {
+/** one workspace's part of the state, from its own gateway and B */
+export interface WsBlock {
   jobs: Job[]; runs: RunRec[]; playbooks: Record<string, Playbook>
   marks: Record<string, { done?: boolean; job?: string }>
   /** a part B could not give comes back empty and unavailable */
   parts: { jobs: Part; runs: Part; marks: Part }
   bridge: { state: 'ok' | 'unavailable'; concepts: Record<string, string> }
-  side: 'loopback' | 'lan'; device: string | null; push: { key: string } | null
+  plugins: Record<string, unknown>
 }
+export interface State {
+  /** the PC's own zone and name */
+  home: { tz: string; pc: string }
+  side: 'loopback' | 'lan'; device: string | null; push: { key: string } | null
+  ws: Record<string, WsBlock>
+}
+/** every frame names the workspace it came from */
 export type Ev =
-  | { kind: 'job'; job: Job } | { kind: 'run'; run: RunRec } | { kind: 'feed'; run: string; t: string; tool?: string }
-  | { kind: 'bridge'; state: 'ok' | 'unavailable'; concepts: Record<string, string> }
-  | { kind: 'source'; concept: string }
+  | { kind: 'job'; ws: string; job: Job } | { kind: 'run'; ws: string; run: RunRec } | { kind: 'feed'; ws: string; run: string; t: string; tool?: string }
+  | { kind: 'bridge'; ws: string; state: 'ok' | 'unavailable'; concepts: Record<string, string> }
+  | { kind: 'source'; ws: string; concept: string }
 export type ActRes = { actionId: string; status: 'ok' | 'error' | 'outcome_unknown'; error?: { code: string; message: string }; result?: unknown }
 export type NoteIndex = { id: string; v: number; title: string; tags: string[]; updated: string; size: number }
 export type Note = { id: string; v: number; title: string; tags: string[]; text: string; updated: string }
@@ -36,22 +45,36 @@ export class ApiError extends Error {
   constructor(status: number, code: string, msg: string) { super(msg); this.status = status; this.code = code }
 }
 
+/** what the page knows of one workspace: its bridge, its sources and its knowledge */
+export interface LiveWs {
+  bridge: 'ok' | 'unavailable'; concepts: Record<string, string>
+  /** per concept: ok, loading, or why it is unavailable */
+  sources: Record<string, string>; cal: CalItem[]; time: TimeItem[]; board: BoardItem[]
+  /** knowledge in B: the note index, proposals waiting in Approvals, and 'ok', 'loading' or why not */
+  notes: NoteIndex[]; proposals: Proposal[]; kn: string
+  parts: Record<string, Part>
+  /** each plugin's state block, by plugin name */
+  plugins: Record<string, unknown>
+}
+export const blankWs = (): LiveWs => ({
+  bridge: 'ok', concepts: {}, sources: {}, cal: [], time: [], board: [],
+  notes: [], proposals: [], kn: 'loading', parts: { jobs: 'ok', runs: 'ok' }, plugins: {},
+})
+
 /** what the page knows about the backend: on = live mode, pc = opened on the PC itself (pairing, devices) */
 export const LIVE = {
   on: false, pc: false, paired: true,
-  bridge: 'ok' as 'ok' | 'unavailable', concepts: {} as Record<string, string>,
   runs: {} as Record<string, RunRec>, feed: {} as Record<string, string[]>,
-  /** per concept: ok, loading, or why it is unavailable */
-  sources: {} as Record<string, string>, cal: [] as CalItem[], time: [] as TimeItem[],
-  board: [] as BoardItem[],
   push: null as string | null,
-  /** knowledge in B: the note index, proposals waiting in Approvals, and 'ok', 'loading' or why not */
-  notes: [] as NoteIndex[], proposals: [] as Proposal[], kn: 'loading',
-  parts: { jobs: 'ok', runs: 'ok' } as Record<string, Part>,
+  /** one block per workspace the backend serves */
+  ws: {} as Record<string, LiveWs>,
 }
 
-/** the parts of the state B did not give while the bridge is up: unavailable, not empty */
-export const missingParts = () => (LIVE.bridge === 'ok' ? ['jobs', 'runs'].filter((k) => LIVE.parts[k] === 'unavailable') : [])
+/** the parts of a workspace's state B did not give while its bridge is up: unavailable, not empty */
+export function missingParts(ws: string = S.ws) {
+  const l = LIVE.ws[ws]
+  return l && l.bridge === 'ok' ? ['jobs', 'runs'].filter((k) => l.parts[k] === 'unavailable') : []
+}
 
 let base = ''
 /** tests point the client at a server; the page uses its own origin */
@@ -81,12 +104,16 @@ async function call<T>(method: string, path: string, body?: unknown, timeout = 1
   } finally { clearTimeout(t) }
 }
 
+/** a workspace-bound route: /api/ws/<ws><path> */
+const wsCall = <T>(ws: string, method: string, path: string, body?: unknown, timeout?: number) =>
+  call<T>(method, `/api/ws/${enc(ws)}${path}`, body, timeout)
+
 /** null = no backend (demo); 'unpaired' = this device has no pairing yet */
 export async function detect(): Promise<State | null | 'unpaired'> {
   try {
     const st = await call<State>('GET', '/api/state', undefined, 1500)
     // a dev server answers any path with the page; only the backend's state counts
-    return st && Array.isArray(st.jobs) ? st : null
+    return st && st.home && st.ws && typeof st.ws === 'object' ? st : null
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) return 'unpaired'
     return null
@@ -114,37 +141,38 @@ export async function artText(link: string): Promise<string> {
   } finally { clearTimeout(t) }
 }
 /** job = the job the message belongs to, so the backend can find its chat */
-export const act = (action: string, args: Record<string, unknown>, jobId?: string) =>
-  call<ActRes>('POST', '/api/act', { action, actionId: crypto.randomUUID(), args, ...(jobId ? { job: jobId } : {}) }, 60000)
+export const act = (ws: string, action: string, args: Record<string, unknown>, jobId?: string) =>
+  wsCall<ActRes>(ws, 'POST', '/act', { action, actionId: crypto.randomUUID(), args, ...(jobId ? { job: jobId } : {}) }, 60000)
 /** A takes the item and moves it to Dev; the job is the open one for its key, or a new one already started */
-export const startItem = (id: string, pb?: string) =>
-  call<{ job: Job; created: boolean }>('POST', `/api/board/${enc(id)}/start`, pb ? { pb } : {}, 60000)
+export const startItem = (ws: string, id: string, pb?: string) =>
+  wsCall<{ job: Job; created: boolean }>(ws, 'POST', `/board/${enc(id)}/start`, pb ? { pb } : {}, 60000)
 export const ask = (j: string, step: string, q: string) => call<{ run: RunRec }>('POST', '/api/runs', { job: j, step, instruction: q })
 export const cancelRun = (id: string) => call<{ run: RunRec }>('POST', `/api/runs/${enc(id)}/cancel`)
 export const resumeRun = (id: string) => call<{ run: RunRec }>('POST', `/api/runs/${enc(id)}/resume`)
 export const runInfo = (id: string) => call<{ run: RunRec; feed: string[] }>('GET', `/api/runs/${enc(id)}`)
-export const sources = (concepts: string[]) =>
-  call<{ concepts: Record<string, ConceptState> }>('GET', `/api/sources?concepts=${concepts.map(enc).join(',')}`)
-export const chatThread = async (id: string) =>
-  (await call<{ item: { messages?: Msg[] } }>('GET', `/api/sources/chat/${enc(id)}`)).item.messages || []
-export const mailItem = async (id: string) =>
-  (await call<{ item: { body?: string } }>('GET', `/api/sources/mail/${enc(id)}`)).item.body || ''
-export const markMail = (id: string, m: { done?: boolean; job?: string }) => call<object>('POST', `/api/mail/${enc(id)}/mark`, m)
+export const sources = (ws: string, concepts: string[]) =>
+  wsCall<{ concepts: Record<string, ConceptState> }>(ws, 'GET', `/sources?concepts=${concepts.map(enc).join(',')}`)
+export const chatThread = async (ws: string, id: string) =>
+  (await wsCall<{ item: { messages?: Msg[] } }>(ws, 'GET', `/sources/chat/${enc(id)}`)).item.messages || []
+export const mailItem = async (ws: string, id: string) =>
+  (await wsCall<{ item: { body?: string } }>(ws, 'GET', `/sources/mail/${enc(id)}`)).item.body || ''
+export const markMail = (ws: string, id: string, m: { done?: boolean; job?: string }) => wsCall<object>(ws, 'POST', `/mail/${enc(id)}/mark`, m)
 /** hiding is the console's own mark in B; the chat tool never sees it */
-export const hideChat = (id: string, hidden: boolean, name?: string) => call<object>('POST', `/api/chats/${enc(id)}/hide`, { hidden, ...(name ? { name } : {}) })
-export const hiddenChats = async () => (await call<{ hidden: { id: string; name: string }[] }>('GET', '/api/chats/hidden')).hidden
-export const putPlaybook = (id: string, pb: Playbook | null) =>
-  call<{ playbooks: Record<string, Playbook> }>(pb ? 'PUT' : 'DELETE', `/api/playbooks/${enc(id)}`, pb ? { pb } : undefined)
-export const notes = async () => (await call<{ notes: NoteIndex[] }>('GET', '/api/knowledge')).notes
-export const searchNotes = async (q: string, tags: string[] = []) =>
-  (await call<{ hits: Hit[] }>('GET', `/api/knowledge/search?q=${enc(q)}&tags=${tags.map(enc).join(',')}`)).hits
-export const note = async (id: string) => (await call<{ note: Note }>('GET', `/api/knowledge/notes/${enc(id)}`)).note
+export const hideChat = (ws: string, id: string, hidden: boolean, name?: string) =>
+  wsCall<object>(ws, 'POST', `/chats/${enc(id)}/hide`, { hidden, ...(name ? { name } : {}) })
+export const hiddenChats = async (ws: string) => (await wsCall<{ hidden: { id: string; name: string }[] }>(ws, 'GET', '/chats/hidden')).hidden
+export const putPlaybook = (ws: string, id: string, pb: Playbook | null) =>
+  wsCall<{ playbooks: Record<string, Playbook> }>(ws, pb ? 'PUT' : 'DELETE', `/playbooks/${enc(id)}`, pb ? { pb } : undefined)
+export const notes = async (ws: string) => (await wsCall<{ notes: NoteIndex[] }>(ws, 'GET', '/knowledge')).notes
+export const searchNotes = async (ws: string, q: string, tags: string[] = []) =>
+  (await wsCall<{ hits: Hit[] }>(ws, 'GET', `/knowledge/search?q=${enc(q)}&tags=${tags.map(enc).join(',')}`)).hits
+export const note = async (ws: string, id: string) => (await wsCall<{ note: Note }>(ws, 'GET', `/knowledge/notes/${enc(id)}`)).note
 /** id null = a new note; an edit names the v it replaces */
-export const saveNote = async (id: string | null, n: NoteIn, v?: number) =>
-  (await call<{ note: Note }>(id ? 'PUT' : 'POST', id ? `/api/knowledge/notes/${enc(id)}` : '/api/knowledge/notes', id ? { ...n, v } : n)).note
-export const proposals = async () => (await call<{ proposals: Proposal[] }>('GET', '/api/knowledge/proposals')).proposals
-export const decide = async (id: string, accept: boolean, text?: string) =>
-  (await call<{ note: Note | null }>('POST', `/api/knowledge/proposals/${enc(id)}/decide`, { accept, ...(text !== undefined ? { text } : {}) })).note
+export const saveNote = async (ws: string, id: string | null, n: NoteIn, v?: number) =>
+  (await wsCall<{ note: Note }>(ws, id ? 'PUT' : 'POST', id ? `/knowledge/notes/${enc(id)}` : '/knowledge/notes', id ? { ...n, v } : n)).note
+export const proposals = async (ws: string) => (await wsCall<{ proposals: Proposal[] }>(ws, 'GET', '/knowledge/proposals')).proposals
+export const decide = async (ws: string, id: string, accept: boolean, text?: string) =>
+  (await wsCall<{ note: Note | null }>(ws, 'POST', `/knowledge/proposals/${enc(id)}/decide`, { accept, ...(text !== undefined ? { text } : {}) })).note
 export const pairNew = () => call<{ url: string; qr: string; expires: string }>('POST', '/api/pair/new')
 export const devices = () => call<{ devices: Device[] }>('GET', '/api/devices')
 export const revoke = (id: string) => call<object>('DELETE', `/api/devices/${enc(id)}`)

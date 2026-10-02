@@ -7,7 +7,7 @@ import * as api from '../live/api.ts'
 import { refreshThread } from '../live/boot.ts'
 import { CHATS, MAIL, S, W, byId } from '../model/world.ts'
 import { doCmd, sendVia } from './flow.tsx'
-import type { Chat, MailCat } from '../model/types.ts'
+import type { Chat, MailCat, Ws } from '../model/types.ts'
 import { commit } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
 import { CancelBtn } from '../ui/bits.tsx'
@@ -30,36 +30,37 @@ export function pickChat(id: string) { commit(() => { S.chat[S.ws] = id }) }
 /* hidden threads: the console's own mark (B when live, memory in the demo), never the chat tool's */
 export const HID = { open: false, list: [] as { id: string; name: string }[], demo: [] as { c: Chat; i: number }[] }
 
-export function loadHidden() {
-  if (LIVE.on) void api.hiddenChats().then((l) => commit(() => { HID.list = l })).catch(() => undefined)
+/** the list is the current workspace's; one that lands after a switch is dropped */
+export function loadHidden(ws: Ws = S.ws) {
+  if (LIVE.on) void api.hiddenChats(ws).then((l) => { if (S.ws === ws) commit(() => { HID.list = l }) }).catch(() => undefined)
 }
 export function toggleHidden() { commit(() => { HID.open = !HID.open }); if (HID.open) loadHidden() }
 
 export function hideChat(id: string) {
-  const L = CHATS[S.ws] || [], i = L.findIndex((x) => x.id === id), c = L[i]
+  const ws = S.ws, L = CHATS[ws] || [], i = L.findIndex((x) => x.id === id), c = L[i]
   if (!c) return
   commit(() => {
-    CHATS[S.ws] = L.filter((x) => x !== c)
+    CHATS[ws] = L.filter((x) => x !== c)
     HID.list = [...HID.list.filter((h) => h.id !== id), { id, name: c.name }]
     if (!LIVE.on) HID.demo.push({ c, i })
   })
-  if (LIVE.on) void api.hideChat(id, true, c.name).catch((e) => {
-    commit(() => { const now = CHATS[S.ws] || []; if (!now.some((x) => x.id === id)) now.splice(Math.min(i, now.length), 0, c); HID.list = HID.list.filter((h) => h.id !== id) })
+  if (LIVE.on) void api.hideChat(ws, id, true, c.name).catch((e) => {
+    commit(() => { const now = CHATS[ws] || []; if (!now.some((x) => x.id === id)) now.splice(Math.min(i, now.length), 0, c); HID.list = HID.list.filter((h) => h.id !== id) })
     toast(`Not hidden: ${(e as Error).message}`)
   })
-  toast(<>Hid <b>{c.name}</b> · it comes back when someone mentions you</>, 'Undo', () => unhideChat(id))
+  toast(<>Hid <b>{c.name}</b> · it comes back when someone mentions you</>, 'Undo', () => unhideChat(id, ws))
 }
 
-export function unhideChat(id: string) {
+export function unhideChat(id: string, ws: Ws = S.ws) {
   const h = HID.list.find((x) => x.id === id), back = HID.demo.find((x) => x.c.id === id)
   commit(() => {
     HID.list = HID.list.filter((x) => x.id !== id)
-    const L = CHATS[S.ws] || [], on = L.find((x) => x.id === id)
+    const L = CHATS[ws] || [], on = L.find((x) => x.id === id)
     if (on) { delete on.hidden; delete on.mentioned }
     if (back) { HID.demo = HID.demo.filter((x) => x !== back); if (!on) L.splice(Math.min(back.i, L.length), 0, back.c) }
   })
   // live: the thread comes back with the next chat reload, once B has rejoined it
-  if (LIVE.on) void api.hideChat(id, false).catch((e) => { commit(() => { if (h && !HID.list.some((x) => x.id === id)) HID.list.push(h) }); toast(`Not unhidden: ${(e as Error).message}`) })
+  if (LIVE.on) void api.hideChat(ws, id, false).catch((e) => { commit(() => { if (h && !HID.list.some((x) => x.id === id)) HID.list.push(h) }); toast(`Not unhidden: ${(e as Error).message}`) })
 }
 
 export function msgJob(i: number) {
@@ -118,16 +119,16 @@ export function mailJob(id: string) {
 export function mailDone(id: string) {
   const m = mailOf(id)
   if (!m) return
-  const mark = (done: boolean) => {
+  const ws = S.ws, mark = (done: boolean) => {
     commit(() => { m.done = done })
-    if (LIVE.on) void api.markMail(m.id, { done }).catch((e) => { commit(() => { m.done = !done }); toast(`Not saved: ${(e as Error).message}`) })
+    if (LIVE.on) void api.markMail(ws, m.id, { done }).catch((e) => { commit(() => { m.done = !done }); toast(`Not saved: ${(e as Error).message}`) })
   }
   mark(true)
   toast('Marked handled', 'Undo', () => mark(false))
 }
 
 export function mailReply(id: string) {
-  const m = mailOf(id)
+  const m = mailOf(id), ws = S.ws
   if (!m) return
   modal({
     title: `Reply · ${m.subj}`, form: 'mreply',
@@ -143,7 +144,7 @@ export function mailReply(id: string) {
       if (!(await sendVia('mail', m.id, t))) return
       closeModal()
       commit(() => { m.sent = { at: hm(), t }; if (m.cat === 'reply') m.done = true })
-      if (LIVE.on && m.cat === 'reply') void api.markMail(m.id, { done: true }).catch(() => undefined)
+      if (LIVE.on && m.cat === 'reply') void api.markMail(ws, m.id, { done: true }).catch(() => undefined)
       if (m.job && byId(m.job)) await doCmd(m.job, { op: 'replied', subj: m.subj }, null)
       toast(LIVE.on ? 'Reply sent' : 'Reply recorded · demo, nothing was sent')
     },

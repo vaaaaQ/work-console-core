@@ -2,6 +2,7 @@ import * as React from 'react'
 import { CHATS, MAIL, S, W, approvals, needsYou, wsJobs } from '../model/world.ts'
 import type { View } from '../model/types.ts'
 import { LIVE } from '../live/api.ts'
+import { L } from '../live/boot.ts'
 import { go } from '../actions/nav.tsx'
 import { Ic } from '../ui/Icon.tsx'
 import { closeModal } from '../ui/modal.tsx'
@@ -21,7 +22,7 @@ export function navDef(): [string, NavItem[]][] {
 
 function counts(): Partial<Record<View, number>> {
   return {
-    jobs: wsJobs().filter(needsYou).length, approvals: approvals().length + (LIVE.on ? LIVE.proposals.length : 0),
+    jobs: wsJobs().filter(needsYou).length, approvals: approvals().length + (LIVE.on ? L().proposals.length : 0),
     chats: (CHATS[S.ws] || []).reduce((a, c) => a + c.unread, 0), mail: (MAIL[S.ws] || []).filter((m) => m.cat === 'reply' && !m.done).length,
   }
 }

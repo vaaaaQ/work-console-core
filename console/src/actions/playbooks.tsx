@@ -7,6 +7,7 @@ import { FMT, addPb, blankFile, checkPb, pbToFile, toInternal } from '../model/p
 import type { PbFile } from '../model/playbookFile.ts'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
+import { pbWs } from '../live/boot.ts'
 import { CHATS, JOBS, MAIL, PB, S, TPL, W, createJob, pbs, putJob, steps } from '../model/world.ts'
 import type { Job, Mode, NjDraft, Pack, Playbook, Tpl } from '../model/types.ts'
 import { commit, repaint } from '../store.ts'
@@ -180,7 +181,7 @@ export function pbAdd(fromNewJob?: boolean) {
       if (PB[key]) { let n = 2; while (PB[key + '-' + n]) n++; key = key + '-' + n }
       o.key = key
       addPb(o)
-      if (LIVE.on) void api.putPlaybook(key, PB[key]).catch((e) => toast(`The backend did not keep it: ${(e as Error).message}`))
+      if (LIVE.on) void api.putPlaybook(pbWs(key), key, PB[key]).catch((e) => toast(`The backend did not keep it: ${(e as Error).message}`))
       const x = store.get<Record<string, PbFile>>('pbx', {}); x[key] = o; store.set('pbx', x)
       toast(<>Added playbook <b>{o.name}</b></>)
       if (S.pbRet === 'newjob') { S.pbRet = null; newJob({ ...(S.njDraft || {}), pb: key }); return }
@@ -195,15 +196,15 @@ export function pbAdd(fromNewJob?: boolean) {
 export function pbRemove(k: string) {
   const n = JOBS.filter((j) => j.pb === k).length
   if (n) { toast(`${n} job${n > 1 ? 's use' : ' uses'} this playbook, so it stays.`); return }
-  const x = store.get<Record<string, PbFile>>('pbx', {}), o = x[k], p = PB[k], tp: Record<string, Tpl[]> = {}
+  const x = store.get<Record<string, PbFile>>('pbx', {}), o = x[k], p = PB[k], ws = pbWs(k), tp: Record<string, Tpl[]> = {}
   commit(() => {
     steps(k).forEach((s) => { if (TPL[s.id]) tp[s.id] = TPL[s.id]; delete TPL[s.id] })
     delete PB[k]; delete x[k]; store.set('pbx', x); S.pbv = null
   })
-  if (LIVE.on) void api.putPlaybook(k, null).catch((e) => toast(`The backend still has it: ${(e as Error).message}`))
+  if (LIVE.on) void api.putPlaybook(ws, k, null).catch((e) => toast(`The backend still has it: ${(e as Error).message}`))
   toast(<>Removed <b>{p.n}</b></>, 'Undo', () => commit(() => {
     PB[k] = p; Object.assign(TPL, tp)
-    if (LIVE.on) void api.putPlaybook(k, p).catch(() => undefined)
+    if (LIVE.on) void api.putPlaybook(ws, k, p).catch(() => undefined)
     if (o) { const y = store.get<Record<string, PbFile>>('pbx', {}); y[k] = o; store.set('pbx', y) }
     S.pbv = k
   }))

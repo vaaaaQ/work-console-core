@@ -3,8 +3,9 @@ import { snip, tfmt } from '../lib/util.ts'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
 import type { Hit, Note, NoteIndex } from '../live/api.ts'
+import { L } from '../live/boot.ts'
 import { editNote } from '../actions/knowledge.tsx'
-import { W } from '../model/world.ts'
+import { S, W } from '../model/world.ts'
 import { Ic } from '../ui/Icon.tsx'
 import { toast } from '../ui/toasts.tsx'
 
@@ -17,25 +18,28 @@ export function Knowledge() {
   const [q, setQ] = React.useState('')
   const [hits, setHits] = React.useState<Hit[] | null>(null)
   const [sel, setSel] = React.useState<Note | null>(null)
+  // notes are the workspace's on screen: a switch drops what the other one showed
+  const ws = S.ws
+  React.useEffect(() => { setSel(null) }, [ws])
   React.useEffect(() => {
     if (!LIVE.on || !q.trim()) { setHits(null); return }
-    const t = setTimeout(() => { api.searchNotes(q.trim()).then(setHits, (e) => toast((e as Error).message)) }, 250)
+    const t = setTimeout(() => { api.searchNotes(ws, q.trim()).then(setHits, (e) => toast((e as Error).message)) }, 250)
     return () => clearTimeout(t)
-  }, [q])
+  }, [q, ws])
   const head = (acts?: React.ReactNode) => (
     <div className="vh"><div><div className="eyebrow">{W().n} · workplace</div><h1>Knowledge</h1>
       <p>Notes an LLM reads on the workplace: the domain, and the machine itself. An LLM only proposes; proposals wait in Approvals.</p></div>{acts}</div>
   )
   if (!LIVE.on) return <>{head()}{box('Knowledge lives in the bridge on the workplace. This demo has no backend.')}</>
-  const open = (id: string) => api.note(id).then(setSel, (e) => toast((e as Error).message))
-  const list: (NoteIndex | Hit)[] = hits ?? LIVE.notes
+  const open = (id: string) => api.note(ws, id).then(setSel, (e) => toast((e as Error).message))
+  const l = L(ws), list: (NoteIndex | Hit)[] = hits ?? l.notes
   return <>
     {head(<div className="acts"><button className="btn pri" onClick={() => editNote(null, setSel)}><Ic n="plus" sm />New note</button></div>)}
     <div className="fbar"><span className="fsp" />
       <label className="search"><Ic n="search" sm /><input type="search" placeholder="Search notes" aria-label="Search notes" value={q} onChange={(e) => setQ(e.target.value)} /></label></div>
     <div className="cols">
       <section className="panel"><header><Ic n="list" /><h3>{hits ? 'Found' : 'Notes'}</h3><span className="src">{list.length}</span></header>
-        {!hits && LIVE.kn !== 'ok' ? box(LIVE.kn === 'loading' ? 'Loading…' : LIVE.kn)
+        {!hits && l.kn !== 'ok' ? box(l.kn === 'loading' ? 'Loading…' : l.kn)
           : list.length ? <ul className="al">{list.map((n) => (
             <li key={n.id}><Ic n="file" sm /><button className="lnk" onClick={() => void open(n.id)}>{n.title}</button>
               <span className="why">{'snippet' in n ? snip(n.snippet, 120) : n.tags.join(', ')}</span></li>))}</ul>

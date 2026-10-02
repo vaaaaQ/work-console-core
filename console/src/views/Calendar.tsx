@@ -1,8 +1,7 @@
 import * as React from 'react'
 import { STATUS } from '../data/core.ts'
 import { CAL } from '../data/demo.ts'
-import { LIVE } from '../live/api.ts'
-import { srcState } from '../live/boot.ts'
+import { L, srcState } from '../live/boot.ts'
 import { dayOf, evDraft, evJobs, onDay, shownDays, weekDays } from '../model/cal.ts'
 import type { CalEvent, Job } from '../model/types.ts'
 import { S, W, wsJobs } from '../model/world.ts'
@@ -36,7 +35,7 @@ function Ev({ e, jobs, src, tzl }: { e: CalEvent; jobs: Job[]; src: string; tzl:
 /* This week and next in home-zone days; a meeting lists its jobs and makes new ones due when it starts. */
 export function CalendarView() {
   const w = W(), cst = srcState('cal'), [wk, setWk] = React.useState(0)
-  const cal = !w.src.cal ? undefined : cst == null ? CAL[S.ws] : cst === 'ok' ? LIVE.cal : undefined
+  const cal = !w.src.cal ? undefined : cst == null ? CAL[S.ws] : cst === 'ok' ? L().cal : undefined
   const head = <div className="vh"><div><div className="eyebrow">{w.n} · work</div><h1>Calendar</h1>
     <p>Meetings in your local time{w.tz ? ` with ${w.tzl} alongside` : ''}. A job made from a meeting is due when it starts.</p></div>
     <div className="acts"><div className="seg" role="group" aria-label="Week">

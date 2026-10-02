@@ -81,7 +81,7 @@ test('main starts on loopback with a fake gateway per workspace, recovers runs, 
   try {
     assert.equal(m.lanPort, null, 'no certificate, no LAN listener')
     assert.deepEqual(m.spaces.list.map((s) => s.id), ['acme']); assert.deepEqual(Object.keys(m.fakes), ['acme'])
-    const state = async () => (await (await fetch(`http://127.0.0.1:${m.loopbackPort}/api/state`)).json()) as { jobs: Job[]; playbooks: Record<string, unknown>; bridge: { state: string } }
+    const state = async () => ((await (await fetch(`http://127.0.0.1:${m.loopbackPort}/api/state`)).json()) as { ws: { acme: { jobs: Job[]; playbooks: Record<string, unknown>; bridge: { state: string } } } }).ws.acme
     const st = await state()
     assert.deepEqual(st.jobs, []); assert.ok(Object.keys(st.playbooks).length > 0)
     const t0 = Date.now()
@@ -121,7 +121,7 @@ test('the console starts while the workplace is away', async () => {
   writeFileSync(tok, 'tok-away')
   const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home }), loopbackPort: 0, workspaces: { acme: { gatewayUrl: `http://127.0.0.1:${port}`, consoleTokenPath: tok, llmTokenPath: tok } } }
   const m = await main({ cfg, sdk: unused, workspaces: [acmeServer] })
-  const state = async () => (await (await fetch(`http://127.0.0.1:${m.loopbackPort}/api/state`)).json()) as { jobs: Job[]; playbooks: Record<string, unknown>; bridge: { state: string } }
+  const state = async () => ((await (await fetch(`http://127.0.0.1:${m.loopbackPort}/api/state`)).json()) as { ws: { acme: { jobs: Job[]; playbooks: Record<string, unknown>; bridge: { state: string } } } }).ws.acme
   let fake: Awaited<ReturnType<typeof startFakeGateway>> | null = null
   try {
     const away = await state()

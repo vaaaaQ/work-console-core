@@ -1,28 +1,30 @@
 import { CHATS, JOBS, MAIL, PB, S, byId, putJob, setJobs } from '../model/world.ts'
 import type { Chat, Mail, Ws } from '../model/types.ts'
-import { DEFAULT_WS } from '../data/packs.ts'
+import { DEFAULT_WS, PACKS } from '../data/packs.ts'
 import type { BoardItem } from '../data/board.ts'
+import { setZone } from '../lib/zone.ts'
 import { commit, repaint } from '../store.ts'
 import * as api from './api.ts'
-import { LIVE } from './api.ts'
-import type { CalItem, ConceptState, Ev, State } from './api.ts'
+import { LIVE, blankWs } from './api.ts'
+import type { CalItem, ConceptState, Ev, LiveWs, State } from './api.ts'
 import type { TimeItem } from '../data/time.ts'
 
-/* Live mode: the backend's jobs and playbooks replace the demo's, the sources come from bridge A,
-   and the event stream keeps both current. The gateway serves one pack, the default
-   workspace's; other packs show their sources as not connected. */
+/* Live mode: the backend's jobs and playbooks replace the demo's, each workspace's sources come
+   from its own gateway, and the event stream keeps both current. Every frame names its workspace. */
 
-/** the workspace the gateway serves; read on use, since install() sets DEFAULT_WS after this module loads */
-const liveWs = (): Ws => DEFAULT_WS
 const CONCEPTS = ['chat', 'mail', 'cal', 'board', 'time']
 const KNOWLEDGE = ['notes', 'proposals']
 
+/** a workspace's live block; one the backend does not serve reads as a bridge that is down */
+export const L = (ws: Ws = S.ws): LiveWs => LIVE.ws[ws] || { ...blankWs(), bridge: 'unavailable' }
+
 /** null = demo data; 'ok'; 'loading'; or why the concept is unavailable */
-export function srcState(concept: string): string | null {
+export function srcState(concept: string, ws: Ws = S.ws): string | null {
   if (!LIVE.on) return null
-  if (S.ws !== liveWs()) return 'not connected in this version'
-  if (LIVE.bridge !== 'ok') return 'the bridge is unavailable'
-  return LIVE.sources[concept] || 'loading'
+  const l = LIVE.ws[ws]
+  if (!l) return 'not served by the console backend'
+  if (l.bridge !== 'ok') return 'the bridge is unavailable'
+  return l.sources[concept] || 'loading'
 }
 
 let rereading: ReturnType<typeof setTimeout> | undefined
@@ -32,72 +34,100 @@ function rereadLater() {
   rereading = setTimeout(() => void api.state().then((s) => commit(() => applyState(s)), rereadLater), 10000)
 }
 
+/** the workspace whose store holds a playbook: the first block that carried it */
+const PB_WS: Record<string, Ws> = {}
+/** where a playbook is saved or removed; one not loaded yet goes to its own workspace, else the one on screen */
+export const pbWs = (k: string): Ws => PB_WS[k] || PB[k]?.ws || S.ws
+
 export function applyState(st: State) {
+  // the PC's zone is home; a zone this browser does not know leaves the device's
+  try { setZone(st.home.tz) } catch { /* as said */ }
+  const blocks = Object.entries(st.ws)
   for (const k of Object.keys(PB)) delete PB[k]
-  Object.assign(PB, st.playbooks)
+  for (const k of Object.keys(PB_WS)) delete PB_WS[k]
+  for (const [id, b] of blocks) { for (const k of Object.keys(b.playbooks)) PB_WS[k] ||= id; Object.assign(PB, b.playbooks) }
   // a job event may have landed while the state was on its way: keep whichever copy is newer
   const have = new Map(JOBS.map((j) => [j.id, j]))
-  setJobs(st.jobs.map((j) => { const o = have.get(j.id); return o && o.v != null && j.v != null && o.v > j.v ? o : j }))
-  LIVE.runs = Object.fromEntries(st.runs.map((r) => [r.id, r]))
-  LIVE.bridge = st.bridge.state; LIVE.concepts = st.bridge.concepts
-  LIVE.parts = { jobs: st.parts.jobs, runs: st.parts.runs }
+  setJobs(blocks.flatMap(([, b]) => b.jobs).map((j) => { const o = have.get(j.id); return o && o.v != null && j.v != null && o.v > j.v ? o : j }))
+  LIVE.runs = Object.fromEntries(blocks.flatMap(([, b]) => b.runs).map((r) => [r.id, r]))
+  // blocks change in place: a load on its way keeps writing into the block it read
+  for (const id of Object.keys(LIVE.ws)) if (!(id in st.ws)) delete LIVE.ws[id]
+  for (const [id, b] of blocks) {
+    Object.assign((LIVE.ws[id] ||= blankWs()), {
+      bridge: b.bridge.state, concepts: b.bridge.concepts, parts: { jobs: b.parts.jobs, runs: b.parts.runs }, plugins: b.plugins || {},
+    })
+  }
   clearTimeout(rereading)
-  if (st.bridge.state === 'ok' && Object.values(st.parts).some((p) => p !== 'ok')) rereadLater()
+  if (blocks.some(([, b]) => b.bridge.state === 'ok' && Object.values(b.parts).some((p) => p !== 'ok'))) rereadLater()
 }
 
-function applyConcept(c: string, r: ConceptState | undefined) {
-  if (!r || r.status !== 'ok' || !Array.isArray(r.items)) { LIVE.sources[c] = r?.message || r?.status || 'unavailable'; return }
-  LIVE.sources[c] = 'ok'
+function applyConcept(ws: Ws, c: string, r: ConceptState | undefined) {
+  const l = LIVE.ws[ws]
+  if (!l) return
+  if (!r || r.status !== 'ok' || !Array.isArray(r.items)) { l.sources[c] = r?.message || r?.status || 'unavailable'; return }
+  l.sources[c] = 'ok'
   if (c === 'chat') {
     // a thread already read keeps its messages until it is opened again
-    const old = new Map((CHATS[liveWs()] || []).map((x) => [x.id, x]))
-    CHATS[liveWs()] = (r.items as Chat[]).map((x) => ({ ...x, msgs: old.get(x.id)?.msgs || [] }))
-    loaded.chat.clear()
+    const old = new Map((CHATS[ws] || []).map((x) => [x.id, x]))
+    CHATS[ws] = (r.items as Chat[]).map((x) => ({ ...x, msgs: old.get(x.id)?.msgs || [] }))
+    forget('chat', ws)
   } else if (c === 'mail') {
-    const old = new Map((MAIL[liveWs()] || []).map((x) => [x.id, x]))
-    MAIL[liveWs()] = (r.items as Mail[]).map((x) => { const o = old.get(x.id); return { ...x, body: o?.body || x.body, ...(o?.sent ? { sent: o.sent } : {}) } })
-  } else if (c === 'cal') LIVE.cal = r.items as CalItem[]
-  else if (c === 'board') LIVE.board = r.items as BoardItem[]
-  else if (c === 'time') LIVE.time = r.items as TimeItem[]
+    const old = new Map((MAIL[ws] || []).map((x) => [x.id, x]))
+    MAIL[ws] = (r.items as Mail[]).map((x) => { const o = old.get(x.id); return { ...x, body: o?.body || x.body, ...(o?.sent ? { sent: o.sent } : {}) } })
+  } else if (c === 'cal') l.cal = r.items as CalItem[]
+  else if (c === 'board') l.board = r.items as BoardItem[]
+  else if (c === 'time') l.time = r.items as TimeItem[]
 }
 
-export async function loadSources(concepts = CONCEPTS) {
+export async function loadSources(ws: Ws, concepts = CONCEPTS) {
   try {
-    const { concepts: r } = await api.sources(concepts)
-    commit(() => concepts.forEach((c) => applyConcept(c, r[c])))
+    const { concepts: r } = await api.sources(ws, concepts)
+    commit(() => concepts.forEach((c) => applyConcept(ws, c, r[c])))
     // the thread on screen may have new messages
-    if (concepts.includes('chat') && S.view === 'chats' && S.ws === liveWs()) loadThread(S.chat[liveWs()])
+    if (concepts.includes('chat') && S.view === 'chats' && S.ws === ws) loadThread(S.chat[ws], ws)
   } catch (e) {
-    commit(() => concepts.forEach((c) => { LIVE.sources[c] = e instanceof api.ApiError ? e.message : 'unavailable' }))
+    commit(() => concepts.forEach((c) => { const l = LIVE.ws[ws]; if (l) l.sources[c] = e instanceof api.ApiError ? e.message : 'unavailable' }))
   }
 }
 
-export async function loadKnowledge() {
+export async function loadKnowledge(ws: Ws = S.ws) {
   try {
-    const [n, p] = await Promise.all([api.notes(), api.proposals()])
-    commit(() => { LIVE.notes = n; LIVE.proposals = p; LIVE.kn = 'ok' })
+    const [n, p] = await Promise.all([api.notes(ws), api.proposals(ws)])
+    commit(() => { const l = LIVE.ws[ws]; if (l) { l.notes = n; l.proposals = p; l.kn = 'ok' } })
   } catch (e) {
-    commit(() => { LIVE.kn = e instanceof api.ApiError ? e.message : 'unavailable' })
+    commit(() => { const l = LIVE.ws[ws]; if (l) l.kn = e instanceof api.ApiError ? e.message : 'unavailable' })
   }
 }
 
-/* a thread or a mail body is fetched when it is first shown */
+/** every served workspace's sources and knowledge */
+function loadAll() { for (const ws of Object.keys(LIVE.ws)) { void loadSources(ws); void loadKnowledge(ws) } }
+
+/* a thread or a mail body is fetched when it is first shown; keys are workspace + id */
 const loaded = { chat: new Set<string>(), mail: new Set<string>() }
-export function loadThread(id: string) {
-  if (!LIVE.on || srcState('chat') !== 'ok' || loaded.chat.has(id)) return
-  loaded.chat.add(id)
-  api.chatThread(id).then((msgs) => commit(() => { const c = (CHATS[liveWs()] || []).find((x) => x.id === id); if (c) c.msgs = msgs }))
-    .catch(() => { loaded.chat.delete(id) })
+const lk = (ws: Ws, id: string) => `${ws}\n${id}`
+function forget(k: 'chat' | 'mail', ws: Ws) { for (const x of loaded[k]) if (x.startsWith(ws + '\n')) loaded[k].delete(x) }
+export function loadThread(id: string, ws: Ws = S.ws) {
+  const key = lk(ws, id)
+  if (!LIVE.on || srcState('chat', ws) !== 'ok' || loaded.chat.has(key)) return
+  loaded.chat.add(key)
+  api.chatThread(ws, id).then((msgs) => commit(() => { const c = (CHATS[ws] || []).find((x) => x.id === id); if (c) c.msgs = msgs }))
+    .catch(() => { loaded.chat.delete(key) })
 }
-export function refreshThread(id: string) { loaded.chat.delete(id); loadThread(id) }
-export function loadMailBody(id: string) {
-  if (!LIVE.on || srcState('mail') !== 'ok' || loaded.mail.has(id)) return
-  loaded.mail.add(id)
-  api.mailItem(id).then((body) => commit(() => { const m = (MAIL[liveWs()] || []).find((x) => x.id === id); if (m) m.body = body || '(no text)' }))
-    .catch(() => { loaded.mail.delete(id) })
+export function refreshThread(id: string, ws: Ws = S.ws) { loaded.chat.delete(lk(ws, id)); loadThread(id, ws) }
+export function loadMailBody(id: string, ws: Ws = S.ws) {
+  const key = lk(ws, id)
+  if (!LIVE.on || srcState('mail', ws) !== 'ok' || loaded.mail.has(key)) return
+  loaded.mail.add(key)
+  api.mailItem(ws, id).then((body) => commit(() => { const m = (MAIL[ws] || []).find((x) => x.id === id); if (m) m.body = body || '(no text)' }))
+    .catch(() => { loaded.mail.delete(key) })
 }
 
 const pending = new Map<string, ReturnType<typeof setTimeout>>()
+/** a burst of changes to one thing in one workspace is one reload */
+function soon(k: string, f: () => void) {
+  clearTimeout(pending.get(k))
+  pending.set(k, setTimeout(() => { pending.delete(k); f() }, 400))
+}
 export function onEvent(e: Ev) {
   if (e.kind === 'job') commit(() => { putJob(e.job) })
   else if (e.kind === 'run') commit(() => { LIVE.runs[e.run.id] = e.run })
@@ -107,26 +137,27 @@ export function onEvent(e: Ev) {
     if (f.length > 300) f.splice(0, f.length - 300)
     repaint()
   } else if (e.kind === 'bridge') {
-    const back = LIVE.bridge !== 'ok' && e.state === 'ok'
-    commit(() => { LIVE.bridge = e.state; LIVE.concepts = e.concepts })
-    if (back) { void loadSources(); void loadKnowledge(); void api.state().then((s) => commit(() => applyState(s))).catch(() => undefined) }
-  } else if (e.kind === 'source' && CONCEPTS.includes(e.concept)) {
-    // a burst of changes to one concept is one reload
-    clearTimeout(pending.get(e.concept))
-    pending.set(e.concept, setTimeout(() => { pending.delete(e.concept); void loadSources([e.concept]) }, 400))
-  } else if (e.kind === 'source' && KNOWLEDGE.includes(e.concept)) {
-    clearTimeout(pending.get('knowledge'))
-    pending.set('knowledge', setTimeout(() => { pending.delete('knowledge'); void loadKnowledge() }, 400))
+    const l = LIVE.ws[e.ws]
+    if (!l) return
+    const back = l.bridge !== 'ok' && e.state === 'ok'
+    commit(() => { l.bridge = e.state; l.concepts = e.concepts })
+    if (back) { void loadSources(e.ws); void loadKnowledge(e.ws); void api.state().then((s) => commit(() => applyState(s))).catch(() => undefined) }
+  } else if (e.kind === 'source' && LIVE.ws[e.ws] && CONCEPTS.includes(e.concept)) {
+    soon(`${e.ws}/${e.concept}`, () => void loadSources(e.ws, [e.concept]))
+  } else if (e.kind === 'source' && LIVE.ws[e.ws] && KNOWLEDGE.includes(e.concept)) {
+    soon(`${e.ws}/knowledge`, () => void loadKnowledge(e.ws))
   }
 }
 
-/** a push notification opens /?job=…&step=… or /?view=chats&chat=… or /?view=mail&mail=… */
+/** a push notification opens /?job=…&step=…, /?view=chats&chat=…, /?view=mail&mail=… or /?view=approvals,
+    with ws= naming the workspace; without one (an older link) a job opens in its own and a view in the default */
 export function fromQuery(q = location.search) {
-  const p = new URLSearchParams(q), jid = p.get('job'), view = p.get('view')
-  if (jid && byId(jid)) { const j = byId(jid)!; S.ws = j.ws; S.view = 'job'; S.job = j.id; S.sel = p.get('step') || null }
-  else if (view === 'chats') { S.ws = liveWs(); S.view = 'chats'; const c = p.get('chat'); if (c) S.chat[liveWs()] = c }
-  else if (view === 'mail') { S.ws = liveWs(); S.view = 'mail'; const m = p.get('mail'); if (m) { S.mail = m; S.mcat = 'reply' } }
-  else if (view === 'approvals') { S.ws = liveWs(); S.view = 'approvals' }
+  const p = new URLSearchParams(q), jid = p.get('job'), view = p.get('view'), asked = p.get('ws')
+  const named = asked && PACKS[asked] ? asked : null, j = jid ? byId(jid) : undefined
+  if (j) { S.ws = named || j.ws; S.view = 'job'; S.job = j.id; S.sel = p.get('step') || null }
+  else if (view === 'chats') { const ws = (S.ws = named || DEFAULT_WS); S.view = 'chats'; const c = p.get('chat'); if (c) S.chat[ws] = c }
+  else if (view === 'mail') { S.ws = named || DEFAULT_WS; S.view = 'mail'; const m = p.get('mail'); if (m) { S.mail = m; S.mcat = 'reply' } }
+  else if (view === 'approvals') { S.ws = named || DEFAULT_WS; S.view = 'approvals' }
   else return false
   try { history.replaceState(null, '', location.pathname + (S.view === 'job' ? '#' + S.job : '#' + S.view)) } catch { /* as in setHash */ }
   return true
@@ -147,14 +178,14 @@ export async function boot(): Promise<'demo' | 'live' | 'unpaired'> {
   LIVE.pc = st.side === 'loopback'; LIVE.push = st.push?.key ?? null
   applyState(st)
   addManifest()
-  void loadSources(); void loadKnowledge()
+  loadAll()
   let opened = false
   // events between the first state and the stream opening, or during a reconnect, may be missed:
   // take the whole state again on every open
   api.events(onEvent, () => {
     const again = opened
     opened = true
-    void api.state().then((s) => { commit(() => applyState(s)); if (again) { void loadSources(); void loadKnowledge() } }).catch(() => undefined)
+    void api.state().then((s) => { commit(() => applyState(s)); if (again) loadAll() }).catch(() => undefined)
   })
   void api.subscribePush(LIVE.push)
   return 'live'

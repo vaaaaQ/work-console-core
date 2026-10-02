@@ -1,8 +1,7 @@
 import * as React from 'react'
 import { CAL } from '../data/demo.ts'
 import { hm, toMin } from '../lib/util.ts'
-import { LIVE } from '../live/api.ts'
-import { srcState } from '../live/boot.ts'
+import { L, srcState } from '../live/boot.ts'
 import { todayOnly } from '../model/cal.ts'
 import { LOG, S, W, needsYou, wsJobs } from '../model/world.ts'
 import { go } from '../actions/nav.tsx'
@@ -13,7 +12,7 @@ const box = (t: string) => <div className="pb"><p className="why" style={{ margi
 
 export function Today() {
   const w = W(), cst = srcState('cal'), now = toMin(hm()), log = LOG[S.ws] || []
-  const all = !w.src.cal ? undefined : cst == null ? CAL[S.ws] : cst === 'ok' ? LIVE.cal : undefined, cal = all && todayOnly(all)
+  const all = !w.src.cal ? undefined : cst == null ? CAL[S.ws] : cst === 'ok' ? L().cal : undefined, cal = all && todayOnly(all)
   const need = wsJobs().filter(needsYou).sort((a, b) => b.ts - a.ts)
   let nx = false
   const ev = cal ? cal.map((e, i) => {

@@ -76,8 +76,10 @@ export async function sendVia(k: string, target: string, text: string, jobId?: s
   if (!LIVE.on) return true
   const a = actFor(k, target, text)
   if (!a) { toast(`Nothing sends to ${k} yet.`); return false }
+  // the job's workspace sends; a message from a source view goes out through the one on screen
+  const ws = (jobId && byId(jobId)?.ws) || S.ws
   try {
-    const r = await api.act(a.action, a.args, jobId)
+    const r = await api.act(ws, a.action, a.args, jobId)
     if (r.status === 'ok') return true
     toast(r.status === 'outcome_unknown'
       ? 'Not sure it went out — check before sending again. Nothing recorded.'

@@ -31,7 +31,7 @@ export function Chats() {
   const w = W(), L = CHATS[S.ws] || [], c = curChat(), st = srcState('chat'), hid = HID.list
   React.useEffect(() => { if (c) loadThread(c.id) }, [c?.id, st])
   // a hide or unhide anywhere changes the list, so the count follows it
-  React.useEffect(() => { loadHidden() }, [st, L.length])
+  React.useEffect(() => { loadHidden() }, [S.ws, st, L.length])
   if (st && st !== 'ok') return <Unavailable what="Chats" st={st} />
   if (!c && !hid.length) return <div className="empty">{LIVE.on ? 'No chats.' : `No chat source in ${w.n}.`}</div>
   const jobs = c ? JOBS.filter((j) => j.chat === c.id) : [], tool = w.src.chat?.n

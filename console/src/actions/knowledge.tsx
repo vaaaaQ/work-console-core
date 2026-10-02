@@ -1,8 +1,8 @@
 import * as React from 'react'
 import * as api from '../live/api.ts'
-import { LIVE } from '../live/api.ts'
 import type { Note, Proposal } from '../live/api.ts'
-import { loadKnowledge } from '../live/boot.ts'
+import { L, loadKnowledge } from '../live/boot.ts'
+import { S } from '../model/world.ts'
 import { commit } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
 import { CancelBtn } from '../ui/bits.tsx'
@@ -17,14 +17,16 @@ const tagsOf = (s: string) => s.split(',').map((t) => t.trim()).filter(Boolean)
 
 /** close runs only once the decision went through, so an edited text survives a failure */
 export async function decide(p: Proposal, accept: boolean, text?: string, close: () => void = () => undefined) {
+  // the proposal is the workspace's on screen; the answer lands there even after a switch
+  const ws = S.ws
   try {
-    const n = await saveThenClose(() => api.decide(p.id, accept, text), close)
-    commit(() => { LIVE.proposals = LIVE.proposals.filter((x) => x.id !== p.id) })
+    const n = await saveThenClose(() => api.decide(ws, p.id, accept, text), close)
+    commit(() => { const l = L(ws); l.proposals = l.proposals.filter((x) => x.id !== p.id) })
     toast(accept ? <>Saved note <b>{n?.title ?? p.title}</b></> : <>Rejected <b>{p.title}</b></>)
   } catch (e) {
     toast(why(e, 'The note changed since this proposal. Reject it, or edit the note by hand.'))
   }
-  void loadKnowledge()
+  void loadKnowledge(ws)
 }
 
 export function editProposal(p: Proposal) {
@@ -38,6 +40,7 @@ export function editProposal(p: Proposal) {
 
 /** n = null: a new note; done gets the saved note */
 export function editNote(n: Note | null, done?: (n: Note) => void) {
+  const ws = S.ws
   modal({
     title: n ? `Edit note · ${n.title}` : 'New note', form: 'kn-note',
     body: <>
@@ -49,8 +52,8 @@ export function editNote(n: Note | null, done?: (n: Note) => void) {
     onSubmit: (fd) => {
       const title = String(fd.get('title') ?? '').trim()
       if (!title) return
-      saveThenClose(() => api.saveNote(n ? n.id : null, { title, tags: tagsOf(String(fd.get('tags') ?? '')), text: String(fd.get('text') ?? '') }, n?.v), closeModal).then(
-        (s) => { toast(<>Saved <b>{s.title}</b></>); done?.(s); void loadKnowledge() },
+      saveThenClose(() => api.saveNote(ws, n ? n.id : null, { title, tags: tagsOf(String(fd.get('tags') ?? '')), text: String(fd.get('text') ?? '') }, n?.v), closeModal).then(
+        (s) => { toast(<>Saved <b>{s.title}</b></>); done?.(s); void loadKnowledge(ws) },
         (e) => toast(why(e, n ? 'The note changed elsewhere. Copy your text, open the note again and redo the edit.' : 'A note with this title exists. Pick another title.')))
     },
   })

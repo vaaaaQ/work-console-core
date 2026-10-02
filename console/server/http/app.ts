@@ -162,16 +162,10 @@ export function createApp(d: Deps) {
   }
   async function state(r: Req) {
     const list = d.spaces.list, blocks = await Promise.all(list.map(block))
-    const every = (f: (b: typeof blocks[number]) => Part): Part => (blocks.every((b) => f(b) === 'ok') ? 'ok' : 'unavailable')
     return {
       home: { tz: d.tz, pc: d.pcName },
       side: r.side, device: r.device, push: d.notify ? { key: d.notify.publicKey() } : null,
       ws: Object.fromEntries(list.map((s, i) => [s.id, blocks[i]])),
-      // R6: until Task 10 — the one-workspace shape the page still reads, merged across the spaces
-      jobs: blocks.flatMap((b) => b.jobs), runs: blocks.flatMap((b) => b.runs), marks: Object.assign({}, ...blocks.map((b) => b.marks)),
-      parts: { jobs: every((b) => b.parts.jobs), runs: every((b) => b.parts.runs), marks: every((b) => b.parts.marks) },
-      playbooks: d.spaces.ctx().PB,
-      bridge: { state: every((b) => b.bridge.state), concepts: Object.assign({}, ...blocks.map((b) => b.bridge.concepts)) },
     }
   }
 
@@ -403,10 +397,7 @@ export function createApp(d: Deps) {
     }
     const shared = find(routes, r.m, r.path)
     if (shared && shared !== 'method') return shared.run(req(shared.p))
-    // R6: until Task 10 — the unprefixed workspace routes, answered while exactly one workspace is registered
-    const old = find(wsRoutes, r.m, r.path.slice('/api'.length))
-    if (old && old !== 'method') return old.run(req(old.p), d.spaces.pick(undefined))
-    throw none(shared, old)
+    throw none(shared)
   }
 
   function pair(side: Side, req: IncomingMessage, res: ServerResponse, q: URLSearchParams) {

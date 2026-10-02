@@ -645,24 +645,20 @@ test("context preview: a job's item reads as the run would get it; an item not o
   } finally { await stop() }
 })
 
-// R6: until Task 10
-test('the unprefixed workspace routes answer only while one workspace is registered', async () => {
-  const two = await setup()
-  try {
-    const a = await call(two.lp, 'POST', '/api/act', { body: { action: 'chat.post', args: { chatName: 'x', text: 'x' } } })
-    assert.equal(a.status, 400); assert.equal(a.json.error.message, 'say which workspace: acme, beta')
-    assert.equal((await call(two.lp, 'GET', '/api/sources?concepts=chat')).status, 400)
-    const st = (await call(two.lp, 'GET', '/api/state')).json
-    assert.deepEqual(st.parts, { jobs: 'ok', runs: 'ok', marks: 'ok' }); assert.equal(st.bridge.state, 'ok')
-    assert.ok(st.playbooks['dev-item'] && st.playbooks.action)
-  } finally { await two.stop() }
-  const one = await setup({ one: true })
-  try {
-    await openStep(one.lp)
-    assert.equal((await call(one.lp, 'GET', '/api/sources?concepts=chat')).json.concepts.chat.status, 'ok')
-    assert.equal((await call(one.lp, 'GET', '/api/chats/hidden')).status, 200)
-    const st = (await call(one.lp, 'GET', '/api/state')).json
-    assert.deepEqual(st.jobs.map((j: Job) => j.id), ['A-0001']); assert.equal(st.bridge.state, 'ok'); assert.ok(st.playbooks['dev-item'])
-    assert.deepEqual(Object.keys(st.ws), ['acme'])
-  } finally { await one.stop() }
+test('a workspace route answers only under /api/ws/<id>, and the state has no merged top level', async () => {
+  for (const o of [{}, { one: true }]) {
+    const { lp, stop } = await setup(o)
+    try {
+      await openStep(lp)
+      const a = await call(lp, 'POST', '/api/act', { body: { action: 'chat.post', args: { chatName: 'x', text: 'x' } } })
+      assert.equal(a.status, 404)
+      assert.equal((await call(lp, 'GET', '/api/sources?concepts=chat')).status, 404)
+      assert.equal((await call(lp, 'GET', '/api/chats/hidden')).status, 404)
+      assert.equal((await call(lp, 'GET', '/api/knowledge')).status, 404)
+      assert.equal((await call(lp, 'GET', '/api/ws/acme/sources?concepts=chat')).json.concepts.chat.status, 'ok')
+      const st = (await call(lp, 'GET', '/api/state')).json
+      for (const k of ['jobs', 'runs', 'marks', 'parts', 'playbooks', 'bridge']) assert.equal(k in st, false, `no top-level ${k}`)
+      assert.ok(st.home); assert.deepEqual(st.ws.acme.jobs.map((j: Job) => j.id), ['A-0001'])
+    } finally { await stop() }
+  }
 })
