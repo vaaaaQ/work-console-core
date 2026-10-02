@@ -105,7 +105,8 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
   }
   return [
     {
-      name: 'list_jobs', description: 'List Work Console jobs of every workspace: id, workspace, key, title, status, current step, round, whether it needs the user.',
+      name: 'list_jobs', description: 'List Work Console jobs of every workspace: id, workspace, key, title, status, current step, round, whether it needs the user. '
+        + 'A workspace that cannot answer appears as a { ws, unavailable } entry, not as having no jobs.',
       inputSchema: { type: 'object', properties: { filter: { type: 'string', enum: ['open', 'needs_you', 'closed', 'all'], description: 'default open' } } },
       async run(a) {
         const f = a.filter || 'open'
@@ -178,7 +179,7 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
         properties: {
           title: { type: 'string' }, playbook: { type: 'string', description: 'playbook id' }, ws: wsArg,
           key: { type: 'string', description: 'work item or ticket key, e.g. ACME-512' },
-          project: { type: 'string', description: `a project of that workspace's pack (${perWs((sp) => sp.page.pack.prj.join(', '))}); default its first` },
+          project: { type: 'string', description: `project name; default: that workspace's first project (${perWs((sp) => sp.page.pack.prj[0])})` },
           chat: { type: 'string', description: 'chat id to link' }, mail: { type: 'string', description: 'mail id to link' },
         },
       },

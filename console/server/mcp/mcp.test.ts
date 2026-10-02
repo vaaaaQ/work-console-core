@@ -236,6 +236,21 @@ test('return_to resolves the job in its own workspace', async (t) => {
   assert.equal((await s.beta!.jobs.get(id))!.rounds!.length, 1)
 })
 
+test("job_context edits a beta job's context by its board's key or id, in beta's space", async (t) => {
+  const s = await setup(t, { both: true })
+  const id = (await s.call('create_job', { title: 'Beta context', playbook: 'action', ws: 'beta' })).json().id
+  const base = (await s.call('get_job', { id })).json().context.length
+  const r = await s.call('job_context', { id, op: 'add', kind: 'work', item: 'beta/ACME-999', count: 3 })
+  assert.equal(r.err, false, r.text)
+  assert.deepEqual((await s.call('get_job', { id })).json().context.at(-1), { kind: 'work', item: 'ACME-999', count: 3 }, "beta's board rule turned the key into the item id")
+  assert.equal((await s.beta!.jobs.get(id))!.ctx!.at(-1)!.id, 'ACME-999')
+  assert.equal((await s.call('job_context', { id, op: 'set', kind: 'work', item: 'ACME-999', count: 5 })).err, false, 'the bare id reaches the same item')
+  assert.equal((await s.beta!.jobs.get(id))!.ctx!.at(-1)!.n, 5)
+  assert.equal((await s.call('undo')).err, false)
+  assert.equal((await s.call('job_context', { id, op: 'del', kind: 'work', item: 'ACME-999' })).err, false)
+  assert.equal((await s.call('get_job', { id })).json().context.length, base)
+})
+
 test('a job id no workspace owns is a not_found tool error naming it', async (t) => {
   const s = await setup(t, { both: true })
   for (const tool of ['get_job', 'job_command', 'job_context', 'return_to']) {
@@ -261,11 +276,20 @@ test('list_jobs with one workspace down names it instead of passing it off as em
   const s = await setup(t, { both: true })
   await s.call('create_job', { title: 'Beta one', playbook: 'action', ws: 'beta' })
   const down = async () => { throw new GatewayError(503, 'bridge_unavailable', 'the bridge is not reachable: refused') }
-  const acmeJobs = s.spaces.get('acme').jobs
-  s.spaces.get('acme').jobs = { all: down } as never
+  const acmeJobs = s.spaces.get('acme').jobs, touched: string[] = []
+  // acme's Jobs answers only all(); any other call is recorded and fails, so a lookup that tries acme first shows
+  s.spaces.get('acme').jobs = new Proxy({ all: down }, { get: (o, k) => (k === 'all' ? o.all : () => { touched.push(String(k)); throw new Error(`acme's ${String(k)} was called`) }) }) as never
   const got = (await s.call('list_jobs', { filter: 'all' })).json() as { id?: string; ws: string; unavailable?: string }[]
   assert.deepEqual(got.filter((b) => b.id).map((b) => b.id), ['B-0001'], "beta's jobs still come")
   assert.deepEqual(got.filter((b) => b.unavailable).map((b) => [b.ws, b.unavailable]), [['acme', 'the bridge is not reachable: refused']])
+  // a beta job id is routed by its prefix alone: acme being away changes nothing for it, and acme is never asked
+  const one = await s.call('get_job', { id: 'B-0001' })
+  assert.equal(one.err, false, one.text)
+  assert.deepEqual([one.json().id, one.json().ws], ['B-0001', 'beta'])
+  const started = await s.call('job_command', { id: 'B-0001', op: 'start' })
+  assert.equal(started.err, false, started.text)
+  assert.equal(started.json().job.status, 'active')
+  assert.deepEqual(touched, [], "acme's Jobs was not asked for a beta job")
   s.spaces.get('beta').jobs = { all: down } as never
   const none = await s.call('list_jobs')
   assert.equal(none.err, true)
@@ -298,7 +322,7 @@ test("list_playbooks carries each playbook's own ws; core playbooks have none", 
 
 test('ws is an enum of the registered ids and says it may be omitted when there is one', async (t) => {
   type Prop = { type?: string; enum?: string[]; description: string }
-  type Def = { inputSchema: { required?: string[]; properties: Record<string, Prop> } }
+  type Def = { description: string; inputSchema: { required?: string[]; properties: Record<string, Prop> } }
   const tools = async (both: boolean) => {
     const s = await setup(t, { both })
     return new Map<string, Def>((await s.rpc('tools/list')).result.tools.map((x: Def & { name: string }) => [x.name, x]))
@@ -312,7 +336,8 @@ test('ws is an enum of the registered ids and says it may be omitted when there 
     assert.equal(two.get(name)!.inputSchema.required!.includes('ws'), false, 'ws is optional')
   }
   const prj = two.get('create_job')!.inputSchema.properties.project.description
-  assert.match(prj, /labs/); assert.match(prj, /default/)
+  assert.match(prj, /labs/); assert.match(prj, /default/); assert.doesNotMatch(prj, /one of/, 'a project outside the pack is accepted, so the text does not claim a closed set')
+  assert.match(two.get('list_jobs')!.description, /\{ ws, unavailable \}/, 'a down workspace is announced')
   assert.match(two.get('start_item')!.inputSchema.properties.playbook.description, /beta: action/)
   assert.equal('ws' in two.get('get_job')!.inputSchema.properties, false, 'a job id already names its workspace')
 })
