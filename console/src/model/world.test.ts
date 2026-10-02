@@ -39,11 +39,11 @@ test('setJobs rebuilds the log from the journals, newest first', () => {
 
 test('a job from a removed workspace lands in the default one and does not break the log', () => {
   const x = snap(), old = structuredClone(JOBS[0]) as { ws: string; id: string }, id = old.id
-  old.ws = 'marvell'
+  old.ws = 'removed'
   setJobs([old as never])
   assert.equal(byId(id)!.ws, 'acme')
   const again = structuredClone(byId(id)!) as { ws: string; v?: number }
-  again.ws = 'marvell'; again.v = (again.v || 0) + 1
+  again.ws = 'removed'; again.v = (again.v || 0) + 1
   const n = LOG.acme.length
   assert.doesNotThrow(() => putJob(again as never))
   assert.equal(byId(id)!.ws, 'acme')
