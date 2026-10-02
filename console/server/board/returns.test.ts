@@ -8,7 +8,7 @@ import type { Job } from '../../src/model/types.ts'
 import { Bus } from '../events.ts'
 import { Jobs } from '../jobs/jobs.ts'
 import { fileStore } from '../store/file.ts'
-import { demoCtx, demoSeed } from '../testkit.ts'
+import { acme, demoCtx, demoSeed } from '../testkit.ts'
 import { BoardReturns } from './returns.ts'
 
 type Col = { id: string; column: string | null }
@@ -18,7 +18,7 @@ function setup(first: Col[]) {
   const bus = new Bus(), jobs = new Jobs({ store, bus, ctx: demoCtx, gate: () => true })
   const pushes: { title: string; body: string; url: string }[] = [], generic: string[] = []
   let board = first
-  const r = new BoardReturns({ bus, jobs, ctx: demoCtx, read: async () => board, push: async (title, body, url) => { pushes.push({ title, body, url }) } })
+  const r = new BoardReturns({ bus, jobs, ctx: demoCtx, read: async () => board, key: acme.board.key, push: async (title, body, url) => { pushes.push({ title, body, url }) } })
   jobs.onNeedsYou((j) => { if (!r.handling(j.id)) generic.push(j.id) })
   return { bus, jobs, r, pushes, generic, setBoard: (b: Col[]) => { board = b } }
 }

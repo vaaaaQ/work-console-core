@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { loadConfig } from '../../server/config.ts'
 import { main } from '../../server/main.ts'
 import type { Sdk } from '../../server/llm/sdk.ts'
+import acmeServer from '../../workspaces/acme/server.ts'
 import * as T from '../model/transitions.ts'
 import type { Playbook } from '../model/types.ts'
 import * as api from './api.ts'
@@ -25,7 +26,7 @@ async function until(f: () => boolean | Promise<boolean>, ms = 3000) {
 async function backend() {
   const home = mkdtempSync(join(tmpdir(), 'wc-api-'))
   const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
-  const m = await main({ cfg, sdk })
+  const m = await main({ cfg, sdk, workspaces: [acmeServer] })
   api.setBase(`http://127.0.0.1:${m.loopbackPort}`)
   await until(async () => (await api.state()).bridge.state === 'ok')
   return m
@@ -83,7 +84,7 @@ test('sources, a thread, a mail body and a mark read in page shapes', async () =
     await api.markMail(mail.id, { done: true })
     const again = (await api.sources(['mail'])).concepts.mail.items as { id: string; done?: boolean }[]
     assert.equal(again.find((x) => x.id === mail.id)!.done, true)
-    m.fake!.setDown(true)
+    m.fakes.acme.setDown(true)
     await until(async () => (await api.state()).bridge.state === 'unavailable')
     assert.equal((await api.state()).parts.jobs, 'unavailable')
     assert.notEqual((await api.sources(['chat'])).concepts.chat.status, 'ok')
@@ -111,7 +112,7 @@ test('an act, a run with its feed, cancel without a body, playbooks and pairing'
     const chat = concepts.chat.items![0] as { id: string; name: string }
     const a = await api.act('chat.post', { chatName: chat.name, text: 'hello' })
     assert.equal(a.status, 'ok')
-    assert.deepEqual(m.fake!.acts.at(-1)!.args, { chat: chat.id, text: 'hello' })
+    assert.deepEqual(m.fakes.acme.acts.at(-1)!.args, { chat: chat.id, text: 'hello' })
 
     const { job } = await api.create({ t: 'Ask', key: 'ACME-4243', pb: 'action', prj: 'platform', ws: 'acme' })
     const started = await api.cmd(job.id, { op: 'start' }, job.v)
@@ -135,7 +136,7 @@ test('an act, a run with its feed, cancel without a body, playbooks and pairing'
 test('knowledge: the page lists, decides and edits through the backend', async () => {
   const m = await backend()
   try {
-    const r = await fetch(`${m.fake!.url}/api/knowledge/propose`, { method: 'POST', headers: { authorization: `Bearer ${m.fake!.llmToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Page note', text: 'a', reason: 'test' }) })
+    const r = await fetch(`${m.fakes.acme.url}/api/knowledge/propose`, { method: 'POST', headers: { authorization: `Bearer ${m.fakes.acme.llmToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Page note', text: 'a', reason: 'test' }) })
     assert.equal(r.status, 200)
     await until(async () => (await api.proposals()).length === 1)
     const [p] = await api.proposals()

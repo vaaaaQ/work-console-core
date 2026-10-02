@@ -1,29 +1,26 @@
-import { DEFAULT_WS } from '../../src/data/packs.ts'
 import * as T from '../../src/model/transitions.ts'
 import type { Job } from '../../src/model/types.ts'
 import type { Bus } from '../events.ts'
 import type { Jobs } from '../jobs/jobs.ts'
-import { wsPage } from '../../src/workspace.ts'
 
 /* QA sending an item back shows on the board as a QA column turning into Dev. The item's job,
    reopened if it was closed, gets an open problem note so it needs the user, and one push names it.
-   Columns are remembered from the first read on; a return while the console was down is not seen. */
+   Columns are remembered from the first read on; a return while the console was down is not seen.
+   One per workspace: key turns a board item id into a job key by that workspace's board rule. */
 
 type Item = { id: string; column?: unknown }
 const QA = /\bQA\b/
-/** the job key of a board item, by the rule of the workspace the gateway serves */
-const keyOf = (id: string) => wsPage(DEFAULT_WS).board.key(id)
 
 export class BoardReturns {
-  private jobs: Jobs; private ctx: () => T.Ctx; private read: () => Promise<Item[] | null>
+  private jobs: Jobs; private ctx: () => T.Ctx; private read: () => Promise<Item[] | null>; private key: (id: string) => string
   private push: (title: string, body: string, url: string) => Promise<void>
   private cols = new Map<string, string | null>(); private busy = new Set<string>()
 
   constructor(o: {
-    bus: Bus; jobs: Jobs; ctx: () => T.Ctx; read: () => Promise<Item[] | null>
+    bus: Bus; jobs: Jobs; ctx: () => T.Ctx; read: () => Promise<Item[] | null>; key: (id: string) => string
     push(title: string, body: string, url: string): Promise<void>
   }) {
-    this.jobs = o.jobs; this.ctx = o.ctx; this.read = o.read; this.push = o.push
+    this.jobs = o.jobs; this.ctx = o.ctx; this.read = o.read; this.key = o.key; this.push = o.push
     o.bus.on((e) => {
       if (e.kind === 'bridge' && e.state === 'ok') void this.reload()
       else if (e.kind === 'source' && e.concept === 'board') void (e.reset ? this.reload() : this.see(e.upserts as Item[]))
@@ -44,11 +41,11 @@ export class BoardReturns {
       this.cols.set(i.id, col)
       if (prev && QA.test(prev) && col === 'Dev') back.push(i.id)
     }
-    for (const id of back) await this.returned(id).catch((e) => console.error(`handling the QA return of ${keyOf(id)} failed:`, (e as Error).message))
+    for (const id of back) await this.returned(id).catch((e) => console.error(`handling the QA return of ${this.key(id)} failed:`, (e as Error).message))
   }
 
   private async returned(id: string) {
-    const key = keyOf(id), js = (await this.jobs.all()).filter((j) => j.key === key)
+    const key = this.key(id), js = (await this.jobs.all()).filter((j) => j.key === key)
     const j: Job | undefined = js.find((x) => !T.isClosed(x)) ?? js.sort((a, b) => b.ts - a.ts)[0]
     if (!j) return
     this.busy.add(j.id)

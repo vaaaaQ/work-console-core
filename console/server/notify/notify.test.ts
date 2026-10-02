@@ -36,7 +36,7 @@ test('runs: draft ready, failed and interrupted each push with the step name', a
   assert.deepEqual(sent.map((s) => s.title), [
     'J-0419 · Understand the request: draft ready', 'J-0419 · Understand the request: run failed', 'J-0419 · Understand the request: run interrupted'])
   assert.equal(sent[1].body, 'signin_required')
-  assert.equal(sent[0].url, '/?job=J-0419&step=tr')
+  assert.equal(sent[0].url, '/?job=J-0419&step=tr&ws=acme', "the url opens the job's workspace")
 })
 
 test('a job that starts needing you pushes', async () => {
@@ -45,6 +45,7 @@ test('a job that starts needing you pushes', async () => {
   await flush()
   assert.equal(sent.length, 1)
   assert.match(sent[0].title, /^J-0419: /)
+  assert.equal(sent[0].url, '/?job=J-0419&ws=acme')
 })
 
 test('chat: more unread pushes sender and first line; reading it does not', async () => {
@@ -75,6 +76,19 @@ test('mail: a new reply-category mail pushes once; others do not', async () => {
   assert.deepEqual(sent.map((s) => s.title), ['Mail: Priya'])
 })
 
+test("a workspace's source event links to that workspace, and what it pushed is remembered per workspace", async () => {
+  const { sent, bus } = setup()
+  const c = { id: 'c1', name: 'Team Dev', unread: 1, lastFrom: 'Priya', lastPreview: 'hi' }
+  const m = { id: 'm9', category: 'reply', from: 'Priya', subject: 'Q3 export', myReply: false, unread: true }
+  for (const ws of ['acme', 'beta2', 'acme']) {
+    bus.emit({ kind: 'source', concept: 'chat', upserts: [c], removes: [], ws })
+    bus.emit({ kind: 'source', concept: 'mail', upserts: [m], removes: [], ws })
+  }
+  await flush()
+  assert.deepEqual(sent.map((s) => s.url), [
+    '/?view=chats&chat=c1&ws=acme', '/?view=mail&mail=m9&ws=acme', '/?view=chats&chat=c1&ws=beta2', '/?view=mail&mail=m9&ws=beta2'])
+})
+
 test('review and ci changes on a job key push; unrelated ones do not', async () => {
   const { sent, bus } = setup()
   const pr = { id: '482', title: 'feature/ACME-512-rate-limit', votes: [{ reviewer: 'Priya', vote: 1 }], activeThreads: 1 }
@@ -83,6 +97,7 @@ test('review and ci changes on a job key push; unrelated ones do not', async () 
   bus.emit({ kind: 'source', concept: 'ci', upserts: [{ id: 'b1', pipeline: 'main', branch: 'feature/ACME-512-rate-limit', status: 'completed', result: 'failed' }], removes: [] })
   await flush()
   assert.deepEqual(sent.map((s) => s.title), ['J-0412: review #482: Priya +1', 'J-0412: build main failed'])
+  assert.equal(sent[0].url, '/?job=J-0412&ws=acme', "no ws on the event: the job's own")
 })
 
 test('410 and 404 drop the subscription; a subscription seen twice is kept once', async () => {

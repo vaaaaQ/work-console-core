@@ -8,37 +8,13 @@ import { Bus, HttpError } from '../events.ts'
 import type { Ev } from '../events.ts'
 import { Jobs } from '../jobs/jobs.ts'
 import { fileStore } from '../store/file.ts'
-import { demoCtx, demoSeed } from '../testkit.ts'
+import { demoCtx, demoSeed, fakeSdk } from '../testkit.ts'
 import { GatewayError } from '../bridge/wire.ts'
 import type { ConceptReply } from '../bridge/wire.ts'
 import { resolveContext } from './context.ts'
 import { buildPrompt } from './prompt.ts'
 import { Runner, safeName } from './runner.ts'
-import type { RunTools, Sdk, SdkEvent } from './sdk.ts'
 
-/* A scripted SDK: each start() is a session the test drives by hand. */
-class Session {
-  prompt: string; resume?: string; tools: RunTools; abort: AbortController
-  private q: (SdkEvent | null)[] = []; private wake: (() => void) | null = null
-  constructor(o: { prompt: string; resume?: string; tools: RunTools; abort: AbortController }) { this.prompt = o.prompt; this.resume = o.resume; this.tools = o.tools; this.abort = o.abort }
-  push(e: SdkEvent | null) { this.q.push(e); this.wake?.() }
-  end(ok = true, error?: string) { this.push({ k: 'result', ok, error }); this.push(null) }
-  async *events(): AsyncIterable<SdkEvent> {
-    for (;;) {
-      if (this.abort.signal.aborted) throw new Error('aborted')
-      if (!this.q.length) await new Promise<void>((r) => { this.wake = r; this.abort.signal.addEventListener('abort', () => r(), { once: true }) })
-      if (this.abort.signal.aborted) throw new Error('aborted')
-      const e = this.q.shift()
-      if (e === null) return
-      if (e) yield e
-    }
-  }
-}
-const fakeSdkOf = (sessions: Session[]): Sdk => ({ start: (o) => { const s = new Session(o); sessions.push(s); return s.events() } })
-function fakeSdk() {
-  const sessions: Session[] = []
-  return { sdk: fakeSdkOf(sessions), sessions }
-}
 const tick = () => new Promise((r) => setTimeout(r, 20))
 async function until(f: () => boolean) { const t0 = Date.now(); while (!f()) { if (Date.now() - t0 > 2000) throw new Error('timed out'); await tick() } }
 
@@ -278,7 +254,7 @@ test("a new run's prompt carries the job's context; an unreadable item is a line
       return { status: 'ok', rev: 1, items: { title: 'Limiter ignores the token header', comments: [{ author: 'Ann', at: '2026-09-30T09:00:00Z', text: 'still there' }] } }
     },
   }
-  const runner = new Runner({ store, jobs, bus, sdk: fakeSdkOf(sessions), cwd: dir, gate: () => true, artifactsDir: join(dir, 'arts'), ctx: demoCtx, context: (j) => resolveContext(b, j) })
+  const runner = new Runner({ store, jobs, bus, sdk: fakeSdk(sessions).sdk, cwd: dir, gate: () => true, artifactsDir: join(dir, 'arts'), ctx: demoCtx, context: (j) => resolveContext(b, j) })
   const r = await runner.ask(t.job, t.step, 'q')
   await until(() => sessions.length === 1)
   const p = sessions[0].prompt
@@ -342,7 +318,7 @@ test('a prompt names the user it was given; without one it is the text it always
 
 test("a runner told who the user is puts the name in a new run's prompt", async () => {
   const named = setup(), [t] = await targets(named.jobs, 1)
-  const runner = new Runner({ store: named.store, jobs: named.jobs, bus: named.bus, sdk: fakeSdkOf(named.sessions), cwd: named.dir, gate: () => true, artifactsDir: join(named.dir, 'arts'), ctx: demoCtx, me: 'Alex' })
+  const runner = new Runner({ store: named.store, jobs: named.jobs, bus: named.bus, sdk: fakeSdk(named.sessions).sdk, cwd: named.dir, gate: () => true, artifactsDir: join(named.dir, 'arts'), ctx: demoCtx, me: 'Alex' })
   await runner.ask(t.job, t.step, 'q')
   await until(() => named.sessions.length === 1)
   assert.match(named.sessions[0].prompt, /in Alex's Work Console/)
@@ -352,7 +328,7 @@ test("a runner told who the user is puts the name in a new run's prompt", async 
   await until(() => plain.sessions.length === 1)
   assert.match(plain.sessions[0].prompt, /in the user's Work Console/)
   const blank = setup(), [v] = await targets(blank.jobs, 1)
-  await new Runner({ store: blank.store, jobs: blank.jobs, bus: blank.bus, sdk: fakeSdkOf(blank.sessions), cwd: blank.dir, gate: () => true, artifactsDir: join(blank.dir, 'arts'), ctx: demoCtx, me: '' }).ask(v.job, v.step, 'q')
+  await new Runner({ store: blank.store, jobs: blank.jobs, bus: blank.bus, sdk: fakeSdk(blank.sessions).sdk, cwd: blank.dir, gate: () => true, artifactsDir: join(blank.dir, 'arts'), ctx: demoCtx, me: '' }).ask(v.job, v.step, 'q')
   await until(() => blank.sessions.length === 1)
   assert.match(blank.sessions[0].prompt, /in the user's Work Console/)
 })

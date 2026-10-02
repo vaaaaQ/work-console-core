@@ -11,6 +11,7 @@ import type { Sdk } from './llm/sdk.ts'
 import { main } from './main.ts'
 import { ensureCerts } from './tls/mkcert.ts'
 import * as T from '../src/model/transitions.ts'
+import acmeServer from '../workspaces/acme/server.ts'
 
 /* A running backend end to end, with the fake gateway and a scripted SDK on free ports:
    loopback serves the page, a phone pairs over TLS, SSE delivers a job event, and an ask goes
@@ -33,7 +34,7 @@ async function run() {
   ensureCerts(join(home, 'tls'), { host: 'localhost', ips: [] })
   const ca = readFileSync(join(home, 'tls', 'ca.crt'))
   const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0, lanPort: 0, pcName: 'localhost' }
-  const m = await main({ cfg, sdk })
+  const m = await main({ cfg, sdk, workspaces: [acmeServer] })
   const loop = (method: string, path: string, body?: unknown) => new Promise<Res>((ok, no) => {
     const q = httpRequest({ host: '127.0.0.1', port: m.loopbackPort, method, path, headers: body === undefined ? {} : { 'content-type': 'application/json' } }, (r) => { void read(r).then(ok) })
     q.on('error', no); q.end(body === undefined ? undefined : JSON.stringify(body))
@@ -78,6 +79,7 @@ async function run() {
     const until = async (f: () => boolean, what: string) => { const t0 = Date.now(); while (!f()) { if (Date.now() - t0 > 5000) throw new Error(`timed out: ${what}`); await new Promise((r) => setTimeout(r, 20)) } }
 
     const { job } = await json('POST', '/api/jobs', { t: 'Smoke', key: 'ACME-9001', pb: 'action', prj: 'platform', ws: 'acme' })
+    assert.match(job.id, /^A-\d{4}$/, "Acme's fake gateway mints Acme's prefix")
     await until(() => events.some((e) => e.kind === 'job' && (e.job as { id: string }).id === job.id), 'a job event')
     step('SSE delivers a job event')
 

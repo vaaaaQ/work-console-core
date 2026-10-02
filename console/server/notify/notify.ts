@@ -6,7 +6,8 @@ import type { Job, RunRec } from '../../src/model/types.ts'
 import type { Bus } from '../events.ts'
 
 /* Web Push for every event worth a look, no batching, no quiet hours. The push service's 404/410
-   means the subscription is dead and it is dropped. */
+   means the subscription is dead and it is dropped. One Notify serves every workspace: a url names the
+   workspace it opens (ws=), and what a source has already pushed is remembered per workspace. */
 
 export type Sub = { endpoint: string; keys?: { p256dh: string; auth: string }; expirationTime?: number | null }
 export interface Sender { send(sub: Sub, payload: string): Promise<{ status: number }> }
@@ -14,6 +15,8 @@ type Item = Record<string, unknown> & { id: string }
 
 const first = (t: unknown) => String(t ?? '').split('\n').map((l) => l.trim()).find(Boolean) || ''
 const cut = (t: string, n = 140) => (t.length > n ? t.slice(0, n - 1) + '…' : t)
+/** the page url with the workspace it belongs to; none given, the url as it is */
+export const withWs = (url: string, ws?: string) => (ws ? `${url}${url.includes('?') ? '&' : '?'}ws=${encodeURIComponent(ws)}` : url)
 
 function webPushSender(keys: { publicKey: string; privateKey: string; subject: string }): Sender {
   return {
@@ -31,7 +34,7 @@ function webPushSender(keys: { publicKey: string; privateKey: string; subject: s
 }
 
 export class Notify {
-  private dir: string; private sender: Sender; private ctx: () => T.Ctx; private jobFor: (text: string) => Job | undefined
+  private dir: string; private sender: Sender; private ctx: () => T.Ctx; private jobFor: (text: string, ws?: string) => Job | undefined
   private keys: { publicKey: string; privateKey: string; subject: string }
   private subs: Sub[]
   private unread = new Map<string, number>(); private mails = new Set<string>(); private proposals = new Set<string>(); private marks = new Map<string, string>()
@@ -39,7 +42,8 @@ export class Notify {
   constructor(o: {
     dir: string; bus: Bus; ctx: () => T.Ctx; sender?: Sender; subject?: string
     jobs?: { onNeedsYou(f: (j: Job) => void): void }; runs?: { onSettled(f: (r: RunRec) => void): void }
-    jobFor: (text: string) => Job | undefined; job?: (id: string) => Job | undefined
+    /** the open job a review or build names, among the jobs of the workspace it came from when one is given */
+    jobFor: (text: string, ws?: string) => Job | undefined; job?: (id: string) => Job | undefined
   }) {
     this.dir = o.dir; this.ctx = o.ctx; this.jobFor = o.jobFor
     mkdirSync(o.dir, { recursive: true })
@@ -55,7 +59,7 @@ export class Notify {
     this.sender = o.sender ?? webPushSender(this.keys)
     o.jobs?.onNeedsYou((j) => void this.needsYou(j))
     o.runs?.onSettled((r) => void this.run(r, o.job?.(r.job)))
-    o.bus.on((e) => { if (e.kind === 'source' && !e.reset) void this.source(e.concept, e.upserts as Item[], e.removes) })
+    o.bus.on((e) => { if (e.kind === 'source' && !e.reset) void this.source(e.concept, e.upserts as Item[], e.removes, e.ws) })
   }
 
   publicKey() { return this.keys.publicKey }
@@ -88,44 +92,46 @@ export class Notify {
 
   async run(r: RunRec, j?: Job) {
     const what = r.state === 'draft' ? 'draft ready' : r.state === 'failed' ? 'run failed' : 'run interrupted'
-    await this.push(`${r.job} · ${this.stepName(j, r.step)}: ${what}`, r.reason || j?.t || '', `/?job=${encodeURIComponent(r.job)}&step=${encodeURIComponent(r.step)}`)
+    await this.push(`${r.job} · ${this.stepName(j, r.step)}: ${what}`, r.reason || j?.t || '', withWs(`/?job=${encodeURIComponent(r.job)}&step=${encodeURIComponent(r.step)}`, j?.ws))
   }
 
   async needsYou(j: Job) {
     const x = this.ctx()
     const what = T.hasDraft(j) ? 'a draft to review' : T.unsentAt(x, j) ? 'a message to send' : j.st === 'ready' ? 'ready to start' : 'waiting for you'
-    await this.push(`${j.id}: ${what}`, j.t, `/?job=${encodeURIComponent(j.id)}`)
+    await this.push(`${j.id}: ${what}`, j.t, withWs(`/?job=${encodeURIComponent(j.id)}`, j.ws))
   }
 
-  async source(concept: string, ups: Item[], removes: string[] = []) {
+  /** ws = the workspace whose source this is; two workspaces may both have a c1 */
+  async source(concept: string, ups: Item[], removes: string[] = [], ws?: string) {
+    const k = (id: string) => (ws ? `${ws}/${id}` : id)
     // a thread that left the list (hidden) and comes back unread (mentioned) is new unread again
-    if (concept === 'chat') for (const id of removes) this.unread.delete(id)
+    if (concept === 'chat') for (const id of removes) this.unread.delete(k(id))
     for (const i of ups || []) {
       if (concept === 'chat') {
-        const n = Number(i.unread) || 0, prev = this.unread.get(i.id) ?? 0
-        this.unread.set(i.id, n)
-        if (n > prev) await this.push(String(i.name ?? 'Chat'), cut(`${i.lastFrom ? `${i.lastFrom}: ` : ''}${first(i.lastPreview)}`), `/?view=chats&chat=${encodeURIComponent(i.id)}`)
+        const n = Number(i.unread) || 0, prev = this.unread.get(k(i.id)) ?? 0
+        this.unread.set(k(i.id), n)
+        if (n > prev) await this.push(String(i.name ?? 'Chat'), cut(`${i.lastFrom ? `${i.lastFrom}: ` : ''}${first(i.lastPreview)}`), withWs(`/?view=chats&chat=${encodeURIComponent(i.id)}`, ws))
       } else if (concept === 'mail') {
-        if (i.category !== 'reply' || i.myReply === true || i.unread === false || this.mails.has(i.id)) continue
-        this.mails.add(i.id)
-        await this.push(`Mail: ${i.from ?? ''}`, cut(String(i.subject ?? '')), `/?view=mail&mail=${encodeURIComponent(i.id)}`)
+        if (i.category !== 'reply' || i.myReply === true || i.unread === false || this.mails.has(k(i.id))) continue
+        this.mails.add(k(i.id))
+        await this.push(`Mail: ${i.from ?? ''}`, cut(String(i.subject ?? '')), withWs(`/?view=mail&mail=${encodeURIComponent(i.id)}`, ws))
       } else if (concept === 'proposals') {
-        if (this.proposals.has(i.id)) continue
-        this.proposals.add(i.id)
-        await this.push(`Knowledge: ${String(i.title ?? i.id)}`, cut(`${i.by ? `${i.by}: ` : ''}${first(i.reason)}`), '/?view=approvals')
+        if (this.proposals.has(k(i.id))) continue
+        this.proposals.add(k(i.id))
+        await this.push(`Knowledge: ${String(i.title ?? i.id)}`, cut(`${i.by ? `${i.by}: ` : ''}${first(i.reason)}`), withWs('/?view=approvals', ws))
       } else if (concept === 'review' || concept === 'ci') {
-        const j = this.jobFor([i.title, i.branch, i.pipeline, i.id].map((v) => String(v ?? '')).join(' '))
+        const j = this.jobFor([i.title, i.branch, i.pipeline, i.id].map((v) => String(v ?? '')).join(' '), ws)
         if (!j) continue
         const mark = concept === 'review'
           ? JSON.stringify(i.votes ?? []) + String(i.activeThreads ?? '')
           : `${i.status ?? ''}/${i.result ?? ''}`
-        const key = `${concept}:${i.id}`
+        const key = `${concept}:${k(i.id)}`
         if (this.marks.get(key) === mark) continue
         this.marks.set(key, mark)
         const change = concept === 'review'
           ? `review #${i.id}: ${(i.votes as { reviewer: string; vote: number }[] | undefined)?.map((v) => `${v.reviewer} ${v.vote > 0 ? '+' : ''}${v.vote}`).join(', ') || 'updated'}`
           : `build ${i.pipeline ?? ''} ${i.result || i.status || ''}`.replace(/\s+/g, ' ').trim()
-        await this.push(`${j.id}: ${change}`, j.t, `/?job=${encodeURIComponent(j.id)}`)
+        await this.push(`${j.id}: ${change}`, j.t, withWs(`/?job=${encodeURIComponent(j.id)}`, ws ?? j.ws))
       }
     }
   }

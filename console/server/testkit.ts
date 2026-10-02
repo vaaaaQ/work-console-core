@@ -3,6 +3,7 @@ import { CORE_PB, CORE_TPL } from '../src/data/playbooks.ts'
 import * as T from '../src/model/transitions.ts'
 import type { Job } from '../src/model/types.ts'
 import acmeServer from '../workspaces/acme/server.ts'
+import type { RunTools, Sdk, SdkEvent } from './llm/sdk.ts'
 import type { Seed } from './store/file.ts'
 import { fakeSeed } from './workspace.ts'
 
@@ -18,3 +19,26 @@ export function demoSeed(): Seed {
 }
 /** what a fake gateway starts with to serve Acme's demo */
 export const demoFake = () => fakeSeed(acmeServer)
+
+/** one scripted LLM session: it runs until the test pushes its events and ends it */
+export class FakeSession {
+  prompt: string; resume?: string; tools: RunTools; abort: AbortController
+  private q: (SdkEvent | null)[] = []; private wake: (() => void) | null = null
+  constructor(o: { prompt: string; resume?: string; tools: RunTools; abort: AbortController }) { this.prompt = o.prompt; this.resume = o.resume; this.tools = o.tools; this.abort = o.abort }
+  push(e: SdkEvent | null) { this.q.push(e); this.wake?.() }
+  end(ok = true, error?: string) { this.push({ k: 'result', ok, error }); this.push(null) }
+  async *events(): AsyncIterable<SdkEvent> {
+    for (;;) {
+      if (this.abort.signal.aborted) throw new Error('aborted')
+      if (!this.q.length) await new Promise<void>((r) => { this.wake = r; this.abort.signal.addEventListener('abort', () => r(), { once: true }) })
+      if (this.abort.signal.aborted) throw new Error('aborted')
+      const e = this.q.shift()
+      if (e === null) return
+      if (e) yield e
+    }
+  }
+}
+/** an SDK whose every start() is a FakeSession, appended to sessions */
+export function fakeSdk(sessions: FakeSession[] = []): { sdk: Sdk; sessions: FakeSession[] } {
+  return { sdk: { start: (o) => { const s = new FakeSession(o); sessions.push(s); return s.events() } }, sessions }
+}

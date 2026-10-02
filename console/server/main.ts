@@ -5,37 +5,31 @@ import { createServer as createTls } from 'node:https'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { TPL0 } from '../src/data/demo.ts'
-import { PB0 } from '../src/data/playbooks.ts'
 import * as T from '../src/model/transitions.ts'
-import type { Job, Playbook } from '../src/model/types.ts'
+import type { Job } from '../src/model/types.ts'
 import { install } from '../src/workspace.ts'
 import { SERVERS } from '../workspaces/server.ts'
-import { BoardReturns } from './board/returns.ts'
-import { startItem } from './board/start.ts'
-import { BridgeClient } from './bridge/client.ts'
-import { startFakeGateway } from './bridge/fake.ts'
-import { READY } from './bridge/wire.ts'
-import { loadConfig, readToken } from './config.ts'
+import type { FakeGateway } from './bridge/fake.ts'
+import { loadConfig, readRaw, readToken, wsConfigs } from './config.ts'
 import type { Config } from './config.ts'
 import { Bus } from './events.ts'
 import { createApp } from './http/app.ts'
-import { Jobs } from './jobs/jobs.ts'
-import { resolveContext } from './llm/context.ts'
-import { Runner } from './llm/runner.ts'
-import { agentSdk } from './llm/sdk.ts'
 import type { Sdk } from './llm/sdk.ts'
 import { ensureToken, jobTools, mcpHandler } from './mcp/mcp.ts'
 import { Notify } from './notify/notify.ts'
 import { Reminders } from './notify/reminders.ts'
 import { Pairing } from './pairing/pairing.ts'
-import { bridgeStore } from './store/bridge.ts'
-import { fakeSeed } from './workspace.ts'
+import { hub, makeSpace, Spaces } from './spaces.ts'
+import type { Space } from './spaces.ts'
+import { checkWorkspaces } from './workspace.ts'
+import type { WorkspaceServer } from './workspace.ts'
 
 /* Wiring. Loopback always; LAN only once install.ps1 has made tls/server.key and tls/server.crt.
-   The console's state lives in B on the workplace. While it is away the console still starts and
-   answers: no jobs, built-in playbooks, every write 503; runs in flight are interrupted, never queued
-   for later. When the bridge comes back the state is loaded and stray runs are swept. */
+   One space per registered workspace (spaces.ts), each with its own gateway, store, jobs and runner;
+   push, reminders, pairing and the MCP token are shared. A workspace's state lives in B on its workplace.
+   While it is away the console still starts and answers: no jobs, built-in playbooks, every write 503;
+   its runs in flight are interrupted, never queued for later. When the bridge comes back the state is
+   loaded and stray runs are swept. */
 
 const PKG = fileURLToPath(new URL('../', import.meta.url))
 
@@ -49,74 +43,38 @@ export function jobByText(jobs: Iterable<Job>, text: string): Job | undefined {
   return undefined
 }
 
-/** load runs on the first ok and on each unavailable → ok, retried with backoff until it succeeds
-    or the bridge goes away; a concept flip while up is not a comeback */
-export function onBridgeBack(bus: Bus, load: () => Promise<void>, backoff = [2000, 5000, 10000, 30000]) {
-  let up = false, gen = 0, timer: ReturnType<typeof setTimeout> | undefined
-  const attempt = async (g: number, n: number) => {
-    try { await load() } catch (e) {
-      if (g !== gen) return
-      console.error('loading the state from the bridge failed:', (e as Error).message)
-      timer = setTimeout(() => void attempt(g, n + 1), backoff[Math.min(n, backoff.length - 1)])
-    }
-  }
-  const off = bus.on((e) => {
-    if (e.kind !== 'bridge') return
-    const was = up; up = e.state === 'ok'
-    if (up === was) return
-    gen++; clearTimeout(timer)
-    if (up) void attempt(gen, 0)
-  })
-  return () => { off(); gen++; clearTimeout(timer) }
-}
-
 async function listen(s: Server, port: number, host: string) {
   await new Promise<void>((ok, no) => { s.once('error', no); s.listen(port, host, () => { s.off('error', no); ok() }) })
   return (s.address() as AddressInfo).port
 }
 
-export async function main(o: { cfg?: Config; sdk?: Sdk } = {}) {
+export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceServer[] } = {}) {
+  const workspaces = o.workspaces ?? SERVERS
+  checkWorkspaces(workspaces)
   // the packs, playbooks and demo data come from the registered workspaces
-  install(SERVERS.map((w) => ({ page: w.page })))
+  install(workspaces.map((w) => ({ page: w.page })))
   const cfg = o.cfg ?? loadConfig()
-  const bus = new Bus()
-  const fake = cfg.fakeGateway ? await startFakeGateway({ seed: fakeSeed(SERVERS[0]), me: SERVERS[0].page.me }) : null
-  const gatewayUrl = fake?.url ?? cfg.gatewayUrl
-  const bridge = new BridgeClient({ url: gatewayUrl, token: () => (fake ? fake.token : readToken(cfg.consoleTokenPath)), bus })
-  const gate = () => bridge.available()
-  const store = bridgeStore({ bridge, bus, playbooks: PB0 })
-  // until B answers, the built-in playbooks stand in
-  let PB: Record<string, Playbook> = structuredClone(PB0)
-  const ctx = (): T.Ctx => ({ PB, TPL: TPL0 })
-
-  const jobs = new Jobs({ store, bus, ctx, gate })
-  const sdk = o.sdk ?? agentSdk({ gatewayUrl, llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools })
+  const cfgs = wsConfigs(cfg, workspaces, readRaw(cfg.home), (l) => console.log(l))
   const artifactsDir = join(cfg.home, 'artifacts')
-  const runner = new Runner({ store, jobs, bus, sdk, cwd: cfg.workDir, max: cfg.maxSessions, gate, artifactsDir, ctx, context: (j) => resolveContext(bridge, j) })
-  bus.on((e) => {
-    if (e.kind === 'bridge' && e.state === 'unavailable')
-      void runner.interruptAll('the bridge went away').catch((err) => console.error('interrupting runs:', (err as Error).message))
-  })
 
-  const known = new Map<string, Job>()
-  bus.on((e) => { if (e.kind === 'job') known.set(e.job.id, e.job) })
-  const returns = new BoardReturns({
-    bus, jobs, ctx, push: (t, b, u) => notify.push(t, b, u),
-    read: async () => { const r = (await bridge.read(['board'])).board; return r && READY.has(r.status) && Array.isArray(r.items) ? (r.items as { id: string }[]) : null },
+  let notify: Notify | null = null
+  const push = (t: string, b: string, u: string) => notify!.push(t, b, u)
+  const list: Space[] = []
+  try {
+    for (const w of workspaces) list.push(await makeSpace(w, { cfg: cfgs[w.page.id], home: cfg.home, artifactsDir, sdk: o.sdk, fake: cfg.fakeGateway, push }))
+  } catch (e) { for (const s of list) await s.close(); throw e }
+  const spaces = new Spaces(list), bus = new Bus(), unhub = hub(list, bus)
+  const allKnown = function* () { for (const s of list) yield* s.known.values() }
+
+  // before any source starts, so the runs a restart interrupted are pushed too
+  notify = new Notify({
+    dir: cfg.home, bus, ctx: () => spaces.ctx(),
+    jobs: { onNeedsYou: (f) => { for (const s of list) s.onNeedsYou(f) } },
+    runs: { onSettled: (f) => { for (const s of list) s.runner.onSettled(f) } },
+    jobFor: (t, ws) => jobByText(ws ? list.find((s) => s.id === ws)?.known.values() ?? [] : allKnown(), t),
+    job: (id) => { for (const s of list) { const j = s.known.get(id); if (j) return j } return undefined },
   })
-  // a QA return pushes its own message; the reopen and note it makes would push a second one
-  const quiet = { onNeedsYou: (f: (j: Job) => void) => jobs.onNeedsYou((j) => { if (!returns.handling(j.id)) f(j) }) }
-  const notify = new Notify({ dir: cfg.home, bus, ctx, jobs: quiet, runs: runner, jobFor: (t) => jobByText(known.values(), t), job: (id) => known.get(id) })
-  const reminders = new Reminders({ dir: cfg.home, jobs: () => known.values(), push: (t, b, u) => notify.push(t, b, u) }).start()
-  // after the notifier, so the runs a restart interrupted are pushed too
-  let recovered = false
-  const onBridgeUp = async () => {
-    PB = await store.playbooks()
-    for (const j of await store.jobs()) known.set(j.id, j)
-    await runner.recover(recovered ? 'the bridge went away' : 'the console restarted')
-    recovered = true
-  }
-  const stopLoading = onBridgeBack(bus, onBridgeUp)
+  const reminders = new Reminders({ dir: cfg.home, jobs: allKnown, push }).start()
   const pairing = new Pairing(cfg.home)
   const mcpToken = ensureToken(join(cfg.home, 'mcp.token'))
 
@@ -128,21 +86,26 @@ export async function main(o: { cfg?: Config; sdk?: Sdk } = {}) {
   const lan = existsSync(key) && existsSync(crt) ? createTls({ key: readFileSync(key), cert: readFileSync(crt) }, late('lan')) : null
   const lanPort = lan ? await listen(lan, cfg.lanPort, '0.0.0.0') : null
 
+  // first space until Task 8: the routes still serve one workspace
+  const first = list[0]
   app = createApp({
-    loopbackPort, lanPort: lanPort ?? cfg.lanPort, pcName: cfg.pcName, bus, store, jobs, runner, bridge, pairing, notify, ctx,
-    putPlaybook: async (id, pb) => { await store.putPlaybook(id, pb); PB = await store.playbooks() },
-    staticDirs: [join(PKG, 'dist'), join(PKG, 'public')], artifactsDir, tz: cfg.teamTz,
-    mcp: mcpHandler({ tools: jobTools({ jobs, ctx, start: startItem({ jobs, ctx, bridge }) }), token: () => readToken(mcpToken) }),
+    loopbackPort, lanPort: lanPort ?? cfg.lanPort, pcName: cfg.pcName, bus: first.bus, store: first.store, jobs: first.jobs, runner: first.runner,
+    bridge: first.source, pairing, notify, ctx: first.ctx, putPlaybook: first.putPlaybook,
+    staticDirs: [join(PKG, 'dist'), join(PKG, 'public')], artifactsDir, tz: first.cfg.teamTz,
+    // first space until Task 9: the job tools still serve one workspace
+    mcp: mcpHandler({ tools: jobTools({ jobs: first.jobs, ctx: first.ctx, start: first.start }), token: () => readToken(mcpToken) }),
   })
-  bridge.start()
-  console.log(`work console on http://127.0.0.1:${loopbackPort}${lanPort ? ` and https://${cfg.pcName}:${lanPort}` : ' (no LAN: run scripts/install.ps1 for a certificate)'}${fake ? ', fake gateway' : ''}`)
+  for (const s of list) s.source.start()
+  const fakes: Record<string, FakeGateway> = Object.fromEntries(list.flatMap((s) => (s.fake ? [[s.id, s.fake]] : [])))
+  console.log(`work console on http://127.0.0.1:${loopbackPort}${lanPort ? ` and https://${cfg.pcName}:${lanPort}` : ' (no LAN: run scripts/install.ps1 for a certificate)'}, workspaces ${list.map((s) => s.id).join(', ')}${cfg.fakeGateway ? ', fake gateways' : ''}`)
 
   return {
-    loopbackPort, lanPort, bus, jobs, runner, fake, mcpToken,
+    loopbackPort, lanPort, hub: bus, spaces, fakes, mcpToken,
     async close() {
-      stopLoading(); reminders.stop(); app!.close(); bridge.stop()
+      reminders.stop(); app!.close()
+      for (const s of list) await s.close()
+      unhub()
       for (const s of [loop, lan]) if (s) { s.closeAllConnections(); await new Promise((r) => s.close(r)) }
-      await fake?.close()
     },
   }
 }
