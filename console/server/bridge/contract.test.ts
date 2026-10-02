@@ -1,4 +1,4 @@
-import '../testkit.ts'
+import { demoFake } from '../testkit.ts'
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { startFakeGateway } from './fake.ts'
@@ -19,7 +19,7 @@ const FIELDS: Record<string, string[]> = {
 let fake: FakeGateway | null = null, url = '', token = ''
 before(async () => {
   if (process.env.GATEWAY_URL && process.env.GATEWAY_TOKEN) { url = process.env.GATEWAY_URL; token = process.env.GATEWAY_TOKEN; return }
-  fake = await startFakeGateway(); url = fake.url; token = fake.token
+  fake = await startFakeGateway({ seed: demoFake() }); url = fake.url; token = fake.token
 })
 after(async () => { await fake?.close() })
 
@@ -87,4 +87,15 @@ test('the event stream sends status within 11 s', { timeout: 15000 }, async () =
   }
   ac.abort()
   assert.match(buf, /event: status\ndata: \{/)
+})
+
+test('the fake mints job ids with the prefix it was started with, J by default', async () => {
+  const mint = async (f: FakeGateway) => {
+    const r = await fetch(f.url + '/api/state/new-job-id', { method: 'POST', headers: { authorization: `Bearer ${f.token}`, 'content-type': 'application/json' }, body: '{}' })
+    return ((await r.json()) as { items: { id: string } }).items.id
+  }
+  const q = await startFakeGateway({ prefix: 'Q' }), d = await startFakeGateway()
+  try {
+    assert.deepEqual([await mint(q), await mint(q), await mint(d)], ['Q-0001', 'Q-0002', 'J-0001'])
+  } finally { await q.close(); await d.close() }
 })

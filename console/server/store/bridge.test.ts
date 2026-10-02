@@ -8,12 +8,12 @@ import { BridgeClient } from '../bridge/client.ts'
 import { startFakeGateway } from '../bridge/fake.ts'
 import { GatewayError } from '../bridge/wire.ts'
 import { Bus } from '../events.ts'
-import { demoSeed } from '../testkit.ts'
+import { demoFake, demoSeed } from '../testkit.ts'
 import { bridgeStore } from './bridge.ts'
 import { Conflict } from './port.ts'
 
 async function setup() {
-  const fake = await startFakeGateway({ statusMs: 50 })
+  const fake = await startFakeGateway({ statusMs: 50, seed: demoFake() })
   const bus = new Bus()
   const client = new BridgeClient({ url: fake.url, token: () => fake.token, bus, backoff: [30, 60] })
   const store = bridgeStore({ bridge: client, bus, playbooks: PB0 })

@@ -63,3 +63,10 @@ test('runs and marks round-trip', async () => {
   await s.putMark('m1', null)
   assert.equal((await s.marks()).m1, undefined)
 })
+
+test('job ids carry the prefix the store was opened with, and count within it', async () => {
+  const p = join(dir(), 's.json')
+  assert.equal(await fileStore(p, () => ({}), 'T').nextJobId(), 'T-0001')
+  assert.equal(await fileStore(join(dir(), 'j.json'), () => ({ jobs: [job('J-0007')] }), 'T').nextJobId(), 'T-0001', 'another prefix does not move the count')
+  assert.equal(await fileStore(join(dir(), 'd.json'), () => ({ jobs: [job('A1-0003')] }), 'A1').nextJobId(), 'A1-0004', 'digits in a prefix are not part of the number')
+})

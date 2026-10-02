@@ -25,3 +25,9 @@ export const fromWall = (wall: number, z = tz) => wall - offsetAt(wall - offsetA
 export const midnight = (ms: number, back = 0, z = tz) => fromWall((Math.floor((ms + offsetAt(ms, z)) / DAY) - back) * DAY, z)
 /** the date (YYYY-MM-DD) of an instant */
 export const dayOf = (t: number | Date = Date.now(), z = tz) => new Date(t).toLocaleDateString('en-CA', { timeZone: z })
+/** a wall time (HH:MM) of the home zone, today or `day` days on, as an ISO UTC string; anything but HH:MM is yesterday noon */
+export function wallIso(hm: string, day = 0) {
+  if (!/^\d\d:\d\d$/.test(hm)) { day = -1; hm = '12:00' }
+  const ymd = dayOf(Date.now() + day * 86400e3)
+  return new Date(fromWall(Date.parse(`${ymd}T${hm}:00Z`))).toISOString()
+}

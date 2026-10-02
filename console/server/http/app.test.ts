@@ -19,7 +19,7 @@ import { Notify } from '../notify/notify.ts'
 import { Pairing } from '../pairing/pairing.ts'
 import { bridgeStore } from '../store/bridge.ts'
 import { fileStore } from '../store/file.ts'
-import { demoCtx, demoSeed } from '../testkit.ts'
+import { demoCtx, demoFake, demoSeed } from '../testkit.ts'
 import { createApp } from './app.ts'
 
 /* The whole backend over real sockets: fake gateway, file store, a scripted SDK that drafts at once. */
@@ -32,7 +32,7 @@ async function setup(o: { page?: boolean; store?: 'file' | 'bridge' } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'wc-http-')), web = join(dir, 'web')
   mkdirSync(web)
   if (o.page !== false) { writeFileSync(join(web, 'index.html'), '<!doctype html><title>Work Console</title>'); writeFileSync(join(web, 'sw.js'), '// sw') }
-  const fake = await startFakeGateway({ statusMs: 50 })
+  const fake = await startFakeGateway({ statusMs: 50, seed: demoFake() })
   const bus = new Bus()
   const bridge = new BridgeClient({ url: fake.url, token: () => fake.token, bus, backoff: [30, 60] })
   // marks join into mail on the bridge side, so a test of them needs the store that lives there

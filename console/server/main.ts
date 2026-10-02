@@ -10,7 +10,7 @@ import { PB0 } from '../src/data/playbooks.ts'
 import * as T from '../src/model/transitions.ts'
 import type { Job, Playbook } from '../src/model/types.ts'
 import { install } from '../src/workspace.ts'
-import acme from '../workspaces/acme/page.ts'
+import { SERVERS } from '../workspaces/server.ts'
 import { BoardReturns } from './board/returns.ts'
 import { startItem } from './board/start.ts'
 import { BridgeClient } from './bridge/client.ts'
@@ -30,6 +30,7 @@ import { Notify } from './notify/notify.ts'
 import { Reminders } from './notify/reminders.ts'
 import { Pairing } from './pairing/pairing.ts'
 import { bridgeStore } from './store/bridge.ts'
+import { fakeSeed } from './workspace.ts'
 
 /* Wiring. Loopback always; LAN only once install.ps1 has made tls/server.key and tls/server.crt.
    The console's state lives in B on the workplace. While it is away the console still starts and
@@ -76,10 +77,10 @@ async function listen(s: Server, port: number, host: string) {
 
 export async function main(o: { cfg?: Config; sdk?: Sdk } = {}) {
   // the packs, playbooks and demo data come from the registered workspaces
-  install([{ page: acme }])
+  install(SERVERS.map((w) => ({ page: w.page })))
   const cfg = o.cfg ?? loadConfig()
   const bus = new Bus()
-  const fake = cfg.fakeGateway ? await startFakeGateway() : null
+  const fake = cfg.fakeGateway ? await startFakeGateway({ seed: fakeSeed(SERVERS[0]), me: SERVERS[0].page.me }) : null
   const gatewayUrl = fake?.url ?? cfg.gatewayUrl
   const bridge = new BridgeClient({ url: gatewayUrl, token: () => (fake ? fake.token : readToken(cfg.consoleTokenPath)), bus })
   const gate = () => bridge.available()

@@ -1,4 +1,4 @@
-import '../testkit.ts'
+import { demoFake } from '../testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Bus, HttpError } from '../events.ts'
@@ -9,7 +9,7 @@ import { startFakeGateway } from './fake.ts'
 import { GatewayError } from './wire.ts'
 
 async function setup(o: { statusMs?: number; staleMs?: number } = {}) {
-  const fake = await startFakeGateway({ statusMs: o.statusMs ?? 50 })
+  const fake = await startFakeGateway({ statusMs: o.statusMs ?? 50, seed: demoFake() })
   const bus = new Bus(), evs: Ev[] = []
   bus.on((e) => evs.push(e))
   const client = new BridgeClient({ url: fake.url, token: () => fake.token, bus, backoff: [30, 60], staleMs: o.staleMs })

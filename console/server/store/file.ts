@@ -12,7 +12,8 @@ export type Seed = { jobs?: Job[]; playbooks?: Record<string, Playbook> }
 
 const copy = <T>(o: T): T => (o === undefined ? o : structuredClone(o))
 
-export function fileStore(path: string, seed: () => Seed = () => ({})): Store {
+/** prefix = what job ids start with (`<prefix>-NNNN`), one per workspace */
+export function fileStore(path: string, seed: () => Seed = () => ({}), prefix = 'J'): Store {
   const fresh = !existsSync(path)
   let d: Data
   if (!fresh) d = JSON.parse(readFileSync(path, 'utf8'))
@@ -59,9 +60,10 @@ export function fileStore(path: string, seed: () => Seed = () => ({})): Store {
     marks: () => serial(() => copy(d.marks)),
     putMark: (id, m) => serial(async () => { if (m) d.marks[id] = { ...d.marks[id], ...m }; else delete d.marks[id]; await flush() }),
     nextJobId: () => serial(async () => {
-      d.seq = Math.max(d.seq, ...d.jobs.map((j) => +j.id.replace(/\D/g, '') || 0)) + 1
+      // only this prefix's ids count; a prefix may hold digits, so the number is what follows the dash
+      d.seq = Math.max(d.seq, ...d.jobs.map((j) => (j.id.startsWith(prefix + '-') ? +j.id.slice(prefix.length + 1) || 0 : 0))) + 1
       await flush()
-      return 'J-' + String(d.seq).padStart(4, '0')
+      return `${prefix}-${String(d.seq).padStart(4, '0')}`
     }),
   }
 }

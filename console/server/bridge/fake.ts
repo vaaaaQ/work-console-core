@@ -3,17 +3,16 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { started } from '../../src/data/board.ts'
 import type { BoardItem } from '../../src/data/board.ts'
-import { CAL_ITEMS, CHATS0, JOBS0, MAIL0, PRI, WORK0 } from '../../src/data/demo.ts'
+import { MAIL0, WORK0 } from '../../src/data/demo.ts'
 import { fillMonth } from '../../src/data/time.ts'
 import type { FillArgs, TimeItem } from '../../src/data/time.ts'
-import { dayOf, fromWall } from '../../src/lib/zone.ts'
-import { wsPage } from '../../src/workspace.ts'
+import type { FakeSeed } from '../workspace.ts'
 import type { ActReq, Delta } from './wire.ts'
 
 /* A stand-in for the bridge gateway, speaking its wire: bearer per caller class, concept replies,
-   SSE status/delta frames. A's concepts are seeded from the demo data; B's start empty and keep B's
-   rules in memory: compare-and-set, caller rights, the mail and chat joins, knowledge proposals.
-   Used by tests, the smoke run and `npm start` without a real bridge. */
+   SSE status/delta frames. A's concepts are seeded from the workspace's FakeSeed (none without one); B's start
+   empty and keep B's rules in memory: compare-and-set, caller rights, the mail and chat joins, knowledge
+   proposals. Used by tests, the smoke run and `npm start` without a real bridge. */
 
 type Item = { id: string; [k: string]: unknown }
 type Concept = { rev: number; items: Item[]; down?: string }
@@ -37,49 +36,16 @@ const STATE = ['jobs', 'runs', 'playbooks', 'marks', 'notes', 'proposals']
 const CONSOLE_ONLY = new Set(['/api/act', '/api/state/put', '/api/state/new-job-id', '/api/knowledge/decide'])
 const MAX_DOC = 256 * 1024, MAX_NOTE_TEXT = 64 * 1024
 
-/** a home-zone wall time today (or 'yesterday') as ISO UTC */
-function iso(hm: string, day = 0) {
-  if (!/^\d\d:\d\d$/.test(hm)) { day = -1; hm = '12:00' }
-  const ymd = dayOf(Date.now() + day * 86400e3)
-  return new Date(fromWall(Date.parse(`${ymd}T${hm}:00Z`))).toISOString()
-}
+/** A's concepts; an empty one still answers, a seed may add more */
+const BASE = ['chat', 'mail', 'cal', 'work', 'review', 'board', 'time', 'ci']
 
-/** the example workspace whose demo the fake serves, and who "me" is there */
-const acme = () => wsPage('acme')
-const meOf = () => acme().me ?? 'You'
-
-function seed() {
-  const chats = CHATS0.acme, threads: Record<string, Item[]> = {}, ME = meOf(), demo = acme().demo
-  for (const c of chats) threads[c.id] = c.msgs.map((m, i) => ({
-    id: `${c.id}-${i}`, author: m.me ? ME : m.who, authorKind: m.me ? 'me' : m.bot ? 'bot' : 'person', at: iso(m.at), text: m.t,
-  }))
-  const cs: Record<string, Concept> = {
-    chat: { rev: 1, items: chats.map((c) => {
-      const last = c.msgs[c.msgs.length - 1]
-      return { id: c.id, name: c.name, kind: c.kind, unread: c.unread, lastAt: iso(last.at), lastFrom: last.me ? ME : last.who, lastPreview: last.t, link: `https://slack.example/archives/${c.id}`, mentioned: false }
-    }) },
-    mail: { rev: 1, items: (MAIL0.acme || []).map((m) => ({
-      id: m.id, folder: m.cat === 'wait' ? 'Sent' : 'Inbox', from: m.from.replace(/^You → .*/, ME), to: m.cat === 'wait' ? [m.from.replace(/^You → /, '')] : [ME], cc: [],
-      subject: m.subj, at: iso(m.at), unread: m.cat === 'reply', preview: m.sum, category: m.cat, myReply: false, conversationId: `conv-${m.id}`, link: `https://mail.example/${m.id}`,
-    })) },
-    cal: { rev: 1, items: (CAL_ITEMS.acme || []).map((e) => ({ ...e })) },
-    work: { rev: 1, items: JOBS0.filter((j) => j.ws === 'acme' && /^ACME-\d/.test(j.key)).map((j) => ({
-      id: j.key, type: 'Story', title: j.t, state: 'In Progress', assignedTo: ME, changedAt: iso('09:00'), link: `https://jira.example/browse/${j.key}`,
-    })) },
-    review: { rev: 1, items: Object.values(PRI).filter((p) => p.id.startsWith('#')).map((p) => ({
-      id: p.id.slice(1), repo: 'acme/platform', title: p.br, author: ME, myVote: 0, votes: [{ reviewer: 'Priya Shah', vote: 1 }], activeThreads: 1, createdAt: iso('09:12'), link: `https://github.example/acme/platform/pull/${p.id.slice(1)}`,
-    })) },
-    board: { rev: 1, items: (demo.board?.() ?? []).map((b): Item => ({ ...b })) },
-    time: { rev: 1, items: demo.time?.(iso('12:00').slice(0, 10)) ?? [] },
-    ci: { rev: 1, items: [{ id: 'main#1288', pipeline: 'main', status: 'completed', result: 'succeeded', branch: 'main', startedAt: iso('07:01'), finishedAt: iso('07:15'), link: 'https://jenkins.example/job/main/1288/' }] },
-  }
+/** seed = what A starts with; prefix = what new job ids start with (`<prefix>-NNNN`); me = who Start puts an item on */
+export async function startFakeGateway(o: { port?: number; token?: string; llmToken?: string; statusMs?: number; seed?: FakeSeed; prefix?: string; me?: string } = {}): Promise<FakeGateway> {
+  const token = o.token ?? 'fake-console-token', llmToken = o.llmToken ?? 'fake-llm-token', prefix = o.prefix ?? 'J', me = o.me ?? 'You'
+  const seed = structuredClone(o.seed ?? { concepts: {}, threads: {} }), threads = seed.threads
+  const cs: Record<string, Concept> = {}
+  for (const k of [...BASE, ...Object.keys(seed.concepts)]) cs[k] ??= { rev: 1, items: seed.concepts[k] ?? [] }
   for (const k of STATE) cs[k] = { rev: 1, items: [] }
-  return { cs, threads }
-}
-
-export async function startFakeGateway(o: { port?: number; token?: string; llmToken?: string; statusMs?: number } = {}): Promise<FakeGateway> {
-  const token = o.token ?? 'fake-console-token', llmToken = o.llmToken ?? 'fake-llm-token'
-  const { cs, threads } = seed()
   const notes = new Map<string, Item>()
   const acts: ActReq[] = [], streams = new Set<ServerResponse>()
   let down = false, seq = 0, pseq = 0
@@ -155,7 +121,7 @@ export async function startFakeGateway(o: { port?: number; token?: string; llmTo
     const it = find('board', id)
     if (!it) return { status: 'source_error', message: `tracker: not_found: no item ${id}` }
     if (it.lane !== 'free' && it.lane !== 'mine') return { status: 'source_error', message: `tracker: bad_args: ${id} is assigned to ${it.assignedTo}` }
-    const up = started(it as unknown as BoardItem, meOf(), now()) as unknown as Item
+    const up = started(it as unknown as BoardItem, me, now()) as unknown as Item
     change({ concept: 'board', upserts: [up] })
     return { status: 'ok', rev: cs.board.rev, items: { id, type: it.type, title: it.title, state: up.state } }
   }
@@ -246,7 +212,7 @@ export async function startFakeGateway(o: { port?: number; token?: string; llmTo
         type: it.type, title: it.title, state: it.state, assignedTo: it.assignedTo ?? null, description: '', reproSteps: '', acceptanceCriteria: '', comments: [],
       } })
       if (concept === 'mail') {
-        const src = (MAIL0.acme || []).find((x) => x.id === id)
+        const src = Object.values(MAIL0).flatMap((l) => l ?? []).find((x) => x.id === id)
         return json(200, { status: 'ok', rev: c.rev, items: { body: src?.body ?? String(it.preview ?? ''), attachments: [] } })
       }
       return json(200, { status: 'ok', rev: c.rev, items: it })
@@ -271,8 +237,9 @@ export async function startFakeGateway(o: { port?: number; token?: string; llmTo
       return json(200, put(String(b.concept ?? ''), String(b.id ?? ''), (b.doc as Record<string, unknown> | null) ?? null, (b.expectV as number | null) ?? null))
     }
     if (req.method === 'POST' && url.pathname === '/api/state/new-job-id') {
-      seq = Math.max(seq, ...cs.jobs.items.map((j) => +j.id.replace(/\D/g, '') || 0)) + 1
-      return json(200, { status: 'ok', rev: cs.jobs.rev, items: { id: 'J-' + String(seq).padStart(4, '0') } })
+      // only this prefix's ids count; a prefix may hold digits, so the number is what follows the dash
+      seq = Math.max(seq, ...cs.jobs.items.map((j) => (j.id.startsWith(prefix + '-') ? +j.id.slice(prefix.length + 1) || 0 : 0))) + 1
+      return json(200, { status: 'ok', rev: cs.jobs.rev, items: { id: `${prefix}-${String(seq).padStart(4, '0')}` } })
     }
     if (req.method === 'POST' && url.pathname === '/api/knowledge/propose') return json(200, propose(await parse(req), caller))
     if (req.method === 'POST' && url.pathname === '/api/knowledge/decide') return json(200, decide(await parse(req)))
