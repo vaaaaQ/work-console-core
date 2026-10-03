@@ -43,6 +43,19 @@ async function under(root: string, p: string) {
 
 const side = (n: number | undefined, d: number) => Math.min(4000, Math.max(200, Math.round(n ?? d)))
 
+/** a page that renders after load, as a single-page app does, is blank at load: wait until the DOM has been
+    quiet for quietMs, counted from load if the body already shows something, else from the first change; at most capMs */
+function settle([quietMs, capMs]: [number, number]) {
+  return new Promise<void>((done) => {
+    let t: ReturnType<typeof setTimeout> | undefined
+    const o = new MutationObserver(() => { clearTimeout(t); t = setTimeout(end, quietMs) })
+    const cap = setTimeout(end, capMs)
+    function end() { o.disconnect(); clearTimeout(t); clearTimeout(cap); done() }
+    o.observe(document, { subtree: true, childList: true, characterData: true, attributes: true })
+    if (document.body?.innerText.trim() || document.images.length) t = setTimeout(end, quietMs)
+  })
+}
+
 /** fileRoot: the only dir the page, its frames and its images may read files from; none = no files at all.
     blocked = the file urls the page asked for and did not get */
 export async function shoot(o: Shot & { out: string; browserPath?: string | null; timeoutMs?: number; fileRoot?: string }): Promise<{ blocked: string[] }> {
@@ -62,6 +75,7 @@ export async function shoot(o: Shot & { out: string; browserPath?: string | null
       return r.abort('accessdenied')
     })
     await p.goto(url.href, { waitUntil: 'load', timeout: o.timeoutMs ?? 30000 })
+    await p.evaluate(settle, [500, 10000] as [number, number])
     await p.screenshot({ path: o.out, fullPage: o.fullPage ?? false, type: 'png' })
     return { blocked }
   } finally { await b.close() }
