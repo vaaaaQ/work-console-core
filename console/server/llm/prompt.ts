@@ -32,7 +32,7 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, ctx: Reso
     ...(o.bridge === false ? [] : [`- The context above was read when this run started. Read anything more yourself with the bridge tools (bridge_snapshot, bridge_get).`]),
     `- You never send anything to a source (no chat posts, mails, votes, comments or state changes): ${who} sends after review.`,
     `- Write progress with the run tool journal(observed, changed, next) at meaningful points.`,
-    `- Save files the step expects with add_artifact(name, content).`,
+    `- Save files the step expects with add_artifact(name, content), or with add_artifact_file(path) for a file already under your working dir; images show on the page.`,
     `- Finish by calling submit_draft(text) exactly once with the draft for ${who} to review. Without it the run counts as failed.`,
   ].filter((l, i, a) => l !== '' || a[i - 1] !== '').join('\n')
 }

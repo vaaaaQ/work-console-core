@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { copyFile, mkdir, realpath, stat, writeFile } from 'node:fs/promises'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type * as T from '../../src/model/transitions.ts'
 import type { Resolved } from '../../src/model/context.ts'
 import type { Job, RunRec } from '../../src/model/types.ts'
@@ -16,6 +16,8 @@ import type { WorkDir } from './worktree.ts'
    is the durable half (state, session id); the feed lives in memory while the session runs. */
 
 const FEED_MAX = 200
+/** the biggest file a run may keep as an artifact */
+const FILE_MAX = 20 << 20
 /** started: the record says running; until then cancel and interruptAll leave settling to run() */
 type Live = { ac: AbortController; why: 'cancelled' | 'interrupted' | null; reason?: string; drafted: boolean; started: boolean }
 
@@ -183,6 +185,13 @@ export class Runner {
       if (l.why) return // cancel / interruptAll settled it while the dir was made
     }
     const rec = r
+    /** a file in the job's artifact folder, then the step's link to it */
+    const keep = async (name: string, write: (f: string) => Promise<void>) => {
+      const dir = join(this.artifactsDir, rec.job)
+      await mkdir(dir, { recursive: true })
+      await write(join(dir, name))
+      await this.jobs.cmd(rec.job, { op: 'artifact', step: rec.step, n: name, link: `/api/artifacts/${encodeURIComponent(rec.job)}/${encodeURIComponent(name)}` }, undefined, 'runner')
+    }
     const tools = {
       submitDraft: async (t: string) => {
         if (l.drafted) throw new Error('a draft was already submitted for this run')
@@ -191,11 +200,16 @@ export class Runner {
         r = { ...r!, state: 'draft' }
         await this.save(r)
       },
-      addArtifact: async (n: string, content: string) => {
-        const name = safeName(n), dir = join(this.artifactsDir, rec.job)
-        await mkdir(dir, { recursive: true })
-        await writeFile(join(dir, name), content, 'utf8')
-        await this.jobs.cmd(rec.job, { op: 'artifact', step: rec.step, n: name, link: `/api/artifacts/${encodeURIComponent(rec.job)}/${encodeURIComponent(name)}` }, undefined, 'runner')
+      addArtifact: (n: string, content: string) => keep(safeName(n), (f) => writeFile(f, content, 'utf8')),
+      // only from under the run's own dir, links resolved, so a run cannot publish the console's files
+      addArtifactFile: async (p: string, n?: string) => {
+        const real = await realpath(resolve(cwd, p)).catch(() => { throw new Error(`no such file: ${p}`) })
+        const rel = relative(await realpath(cwd), real)
+        if (!rel || rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error(`${p} is outside the work dir`)
+        const s = await stat(real)
+        if (!s.isFile()) throw new Error(`${p} is not a file`)
+        if (s.size > FILE_MAX) throw new Error(`${p} is over 20 MB`)
+        await keep(safeName(n || basename(real)), (f) => copyFile(real, f))
       },
       journal: async (o: string, c: string, n: string) => { await this.jobs.cmd(rec.job, { op: 'journal', o, c, n, a: 'LLM' }, undefined, 'runner') },
     }

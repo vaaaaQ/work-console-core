@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import * as T from '../../src/model/transitions.ts'
 import { Bus, HttpError } from '../events.ts'
 import type { Ev } from '../events.ts'
@@ -299,7 +299,7 @@ const PROMPT_BEFORE_ME = [
   '- The context above was read when this run started. Read anything more yourself with the bridge tools (bridge_snapshot, bridge_get).',
   '- You never send anything to a source (no chat posts, mails, votes, comments or state changes): the user sends after review.',
   '- Write progress with the run tool journal(observed, changed, next) at meaningful points.',
-  '- Save files the step expects with add_artifact(name, content).',
+  '- Save files the step expects with add_artifact(name, content), or with add_artifact_file(path) for a file already under your working dir; images show on the page.',
   '- Finish by calling submit_draft(text) exactly once with the draft for the user to review. Without it the run counts as failed.',
 ].join('\n')
 
@@ -358,4 +358,28 @@ test("a run works in its job's own dir; when the dir cannot be made the run fail
   await until(() => s.evs.some((e) => e.kind === 'run' && e.run.id === rb.id && e.run.state === 'failed'))
   assert.equal((await runner.get(rb.id))!.reason, 'no work dir: boom')
   assert.equal(s.sessions.length, 1, 'no session started without its dir')
+})
+
+test('add_artifact_file keeps a file from under the run dir; outside it, through a link out, missing, a dir or over 20 MB are refused', async () => {
+  const { runner, sessions, jobs, dir } = setup(), [t] = await targets(jobs, 1)
+  await runner.ask(t.job, t.step, 'q')
+  await until(() => sessions.length === 1)
+  const tools = sessions[0].tools, png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
+  mkdirSync(join(dir, 'shots')); writeFileSync(join(dir, 'shots', 'home.png'), png)
+  await tools.addArtifactFile('shots/home.png')
+  await tools.addArtifactFile(join(dir, 'shots', 'home.png'), 'again.png')
+  const arts = (await jobs.get(t.job))!.flow[t.step].arts.map((a) => a.n)
+  assert.ok(arts.includes('home.png') && arts.includes('again.png'), arts.join())
+  assert.deepEqual(readFileSync(join(dir, 'arts', t.job, 'home.png')), png)
+  const out = mkdtempSync(join(tmpdir(), 'wc-out-')), secret = join(out, 'secret.txt')
+  writeFileSync(secret, 's')
+  await assert.rejects(tools.addArtifactFile(relative(dir, secret)), /outside the work dir/)
+  await assert.rejects(tools.addArtifactFile(secret), /outside the work dir/)
+  symlinkSync(out, join(dir, 'out'), 'junction')
+  await assert.rejects(tools.addArtifactFile('out/secret.txt'), /outside the work dir/)
+  await assert.rejects(tools.addArtifactFile('nope.png'), /no such file/)
+  await assert.rejects(tools.addArtifactFile('shots'), /not a file/)
+  writeFileSync(join(dir, 'big.bin'), ''); truncateSync(join(dir, 'big.bin'), (20 << 20) + 1)
+  await assert.rejects(tools.addArtifactFile('big.bin'), /over 20 MB/)
+  assert.equal((await jobs.get(t.job))!.flow[t.step].arts.length, arts.length, 'nothing refused was kept')
 })

@@ -12,6 +12,8 @@ import { z } from 'zod'
 export interface RunTools {
   submitDraft(t: string): Promise<void>
   addArtifact(n: string, content: string): Promise<void>
+  /** a file already under the run's dir (a screenshot, a build output), path relative to it */
+  addArtifactFile(path: string, name?: string): Promise<void>
   journal(o: string, c: string, n: string): Promise<void>
 }
 export type SdkEvent = { k: 'session'; id: string } | { k: 'text'; t: string } | { k: 'tool'; name: string; input: string } | { k: 'result'; ok: boolean; error?: string }
@@ -19,7 +21,7 @@ export interface Sdk { start(o: { prompt: string; resume?: string; cwd: string; 
 
 const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status',
   'mcp__bridge__knowledge_search', 'mcp__bridge__knowledge_read', 'mcp__bridge__knowledge_propose']
-export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__journal', ...BRIDGE]
+export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', ...BRIDGE]
 export const DENY = [
   'mcp__bridge__bridge_act', 'mcp__work-console',
   'Read(~/.bridge/**)', 'Read(~/.work-console/**)',
@@ -67,6 +69,9 @@ export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runToo
             (a) => wrap(() => tools.submitDraft(a.text), 'draft submitted')()),
           tool('add_artifact', 'Save a file this step produces (for example analysis.md). Same name replaces it.', { name: z.string().min(1), content: z.string() },
             (a) => wrap(() => tools.addArtifact(a.name, a.content), 'artifact saved')()),
+          tool('add_artifact_file', 'Save a file already under your working dir (an image, a log, a build output), at most 20 MB. name defaults to the file name.',
+            { path: z.string().min(1), name: z.string().min(1).optional() },
+            (a) => wrap(() => tools.addArtifactFile(a.path, a.name), 'artifact saved')()),
           tool('journal', 'Add a line to the job journal: what you observed, what changed, what comes next.', { observed: z.string(), changed: z.string(), next: z.string() },
             (a) => wrap(() => tools.journal(a.observed, a.changed, a.next), 'journal updated')()),
         ],

@@ -61,6 +61,8 @@ const ART_TYPES: Record<string, string> = {
   '.md': 'text/markdown; charset=utf-8', '.csv': 'text/csv; charset=utf-8', '.json': 'application/json; charset=utf-8', '.pdf': 'application/pdf',
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 }
+/** artifact types the page shows as they are; never svg or html, which could run script */
+const ART_IMAGES: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' }
 const PC_ONLY = /^\/api\/(pair|devices)(\/|$)/
 /** a workspace-bound route: the workspace id, then the path the per-space table and plugins match */
 const IN_WS = /^\/api\/ws\/([^/]+)(\/.*)$/
@@ -244,13 +246,13 @@ export function createApp(d: Deps) {
     return { actionId: a.actionId, ...(await s.source.act(a)) }
   }
 
-  /** plain text for the page's viewer; ?dl=1 = a download under the file's own name and type */
+  /** plain text for the page's viewer, an image as itself; ?dl=1 = a download under the file's own name and type */
   function artifact(r: Req, job: string, name: string) {
     const n = safeName(name), f = join(d.artifactsDir, safeName(job), n)
     if (!existsSync(f)) throw new HttpError(404, 'not_found', 'no such artifact')
-    const dl = r.q.get('dl') === '1'
+    const dl = r.q.get('dl') === '1', ext = extname(n).toLowerCase()
     r.res.writeHead(200, {
-      'content-type': (dl && ART_TYPES[extname(n).toLowerCase()]) || 'text/plain; charset=utf-8', 'cache-control': 'no-store',
+      'content-type': ART_IMAGES[ext] || (dl && ART_TYPES[ext]) || 'text/plain; charset=utf-8', 'cache-control': 'no-store',
       'content-disposition': dl ? `attachment; filename="${n.replace(/[^\x20-\x7e]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(n)}` : 'inline',
     })
     createReadStream(f).pipe(r.res)

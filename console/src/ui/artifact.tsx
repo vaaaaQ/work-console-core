@@ -5,11 +5,12 @@ import { md } from '../lib/md.ts'
 import { Ic } from './Icon.tsx'
 import { modal } from './modal.tsx'
 
-/* Every artifact downloads; Markdown and CSV also open in a viewer on the page. */
+/* Every artifact downloads; Markdown, CSV and images also open in a viewer on the page. */
 
 const MAX = 2 << 20, ROWS = 1000
 
-export const viewable = (n: string) => /\.(md|markdown|csv)$/i.test(n)
+const IMAGE = /\.(png|jpe?g|gif|webp)$/i
+export const viewable = (n: string) => /\.(md|markdown|csv)$/i.test(n) || IMAGE.test(n)
 export const dlHref = (link: string) => link + (link.includes('?') ? '&' : '?') + 'dl=1'
 
 export function openArtifact(n: string, link: string) {
@@ -20,6 +21,10 @@ export function openArtifact(n: string, link: string) {
 }
 
 function ArtBody({ n, link }: { n: string; link: string }) {
+  return IMAGE.test(n) ? <img src={link} alt={n} style={{ maxWidth: '100%' }} /> : <ArtText n={n} link={link} />
+}
+
+function ArtText({ n, link }: { n: string; link: string }) {
   const [st, set] = React.useState<{ t?: string; err?: string }>({})
   React.useEffect(() => {
     let on = true
