@@ -1,5 +1,7 @@
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { realpath } from 'node:fs/promises'
+import { isAbsolute, join, relative, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 /* A png of a page, taken by the browser already installed on the PC (Edge or Chrome), so the console
    downloads none. A run proves a UI change with it; the runner keeps the png as the step's artifact. */
@@ -31,9 +33,19 @@ export function checkUrl(u: string): URL {
   return x
 }
 
+/** p is root or below it, links resolved */
+async function under(root: string, p: string) {
+  try {
+    const rel = relative(await realpath(root), await realpath(p))
+    return rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel)
+  } catch { return false }
+}
+
 const side = (n: number | undefined, d: number) => Math.min(4000, Math.max(200, Math.round(n ?? d)))
 
-export async function shoot(o: Shot & { out: string; browserPath?: string | null; timeoutMs?: number }): Promise<void> {
+/** fileRoot: the only dir the page, its frames and its images may read files from; none = no files at all.
+    blocked = the file urls the page asked for and did not get */
+export async function shoot(o: Shot & { out: string; browserPath?: string | null; timeoutMs?: number; fileRoot?: string }): Promise<{ blocked: string[] }> {
   const url = checkUrl(o.url), exe = findBrowser(o.browserPath)
   if (!exe) throw new Error('no browser found: set browserPath in config.json')
   // loaded on first use, so a console that never shoots never loads it
@@ -41,7 +53,16 @@ export async function shoot(o: Shot & { out: string; browserPath?: string | null
   const b = await chromium.launch({ executablePath: exe, headless: true, timeout: 30000 })
   try {
     const p = await b.newPage({ viewport: { width: side(o.width, 1280), height: side(o.height, 800) } })
+    // a page under the work dir could frame any file on the PC, the console's tokens among them
+    const blocked: string[] = []
+    await p.route('**/*', async (r) => {
+      const u = r.request().url()
+      if (!u.startsWith('file:') || (o.fileRoot && await under(o.fileRoot, fileURLToPath(u)))) return r.continue()
+      blocked.push(u)
+      return r.abort('accessdenied')
+    })
     await p.goto(url.href, { waitUntil: 'load', timeout: o.timeoutMs ?? 30000 })
     await p.screenshot({ path: o.out, fullPage: o.fullPage ?? false, type: 'png' })
+    return { blocked }
   } finally { await b.close() }
 }

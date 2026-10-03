@@ -35,7 +35,7 @@ export class Runner {
   private store: Store; private jobs: Jobs; private bus: Bus; private sdk: Sdk; private cwd: string
   private max: number; private gate: () => boolean; private artifactsDir: string; private ctx: () => T.Ctx
   private context: (j: Job) => Promise<Resolved[]>; private me?: string; private bridge?: boolean; private workDir?: WorkDir
-  private screenshot?: (o: Shot & { out: string }) => Promise<void>
+  private screenshot?: (o: Shot & { out: string; fileRoot?: string }) => Promise<unknown>
   private queue: { id: string; resume?: string }[] = []
   private live = new Map<string, Live>()
   private feeds = new Map<string, string[]>()
@@ -48,7 +48,7 @@ export class Runner {
     store: Store; jobs: Jobs; bus: Bus; sdk: Sdk; cwd: string; max?: number; gate: () => boolean; artifactsDir: string; ctx: () => T.Ctx
     context?: (j: Job) => Promise<Resolved[]>; me?: string; bridge?: boolean; workDir?: WorkDir
     /** takes a png of a page into out; none = runs get no screenshot tool */
-    screenshot?: (o: Shot & { out: string }) => Promise<void>
+    screenshot?: (o: Shot & { out: string; fileRoot?: string }) => Promise<unknown>
   }) {
     this.store = o.store; this.jobs = o.jobs; this.bus = o.bus; this.sdk = o.sdk; this.cwd = o.cwd
     this.max = o.max ?? 3; this.gate = o.gate; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => []); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot
@@ -227,7 +227,7 @@ export class Runner {
           const u = checkUrl(o.url)
           if (u.protocol === 'file:') await within(fileURLToPath(u))
           const name = safeName(o.name).replace(/\.[a-z0-9]{1,5}$/i, '') + '.png'
-          await keep(name, (f) => shot({ url: u.href, width: o.width, height: o.height, fullPage: o.fullPage, out: f }))
+          await keep(name, (f) => shot({ url: u.href, width: o.width, height: o.height, fullPage: o.fullPage, out: f, fileRoot: cwd }).then(() => {}))
         },
       } : {}),
     }

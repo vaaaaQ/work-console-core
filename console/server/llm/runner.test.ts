@@ -386,8 +386,8 @@ test('add_artifact_file keeps a file from under the run dir; outside it, through
 })
 
 test('screenshot keeps a png of a page as the step\'s artifact; a file outside the run dir or a script url is refused; no tool without the option', async () => {
-  const s = setup(), [t] = await targets(s.jobs, 1), seen: { url: string; out: string; width?: number }[] = []
-  const screenshot = async (o: { url: string; out: string; width?: number }) => { seen.push(o); writeFileSync(o.out, 'png') }
+  const s = setup(), [t] = await targets(s.jobs, 1), seen: { url: string; out: string; width?: number; fileRoot?: string }[] = []
+  const screenshot = async (o: { url: string; out: string; width?: number; fileRoot?: string }) => { seen.push(o); writeFileSync(o.out, 'png') }
   const runner = new Runner({ store: s.store, jobs: s.jobs, bus: s.bus, sdk: fakeSdk(s.sessions).sdk, cwd: s.dir, gate: () => true, artifactsDir: join(s.dir, 'arts'), ctx: demoCtx, screenshot })
   await runner.ask(t.job, t.step, 'q')
   await until(() => s.sessions.length === 1)
@@ -395,6 +395,7 @@ test('screenshot keeps a png of a page as the step\'s artifact; a file outside t
   await tools.screenshot!({ url: 'http://127.0.0.1:7420/jobs', name: 'board.jpg', width: 900 })
   assert.equal(seen[0].url, 'http://127.0.0.1:7420/jobs'); assert.equal(seen[0].width, 900)
   assert.equal(seen[0].out, join(s.dir, 'arts', t.job, 'board.png'))
+  assert.equal(seen[0].fileRoot, s.dir, 'the page reads files from the run dir only')
   writeFileSync(join(s.dir, 'page.html'), '<h1>x</h1>')
   await tools.screenshot!({ url: pathToFileURL(join(s.dir, 'page.html')).href, name: 'page' })
   const arts = (await s.jobs.get(t.job))!.flow[t.step].arts.map((a) => a.n)
