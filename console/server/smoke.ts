@@ -79,7 +79,7 @@ async function run() {
     const until = async (f: () => boolean, what: string) => { const t0 = Date.now(); while (!f()) { if (Date.now() - t0 > 5000) throw new Error(`timed out: ${what}`); await new Promise((r) => setTimeout(r, 20)) } }
 
     const { job } = await json('POST', '/api/jobs', { t: 'Smoke', key: 'ACME-9001', pb: 'action', prj: 'platform', ws: 'acme' })
-    assert.match(job.id, /^A-\d{4}$/, "Acme's fake gateway mints Acme's prefix")
+    assert.match(job.id, /^A-\d{4}$/, "the fake gateway's J-NNNN comes back under Acme's prefix")
     await until(() => events.some((e) => e.kind === 'job' && (e.job as { id: string }).id === job.id), 'a job event')
     step('SSE delivers a job event')
 

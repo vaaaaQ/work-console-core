@@ -1,17 +1,19 @@
 import { test } from 'node:test'
 import type { TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as T from '../src/model/transitions.ts'
 import type { Playbook, RunRec } from '../src/model/types.ts'
 import { install } from '../src/workspace.ts'
+import { startFakeGateway } from './bridge/fake.ts'
 import { Bus, HttpError } from './events.ts'
 import type { Ev } from './events.ts'
 import { hub, makeSpace, Spaces } from './spaces.ts'
 import type { Space } from './spaces.ts'
 import { acme, acmeServer, fakeSdk } from './testkit.ts'
+import { fakeSeed } from './workspace.ts'
 import type { WorkspaceServer, WsConfig } from './workspace.ts'
 
 /** Acme under another id and prefix; its playbooks stay Acme's, so it brings none of its own */
@@ -116,6 +118,36 @@ test("each space mints its own prefix, names its own user, and interrupts only i
     // acme's run settles before its space closes; beta's was interrupted while its gateway was down, so it is left for recover()
     await until(() => runs.every((id) => a.settled.has(id)))
     await a.space.close(); await b.space.close()
+  }
+})
+
+test('on the default source and store, gateways that mint J-NNNN give each space its own prefix, and byJob routes each job home', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-')), ws = [acmeServer, beta2]
+  install(ws.map((w) => ({ page: w.page })))
+  // started as spaces.ts starts a fake, which mints J- ids only, as the real gateway does
+  const fakes = await Promise.all(ws.map((w) => startFakeGateway({ seed: fakeSeed(w), me: w.page.me, board: w.page.board })))
+  const list: Space[] = []
+  try {
+    for (const [i, w] of ws.entries()) {
+      const tokenPath = join(dir, `${w.page.id}.token`)
+      writeFileSync(tokenPath, fakes[i].token)
+      const cfg = { ...wsCfg(dir), gatewayUrl: fakes[i].url, consoleTokenPath: tokenPath }
+      list.push(await makeSpace(w, { cfg, home: dir, artifactsDir: join(dir, 'arts'), sdk: fakeSdk().sdk, fake: false, push: async () => {} }))
+    }
+    for (const s of list) s.source.start()
+    await until(() => list.every((s) => s.source.available()))
+    const spaces = new Spaces(list), made = []
+    for (const s of list) made.push(await s.jobs.create({ t: `${s.id} job`, key: 'NEW', pb: 'action', prj: acme.pack.prj[0], ws: s.id }))
+    assert.deepEqual(made.map((j) => j.id), ['A-0001', 'B-0001'])
+    for (const [i, j] of made.entries()) {
+      assert.equal(spaces.byJob(j.id), list[i], `${j.id} routes to ${list[i].id}`)
+      assert.equal((await spaces.byJob(j.id).jobs.get(j.id))?.t, `${list[i].id} job`)
+      const held = await fetch(`${fakes[i].url}/api/items/jobs/${j.id}`, { headers: { authorization: `Bearer ${fakes[i].token}` } })
+      assert.equal(((await held.json()) as { status: string }).status, 'ok', `the gateway holds ${j.id} under that id`)
+    }
+  } finally {
+    for (const s of list) await s.close()
+    for (const f of fakes) await f.close()
   }
 })
 

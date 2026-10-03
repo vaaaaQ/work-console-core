@@ -129,10 +129,16 @@ export function restore(x: Snap) {
   ;(Object.keys(x.L) as Ws[]).forEach((k) => { LOG[k] = x.L[k] })
   JOBS.forEach((j) => flows(j).forEach((f) => { if (f.run) { f.run = null; f.s = 'cur' } }))
 }
-export const nextJobId = () => 'J-' + String(Math.max(0, ...JOBS.map((j) => +j.id.slice(2))) + 1).padStart(4, '0')
+/** demo mode: the prefix the workspace's jobs carry (J when it has none), numbered past that prefix's highest */
+export function nextJobId(ws: Ws) {
+  const cut = (id: string) => { const i = id.indexOf('-'); return i > 0 ? [id.slice(0, i), id.slice(i + 1)] as const : null }
+  const own = JOBS.filter((j) => j.ws === ws).map((j) => cut(j.id)).find((x) => x !== null), prefix = own ? own[0] : 'J'
+  const n = Math.max(0, ...JOBS.map((j) => cut(j.id)).map((x) => (x && x[0] === prefix ? +x[1] || 0 : 0)))
+  return `${prefix}-${String(n + 1).padStart(4, '0')}`
+}
 /** demo mode: the new job lands in the world, and a mail it starts from is marked handled */
 export function createJob(o: T.NewJob) {
-  const j = T.freshJob(CTX, nextJobId(), o)
+  const j = T.freshJob(CTX, nextJobId(o.ws), o)
   if (o.mail) { const m = (MAIL[o.ws] || []).find((x) => x.id === o.mail); if (m) { m.job = j.id; m.done = true } }
   putJob(j)
   return j

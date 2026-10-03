@@ -1,7 +1,7 @@
 import '../testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { JOBS, LOG, S, applyLocal, atOf, byId, createJob, initFlow, isClosed, jobAtAct, jobForAct, keySrc, putJob, restore, setJobs, snap, timesheetJob } from './world.ts'
+import { JOBS, LOG, S, applyLocal, atOf, byId, createJob, initFlow, isClosed, jobAtAct, jobForAct, keySrc, nextJobId, putJob, restore, setJobs, snap, timesheetJob } from './world.ts'
 
 JOBS.forEach(initFlow)
 
@@ -120,5 +120,15 @@ test('the Time view links to the job for the time act, else a recurring one name
 test('a timesheet job keeps its key in the time source of its pack', () => {
   const x = snap()
   assert.equal(keySrc(createJob({ t: 'Month end timesheet', key: 'NEW', pb: 'acme-timesheet', prj: '', ws: 'acme' })).n, 'Timesheet')
+  restore(x)
+})
+
+test("a demo job id takes the prefix its workspace's jobs carry, numbered past that prefix's highest", () => {
+  const x = snap(), [a, b] = JOBS.filter((j) => j.ws === 'acme')
+  JOBS.splice(0, JOBS.length,
+    { ...structuredClone(a), id: 'ACME-0001' }, { ...structuredClone(b), id: 'ACME-0007' },
+    { ...structuredClone(a), id: 'J-0420', ws: 'other' }, { ...structuredClone(b), id: 'B-0900', ws: 'third' })
+  assert.equal(createJob({ t: 'Next', key: 'NEW', pb: 'action', prj: '', ws: 'acme' }).id, 'ACME-0008')
+  assert.equal(nextJobId('empty'), 'J-0421', 'no jobs of its own: J, above the J max; other prefixes do not count')
   restore(x)
 })

@@ -57,7 +57,7 @@ Every endpoint except `/api/events` and `/api/snapshot` answers `200` with one r
 | `GET /api/items/{concept}/{id}` | optional `?cursor=` | the detail (`*.get` schema); for a B concept, the document |
 | `POST /api/act` | `{action, actionId, args}` | the act's own result, or `null` |
 | `POST /api/state/put` | `{concept, id, doc \| null, expectV}` | `{doc, replaced}`; `conflict` carries `{current}` |
-| `POST /api/state/new-job-id` | none | `{id: 'J-0001'}` |
+| `POST /api/state/new-job-id` | none | `{id: 'J-0001'}`, always `J-NNNN`; a console renames it to its workspace's prefix and stores the job under that id, as `put` takes any id |
 | `POST /api/knowledge/propose` | `{title, text, tags?, reason?, note?}` | `{doc}`: a proposal `P-0001` |
 | `POST /api/knowledge/decide` | `{proposal, accept, text?}` | the note written, or `{doc:null}` on reject |
 | `GET /api/knowledge/search?q=&tags=` | | up to 20 `{id, v, title, tags, updated, size, score, snippet}` |

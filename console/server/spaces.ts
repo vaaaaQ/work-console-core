@@ -100,7 +100,7 @@ export function onBridgeBack(bus: Bus, load: () => Promise<void>, backoff = [200
 type SpaceOpts = { cfg: WsConfig; home: string; artifactsDir: string; sdk?: Sdk; fake: boolean; push: Push }
 
 export async function makeSpace(w: WorkspaceServer, o: SpaceOpts): Promise<Space> {
-  const fake = o.fake ? await startFakeGateway({ seed: fakeSeed(w), prefix: w.jobPrefix, me: w.page.me, board: w.page.board }) : null
+  const fake = o.fake ? await startFakeGateway({ seed: fakeSeed(w), me: w.page.me, board: w.page.board }) : null
   // a workspace hook that throws would leave the fake holding its port
   try { return assemble(w, o, fake) } catch (e) { await fake?.close(); throw e }
 }
@@ -111,7 +111,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   // the fake stands in for whatever source the workspace brings
   const source = fake ? gatewaySource(cfg, { bus, token: () => fake.token }) : w.source?.(cfg, { bus }) ?? gatewaySource(cfg, { bus })
   const builtins = { ...CORE_PB, ...w.page.playbooks }
-  const store = w.store?.(source, cfg, { bus, home: o.home }) ?? bridgeStore({ bridge: source, bus, playbooks: builtins })
+  const store = w.store?.(source, cfg, { bus, home: o.home }) ?? bridgeStore({ bridge: source, bus, playbooks: builtins, prefix: w.jobPrefix })
   // until B answers, the built-in playbooks stand in
   let PB: Record<string, Playbook> = structuredClone(builtins)
   const TPL = { ...CORE_TPL, ...w.page.templates }

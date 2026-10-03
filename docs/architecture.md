@@ -111,7 +111,7 @@ Only `workspaces/page.ts` imports it.
 
 | Field | What |
 |---|---|
-| `page`, `jobPrefix` | the page half; job ids are `<prefix>-NNNN`, with a prefix matching `^[A-Z][A-Z0-9]{0,7}$`, unique |
+| `page`, `jobPrefix` | the page half; job ids are `<prefix>-NNNN`, with a prefix matching `^[A-Z][A-Z0-9]{0,7}$`, unique. The default store renames the gateway's `J-NNNN` to `<prefix>-NNNN` |
 | `defaults` | config defaults: `gatewayUrl`, `consoleTokenPath`, `llmTokenPath`, `workDir`, `runTools`, `teamTz`, `maxSessions`, and the workspace's own keys. The core's `workDir` is the repo around the console: the nearest folder with a `.git`, else the console's parent |
 | `source(cfg, { bus })` | a `Bridge`; the default is the HTTP gateway client |
 | `store(source, cfg, { bus, home })` | the default is B through the source |
@@ -119,6 +119,9 @@ Only `workspaces/page.ts` imports it.
 | `plugins(ctx)` | routes under `/api/ws/<id>/…` and a block in `/api/state` |
 | `fake()` | what the fake gateway starts with; the default is derived from `page.demo`; its optional `get` answers a get of a concept's item instead of the item itself, and one that throws answers 500 naming the error |
 
+- **Building.** `source`, `store`, `plugins` and `fake` must not throw while being built: a throw at
+  startup stops every workspace. A setup problem is reported when the workspace is called, for example
+  as a 409 `not_set_up`.
 - **Registries.** `workspaces/page.ts` lists the pages (`WORKSPACES`) and `workspaces/server.ts` the
   servers (`SERVERS`); the first of each is the default. Startup refuses a malformed or duplicate id, a
   malformed or duplicate prefix, and a playbook id built into two workspaces, and the message names them.

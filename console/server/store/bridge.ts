@@ -31,7 +31,8 @@ const asMark = (d: Doc | undefined): Mark => ({
   ...(d?.hidden === true ? { hidden: true } : {}), ...(typeof d?.name === 'string' ? { name: d.name } : {}),
 })
 
-export function bridgeStore(o: { bridge: StateGateway; bus: Bus; playbooks: Record<string, Playbook> }): BridgeStore {
+/** prefix = the workspace's job prefix: the gateway mints J-NNNN, and the job is stored as <prefix>-NNNN */
+export function bridgeStore(o: { bridge: StateGateway; bus: Bus; playbooks: Record<string, Playbook>; prefix: string }): BridgeStore {
   let mirror: Mirror | null = null, loading: Promise<Mirror> | null = null, gen = 0
   /** kind/id → the v a delete of ours removed: a delta still in flight must not bring it back */
   const gone = new Map<string, number>()
@@ -117,7 +118,9 @@ export function bridgeStore(o: { bridge: StateGateway; bus: Bus; playbooks: Reco
     async nextJobId() {
       const r = await o.bridge.state('POST', '/api/state/new-job-id', {})
       if (!READY.has(r.status)) throw stateError(r)
-      return String((r.items as { id: string }).id)
+      const id = String((r.items as { id?: unknown } | null)?.id), m = /^J-(\d+)$/.exec(id)
+      if (!m) throw new GatewayError(502, 'bad_reply', `the bridge minted ${id} as a job id, not J-NNNN`)
+      return `${o.prefix}-${m[1]}`
     },
     reset,
   }

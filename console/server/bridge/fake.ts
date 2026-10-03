@@ -40,13 +40,13 @@ const MAX_DOC = 256 * 1024, MAX_NOTE_TEXT = 64 * 1024
 /** A's concepts; an empty one still answers, a seed may add more */
 const BASE = ['chat', 'mail', 'cal', 'work', 'review', 'board', 'time', 'ci']
 
-/** seed = what A starts with; prefix = what new job ids start with (`<prefix>-NNNN`); me = who Start puts an item on;
-    board = the workspace's board, whose columns Start moves an item between; log = where a request that threw is written */
+/** seed = what A starts with; me = who Start puts an item on; board = the workspace's board, whose columns Start
+    moves an item between; log = where a request that threw is written */
 export async function startFakeGateway(o: {
-  port?: number; token?: string; llmToken?: string; statusMs?: number; seed?: FakeSeed; prefix?: string; me?: string; board?: Pick<Board, 'ready' | 'dev'>
+  port?: number; token?: string; llmToken?: string; statusMs?: number; seed?: FakeSeed; me?: string; board?: Pick<Board, 'ready' | 'dev'>
   log?: (line: string) => void
 } = {}): Promise<FakeGateway> {
-  const token = o.token ?? 'fake-console-token', llmToken = o.llmToken ?? 'fake-llm-token', prefix = o.prefix ?? 'J', me = o.me ?? 'You'
+  const token = o.token ?? 'fake-console-token', llmToken = o.llmToken ?? 'fake-llm-token', me = o.me ?? 'You'
   const log = o.log ?? console.error
   // the get handlers are functions, so only the items are copied
   const seed = structuredClone({ concepts: o.seed?.concepts ?? {}, threads: o.seed?.threads ?? {} }), threads = seed.threads, gets = o.seed?.get ?? {}
@@ -245,9 +245,10 @@ export async function startFakeGateway(o: {
       return json(200, put(String(b.concept ?? ''), String(b.id ?? ''), (b.doc as Record<string, unknown> | null) ?? null, (b.expectV as number | null) ?? null))
     }
     if (req.method === 'POST' && url.pathname === '/api/state/new-job-id') {
-      // only this prefix's ids count; a prefix may hold digits, so the number is what follows the dash
-      seq = Math.max(seq, ...cs.jobs.items.map((j) => (j.id.startsWith(prefix + '-') ? +j.id.slice(prefix.length + 1) || 0 : 0))) + 1
-      return json(200, { status: 'ok', rev: cs.jobs.rev, items: { id: `${prefix}-${String(seq).padStart(4, '0')}` } })
+      // J-NNNN only, as the gateway; a console stores the job under its own prefix, so every held id counts,
+      // by the number after its first dash, standing in for the seq the gateway persists
+      seq = Math.max(seq, ...cs.jobs.items.map((j) => { const i = j.id.indexOf('-'); return i > 0 ? +j.id.slice(i + 1) || 0 : 0 })) + 1
+      return json(200, { status: 'ok', rev: cs.jobs.rev, items: { id: `J-${String(seq).padStart(4, '0')}` } })
     }
     if (req.method === 'POST' && url.pathname === '/api/knowledge/propose') return json(200, propose(await parse(req), caller))
     if (req.method === 'POST' && url.pathname === '/api/knowledge/decide') return json(200, decide(await parse(req)))

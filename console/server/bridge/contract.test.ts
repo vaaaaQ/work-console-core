@@ -142,13 +142,15 @@ test("a seed's get that throws answers 500 naming the error, is logged, and leav
   } finally { await f.close() }
 })
 
-test('the fake mints job ids with the prefix it was started with, J by default', async () => {
+test('the fake mints J-NNNN only, as the gateway does, numbered past every job it holds whatever its prefix', async () => {
   const mint = async (f: FakeGateway) => {
     const r = await fetch(f.url + '/api/state/new-job-id', { method: 'POST', headers: { authorization: `Bearer ${f.token}`, 'content-type': 'application/json' }, body: '{}' })
     return ((await r.json()) as { items: { id: string } }).items.id
   }
-  const q = await startFakeGateway({ prefix: 'Q' }), d = await startFakeGateway()
+  const fresh = await startFakeGateway(), held = await startFakeGateway()
   try {
-    assert.deepEqual([await mint(q), await mint(q), await mint(d)], ['Q-0001', 'Q-0002', 'J-0001'])
-  } finally { await q.close(); await d.close() }
+    assert.deepEqual([await mint(fresh), await mint(fresh)], ['J-0001', 'J-0002'])
+    assert.equal((await call(held, 'POST', '/api/state/put', { concept: 'jobs', id: 'A-0003', doc: { t: 'x' }, expectV: null })).status, 'ok')
+    assert.equal(await mint(held), 'J-0004', 'a held A-0003 counts as the seq a real gateway keeps')
+  } finally { await fresh.close(); await held.close() }
 })

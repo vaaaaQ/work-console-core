@@ -87,7 +87,7 @@ test('main starts on loopback with a fake gateway per workspace, recovers runs, 
     const t0 = Date.now()
     while ((await state()).bridge.state !== 'ok') { if (Date.now() - t0 > 5000) throw new Error('the fake never came up'); await new Promise((r) => setTimeout(r, 20)) }
     const r = await fetch(`http://127.0.0.1:${m.loopbackPort}/api/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ t: 'Prefix', key: 'ACME-1', pb: 'action', prj: 'platform', ws: 'acme' }) })
-    assert.match(((await r.json()) as { job: Job }).job.id, /^A-\d{4}$/, "Acme's fake mints Acme's prefix")
+    assert.match(((await r.json()) as { job: Job }).job.id, /^A-\d{4}$/, "the fake's J-NNNN comes back under Acme's prefix")
   } finally { await m.close() }
 })
 

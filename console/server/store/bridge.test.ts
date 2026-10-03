@@ -12,11 +12,11 @@ import { demoFake, demoSeed } from '../testkit.ts'
 import { bridgeStore } from './bridge.ts'
 import { Conflict } from './port.ts'
 
-async function setup() {
+async function setup(prefix = 'J') {
   const fake = await startFakeGateway({ statusMs: 50, seed: demoFake() })
   const bus = new Bus()
   const client = new BridgeClient({ url: fake.url, token: () => fake.token, bus, backoff: [30, 60] })
-  const store = bridgeStore({ bridge: client, bus, playbooks: PB0 })
+  const store = bridgeStore({ bridge: client, bus, playbooks: PB0, prefix })
   client.start()
   await until(() => client.available())
   const stop = async () => { client.stop(); await fake.close() }
@@ -130,11 +130,24 @@ test('runs are stored and replaced by id', async () => {
   } finally { await stop() }
 })
 
-test('next job ids never repeat', async () => {
-  const { store, stop } = await setup()
+test('next job ids never repeat; prefix J keeps the gateway ids as they are', async () => {
+  const { store, stop } = await setup('J')
   try {
     assert.deepEqual([await store.nextJobId(), await store.nextJobId()], ['J-0001', 'J-0002'])
   } finally { await stop() }
+})
+
+test("the gateway's J-NNNN comes back under the workspace prefix, its digits kept", async () => {
+  const { store, stop } = await setup('B')
+  try {
+    assert.deepEqual([await store.nextJobId(), await store.nextJobId()], ['B-0001', 'B-0002'])
+  } finally { await stop() }
+})
+
+test('a gateway id that is not J-NNNN is an error naming it, never a job id', async () => {
+  const bridge = { read: async () => ({}), state: async () => ({ status: 'ok', rev: 1, items: { id: 'X-1' } }) }
+  const store = bridgeStore({ bridge, bus: new Bus(), playbooks: PB0, prefix: 'B' })
+  await assert.rejects(store.nextJobId(), (e: unknown) => e instanceof GatewayError && e.status === 502 && /X-1/.test(e.message))
 })
 
 test('while the workplace is away, reads and writes fail with 503', async () => {
