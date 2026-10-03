@@ -6,7 +6,7 @@ import pg from 'pg'
 import type { Job, Playbook } from '../../src/model/types.ts'
 import { Bus } from '../events.ts'
 import type { Ev } from '../events.ts'
-import { pgSource } from './pg.ts'
+import { pgConn, pgSource } from './pg.ts'
 import type { PgSource } from './pg.ts'
 import { Conflict } from './port.ts'
 
@@ -103,7 +103,8 @@ test("another writer's job and run changes reach this bus; its own writes do not
   })
 })
 
-test('the source says ok once the database answers, unavailable when it cannot; a store call then answers 503', { skip }, async () => {
+test('the source says ok once the database answers, unavailable when it cannot, with the reason once; a store call then answers 503', { skip }, async (t) => {
+  const said = t.mock.method(console, 'error', () => undefined)
   const bus = new Bus(), evs: Ev[] = []
   bus.on((e) => evs.push(e))
   const dead = pgSource({ url: 'postgres://nobody@127.0.0.1:9/none', ws: 'w', bus, checkMs: 200 })
@@ -112,6 +113,7 @@ test('the source says ok once the database answers, unavailable when it cannot; 
     await new Promise((r) => setTimeout(r, 600))
     assert.equal(dead.available(), false)
     assert.equal(evs.filter((e) => e.kind === 'bridge').length, 0, 'never up, so nothing flipped')
+    assert.deepEqual(said.mock.calls.map((c) => String(c.arguments[0]).startsWith('w: the database is unavailable: ')), [true])
     await assert.rejects(dead.store({ prefix: 'AD', playbooks: {} }).jobs(), (e) => (e as { status?: number }).status === 503)
     assert.equal((await dead.read(['chat'])).chat.status, 'unsupported')
   } finally { dead.stop() }
@@ -120,7 +122,9 @@ test('the source says ok once the database answers, unavailable when it cannot; 
   })
 })
 
-test('a database that goes away while up flips the source to unavailable, and back to ok when it returns', { skip }, async () => {
+test('a database that goes away while up flips the source to unavailable, and back to ok when it returns', { skip }, async (t) => {
+  // the source says why it went away; that line is the other test's
+  t.mock.method(console, 'error', () => undefined)
   const u = new globalThis.URL(URL!), socks = new Set<net.Socket>()
   const listen = (port = 0) => new Promise<net.Server>((res) => {
     const s = net.createServer((c) => {
@@ -151,6 +155,31 @@ test('a database that goes away while up flips the source to unavailable, and ba
     src.stop()
     for (const s of socks) s.destroy()
     proxy.close()
+    const c = new pg.Client({ connectionString: URL })
+    await c.connect(); await c.query(`drop schema if exists "${schema}" cascade`); await c.end()
+  }
+})
+
+test('a password function is the password, even where the url has none; the url then goes in as fields', () => {
+  const pw = () => 'pw'
+  assert.deepEqual(pgConn('postgres://a@h:1/db'), { connectionString: 'postgres://a@h:1/db' })
+  assert.deepEqual(pgConn('postgres://a%40b@[::1]/db', pw), { host: '::1', port: 5432, user: 'a@b', database: 'db', password: pw })
+  assert.throws(() => pgConn('postgres://a@h/db?sslmode=require', pw), /takes no query/)
+})
+
+test('a source whose password comes from a function connects to a url without one', { skip }, async () => {
+  const u = new globalThis.URL(URL!), pw = decodeURIComponent(u.password)
+  u.password = ''
+  const schema = `wc_test_${randomBytes(4).toString('hex')}`
+  const src = pgSource({ url: u.href, password: () => pw, schema, ws: 'w', bus: new Bus(), checkMs: 200 })
+  try {
+    src.start()
+    await until(() => src.available())
+    const s = src.store({ prefix: 'AD', playbooks: PB })
+    await s.putJob(job('AD-0001'), null)
+    assert.deepEqual((await s.jobs()).map((j) => j.id), ['AD-0001'])
+  } finally {
+    src.stop()
     const c = new pg.Client({ connectionString: URL })
     await c.connect(); await c.query(`drop schema if exists "${schema}" cascade`); await c.end()
   }

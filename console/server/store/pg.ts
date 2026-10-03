@@ -35,15 +35,25 @@ function away(e: unknown) {
   return !(typeof c === 'string' && /^[0-9A-Z]{5}$/.test(c)) || /^(08|53|57)/.test(c)
 }
 
+/** pg's parse of a connection string sets the password, null when the url has none, and that beats a password
+    option; so with a password function the url goes in as fields, and the function is the password */
+export function pgConn(url: string, password?: () => string): pg.ClientConfig {
+  if (!password) return { connectionString: url }
+  const u = new URL(url)
+  if (u.search) throw new Error('a database url read with a password function takes no query')
+  return { host: u.hostname.replace(/^\[|\]$/g, ''), port: Number(u.port || 5432), user: decodeURIComponent(u.username),
+    database: decodeURIComponent(u.pathname.slice(1)) || undefined, password }
+}
+
 export function pgSource(o: PgSourceOpts): PgSource {
   const schema = o.schema ?? 'work_console'
   if (!SCHEMA.test(schema)) throw new Error(`schema ${schema} must match ${SCHEMA}`)
   const t = (name: string) => `"${schema}".${name}`
   const me = randomBytes(6).toString('hex')
-  const conn = { connectionString: o.url, ...(o.password ? { password: o.password } : {}), connectionTimeoutMillis: 5000 }
+  const conn = { ...pgConn(o.url, o.password), connectionTimeoutMillis: 5000 }
   const pool = new pg.Pool({ ...conn, max: 5, allowExitOnIdle: true })
   let up = false, timer: ReturnType<typeof setInterval> | undefined, ready: Promise<void> | null = null
-  let listener: pg.Client | null = null, checking = false, stopped = false
+  let listener: pg.Client | null = null, checking = false, stopped = false, said = ''
 
   function set(next: boolean) {
     if (next === up) return
@@ -115,9 +125,13 @@ export function pgSource(o: PgSourceOpts): PgSource {
       await ensure()
       await pool.query('select 1')
       await listen()
+      said = ''
       set(true)
-    } catch {
+    } catch (e) {
       if (listener) { const c = listener; listener = null; void c.end().catch(() => {}) }
+      // once per new reason, so a wrong url or password shows on the console without a line every check
+      const why = (e as Error).message || String((e as { code?: unknown }).code ?? e)
+      if (why !== said && !stopped) { said = why; console.error(`${o.ws}: the database is unavailable: ${why}`) }
       set(false)
     } finally { checking = false }
   }
