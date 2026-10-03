@@ -18,13 +18,17 @@ export interface RunTools {
   journal(o: string, c: string, n: string): Promise<void>
   /** a png of a page as an artifact; only where the workspace allows it */
   screenshot?(o: Shot & { name: string }): Promise<void>
+  /** a new job in the run's own workspace, its id; only where the workspace allows it */
+  createJob?(o: { title: string; playbook?: string; key?: string; project?: string; start?: boolean }): Promise<string>
+  /** starts a ready job of the run's own workspace */
+  startJob?(id: string): Promise<void>
 }
 export type SdkEvent = { k: 'session'; id: string } | { k: 'text'; t: string } | { k: 'tool'; name: string; input: string } | { k: 'result'; ok: boolean; error?: string }
 export interface Sdk { start(o: { prompt: string; resume?: string; cwd: string; tools: RunTools; abort: AbortController }): AsyncIterable<SdkEvent> }
 
 const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status',
   'mcp__bridge__knowledge_search', 'mcp__bridge__knowledge_read', 'mcp__bridge__knowledge_propose']
-export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__screenshot', ...BRIDGE]
+export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__screenshot', 'mcp__run__create_job', 'mcp__run__start_job', ...BRIDGE]
 export const DENY = [
   'mcp__bridge__bridge_act', 'mcp__work-console',
   'Read(~/.bridge/**)', 'Read(~/.work-console/**)',
@@ -77,6 +81,11 @@ export function runToolDefs(tools: RunTools) {
     ...(tools.screenshot ? [tool('screenshot', 'Take a png of a page (http, https, or a file under your working dir) and save it as an artifact of this step: the proof of a UI change.',
       { url: z.string().min(1), name: z.string().min(1), width: z.number().int().optional(), height: z.number().int().optional(), fullPage: z.boolean().optional() },
       (a) => wrap(() => tools.screenshot!(a), 'screenshot saved')())] : []),
+    ...(tools.createJob ? [tool('create_job', 'Create a job in this workspace for work found along the way that is not this job\'s. playbook and project default to the workspace\'s own; start true starts it at once. At most 5 per run. Returns the new id.',
+      { title: z.string().min(1), playbook: z.string().min(1).optional(), key: z.string().min(1).optional(), project: z.string().min(1).optional(), start: z.boolean().optional() },
+      async (a) => { try { return done(`created ${await tools.createJob!(a)}`) } catch (e) { return failed(e) } })] : []),
+    ...(tools.startJob ? [tool('start_job', 'Start a ready job of this workspace by its id.', { id: z.string().min(1) },
+      (a) => wrap(() => tools.startJob!(a.id), 'job started')())] : []),
   ]
 }
 

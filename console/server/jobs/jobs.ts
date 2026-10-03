@@ -10,9 +10,9 @@ import type { Store } from '../store/port.ts'
    conflict, because they describe something that already happened. A Claude Code session sends the
    page's commands plus returnTo and signs the journal; the console signs what it decides itself. */
 
-export type Who = 'page' | 'runner' | 'session' | 'console'
-const ALLOWED: Partial<Record<Who, Set<string>>> = { page: new Set(PAGE_OPS), session: new Set(SESSION_OPS), console: new Set(['noteAdd', 'reopen', 'stepDone', 'artifact', 'journal']) }
-const BY: Partial<Record<Who, string>> = { session: 'Claude Code', console: 'console' }
+export type Who = 'page' | 'runner' | 'session' | 'console' | 'run'
+const ALLOWED: Partial<Record<Who, Set<string>>> = { page: new Set(PAGE_OPS), session: new Set(SESSION_OPS), console: new Set(['noteAdd', 'reopen', 'stepDone', 'artifact', 'journal']), run: new Set(['start']) }
+const BY: Partial<Record<Who, string>> = { session: 'Claude Code', console: 'console', run: 'LLM' }
 
 export class Jobs {
   private store: Store; private bus: Bus; private ctx: () => T.Ctx; private gate: () => boolean

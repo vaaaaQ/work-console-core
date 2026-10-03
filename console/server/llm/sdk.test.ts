@@ -47,3 +47,15 @@ test('the run server has its own four tools, and screenshot only when the run ca
   assert.deepEqual(runToolDefs({ ...base, screenshot: none }).map((d) => d.name).at(-1), 'screenshot')
   for (const d of runToolDefs({ ...base, screenshot: none })) assert.ok(ALLOW.includes(`mcp__run__${d.name}`), d.name)
 })
+
+test('create_job and start_job only when the run carries them; create_job answers with the new id', async () => {
+  const none = async () => {}
+  const base: RunTools = { submitDraft: none, addArtifact: none, addArtifactFile: none, journal: none }
+  assert.ok(!runToolDefs(base).some((d) => d.name === 'create_job' || d.name === 'start_job'))
+  const defs = runToolDefs({ ...base, createJob: async () => 'AD-0009', startJob: none })
+  assert.deepEqual(defs.map((d) => d.name).slice(-2), ['create_job', 'start_job'])
+  for (const d of defs) assert.ok(ALLOW.includes(`mcp__run__${d.name}`), d.name)
+  const create = defs.find((d) => d.name === 'create_job')!.handler as (a: unknown, x: unknown) => Promise<{ content: unknown }>
+  const r = await create({ title: 'x' }, {})
+  assert.deepEqual(r.content, [{ type: 'text', text: 'created AD-0009' }])
+})

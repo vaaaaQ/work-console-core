@@ -43,8 +43,9 @@ export interface WorkspaceServer {
   /** default: bridgeStore over the source; playbooks = the built-in ones, the core's and the page's */
   store?(source: Source, cfg: WsConfig, o: { bus: Bus; home: string; ws: string; prefix: string; playbooks: Record<string, Playbook> }): Store
   /** bridge false: no gateway, so runs get neither the bridge MCP server nor its tools;
-      screenshot: runs may take pngs of pages (it reaches any http url, so only where runs read no untrusted text) */
-  llm?: { runTools?: string[]; mcp?: Record<string, unknown>; bridge?: boolean; screenshot?: boolean }
+      screenshot: runs may take pngs of pages (it reaches any http url, so only where runs read no untrusted text);
+      jobTools: runs may create jobs in their workspace (board.start's playbook, the pack's first project by default) and start them */
+  llm?: { runTools?: string[]; mcp?: Record<string, unknown>; bridge?: boolean; screenshot?: boolean; jobTools?: boolean }
   /** each job's own dir for its runs, cleaned up when the job closes; default: every run in cfg.workDir. Not in fake mode */
   workDir?(cfg: WsConfig): WorkDir
   plugins?(x: PluginCtx): Plugin[]

@@ -409,3 +409,29 @@ test('screenshot keeps a png of a page as the step\'s artifact; a file outside t
   await until(() => plain.sessions.length === 1)
   assert.equal(plain.sessions[0].tools.screenshot, undefined)
 })
+
+test('job tools create jobs in the run\'s workspace and start them; at most 5 a run, other prefixes refused, none without the option', async () => {
+  const s = setup(), [t] = await targets(s.jobs, 1)
+  const runner = new Runner({ store: s.store, jobs: s.jobs, bus: s.bus, sdk: fakeSdk(s.sessions).sdk, cwd: s.dir, gate: () => true, artifactsDir: join(s.dir, 'arts'), ctx: demoCtx,
+    jobTools: { ws: 'acme', pb: 'action', prj: ['p', 'q'], prefix: 'J' } })
+  await runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  const tools = s.sessions[0].tools
+  const a = await tools.createJob!({ title: 'Tidy the docs' }), ja = (await s.jobs.get(a))!
+  assert.deepEqual([ja.st, ja.pb, ja.prj, ja.ws, ja.jr[0].a], ['ready', 'action', 'p', 'acme', 'LLM'])
+  assert.equal(ja.jr[0].o, `Created the job from ${t.job}.`)
+  const b = await tools.createJob!({ title: 'Fix the build', project: 'q', start: true })
+  assert.equal((await s.jobs.get(b))!.st, 'active')
+  await assert.rejects(tools.createJob!({ title: 'x', project: 'zz' }), /unknown project zz/)
+  await assert.rejects(tools.createJob!({ title: 'x', playbook: 'nope' }), /unknown playbook nope/)
+  await tools.startJob!(a)
+  assert.equal((await s.jobs.get(a))!.st, 'active')
+  await assert.rejects(tools.startJob!('B-0001'), /not a job of this workspace/)
+  for (let i = 0; i < 3; i++) await tools.createJob!({ title: `more ${i}` })
+  await assert.rejects(tools.createJob!({ title: 'sixth' }), /already created 5 jobs/)
+  const plain = setup(), [p] = await targets(plain.jobs, 1)
+  await plain.runner.ask(p.job, p.step, 'q')
+  await until(() => plain.sessions.length === 1)
+  assert.equal(plain.sessions[0].tools.createJob, undefined)
+  assert.equal(plain.sessions[0].tools.startJob, undefined)
+})

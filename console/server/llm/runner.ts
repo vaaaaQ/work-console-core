@@ -4,7 +4,7 @@ import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type * as T from '../../src/model/transitions.ts'
 import type { Resolved } from '../../src/model/context.ts'
-import type { Job, RunRec } from '../../src/model/types.ts'
+import type { Job, RunRec, Ws } from '../../src/model/types.ts'
 import { HttpError } from '../events.ts'
 import type { Bus } from '../events.ts'
 import type { Jobs } from '../jobs/jobs.ts'
@@ -21,6 +21,8 @@ import type { WorkDir } from './worktree.ts'
 const FEED_MAX = 200
 /** the biggest file a run may keep as an artifact */
 const FILE_MAX = 20 << 20
+/** the most jobs one run may create */
+const JOBS_MAX = 5
 /** started: the record says running; until then cancel and interruptAll leave settling to run() */
 type Live = { ac: AbortController; why: 'cancelled' | 'interrupted' | null; reason?: string; drafted: boolean; started: boolean }
 
@@ -31,11 +33,16 @@ export function safeName(n: string) {
   return s
 }
 
+/** where a run's new jobs go: its workspace, the default playbook and the projects (the first is the default), and the
+    prefix of the jobs it may start */
+export type JobTools = { ws: Ws; pb: string; prj: string[]; prefix: string }
+
 export class Runner {
   private store: Store; private jobs: Jobs; private bus: Bus; private sdk: Sdk; private cwd: string
   private max: number; private gate: () => boolean; private artifactsDir: string; private ctx: () => T.Ctx
   private context: (j: Job) => Promise<Resolved[]>; private me?: string; private bridge?: boolean; private workDir?: WorkDir
   private screenshot?: (o: Shot & { out: string; fileRoot?: string }) => Promise<unknown>
+  private jobTools?: JobTools
   private queue: { id: string; resume?: string }[] = []
   private live = new Map<string, Live>()
   private feeds = new Map<string, string[]>()
@@ -49,9 +56,11 @@ export class Runner {
     context?: (j: Job) => Promise<Resolved[]>; me?: string; bridge?: boolean; workDir?: WorkDir
     /** takes a png of a page into out; none = runs get no screenshot tool */
     screenshot?: (o: Shot & { out: string; fileRoot?: string }) => Promise<unknown>
+    /** runs may create jobs in this workspace and start its jobs; none = no job tools */
+    jobTools?: JobTools
   }) {
     this.store = o.store; this.jobs = o.jobs; this.bus = o.bus; this.sdk = o.sdk; this.cwd = o.cwd
-    this.max = o.max ?? 3; this.gate = o.gate; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => []); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot
+    this.max = o.max ?? 3; this.gate = o.gate; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => []); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot; this.jobTools = o.jobTools
   }
 
   /** draft ready, failed or interrupted: the moments worth a push */
@@ -205,7 +214,8 @@ export class Runner {
       if (!rel || rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error(`${p} is outside the work dir`)
       return real
     }
-    const shot = this.screenshot
+    const shot = this.screenshot, jt = this.jobTools
+    let made = 0
     const tools = {
       submitDraft: async (t: string) => {
         if (l.drafted) throw new Error('a draft was already submitted for this run')
@@ -228,6 +238,22 @@ export class Runner {
           if (u.protocol === 'file:') await within(fileURLToPath(u))
           const name = safeName(o.name).replace(/\.[a-z0-9]{1,5}$/i, '') + '.png'
           await keep(name, (f) => shot({ url: u.href, width: o.width, height: o.height, fullPage: o.fullPage, out: f, fileRoot: cwd }).then(() => {}))
+        },
+      } : {}),
+      ...(jt ? {
+        createJob: async (o: { title: string; playbook?: string; key?: string; project?: string; start?: boolean }) => {
+          const prj = o.project ?? jt.prj[0] ?? ''
+          if (jt.prj.length && !jt.prj.includes(prj)) throw new Error(`unknown project ${prj}; one of ${jt.prj.join(', ')}`)
+          if (made >= JOBS_MAX) throw new Error(`this run already created ${JOBS_MAX} jobs`)
+          made++
+          let id: string
+          try { id = (await this.jobs.create({ t: o.title, key: o.key ?? '', pb: o.playbook ?? jt.pb, prj, ws: jt.ws, src: rec.job }, 'run')).id } catch (e) { made--; throw e }
+          if (o.start) await this.jobs.cmd(id, { op: 'start' }, undefined, 'run')
+          return id
+        },
+        startJob: async (id: string) => {
+          if (!id.startsWith(jt.prefix + '-')) throw new Error(`${id} is not a job of this workspace`)
+          await this.jobs.cmd(id, { op: 'start' }, undefined, 'run')
         },
       } : {}),
     }
