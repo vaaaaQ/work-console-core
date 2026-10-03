@@ -17,7 +17,8 @@ const skip = URL ? false : 'WC_TEST_PG_URL is not set'
 const PB: Record<string, Playbook> = { built: { n: 'Built', d: '', ph: [{ c: 'B', n: 'B', s: [{ id: 'b1', t: 'Do', m: 'you', x: 'done' }] }] } }
 const job = (id: string, t = 'a job') => ({ id, t, ws: 'w', pb: 'built', key: 'NEW', prj: 'main', st: 'ready', flow: {}, jr: [], ts: 1 }) as unknown as Job
 
-async function until(f: () => boolean, ms = 5000) {
+// a cap, not a wait: under a full parallel suite the first DDL on a fresh schema has taken over 4 s
+async function until(f: () => boolean, ms = 20000) {
   const t0 = Date.now()
   while (!f()) { if (Date.now() - t0 > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 20)) }
 }
