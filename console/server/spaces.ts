@@ -121,17 +121,35 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
 
   const jobs = new Jobs({ store, bus, ctx, gate })
   const sdk = o.sdk ?? agentSdk({ gatewayUrl: cfg.gatewayUrl, llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools, mcp: w.llm?.mcp, bridge: w.llm?.bridge })
+  // fake mode touches no real repo
+  const workDir = fake ? undefined : w.workDir?.(cfg)
   const runner = new Runner({
     store, jobs, bus, sdk, cwd: cfg.workDir, max: cfg.maxSessions, gate, artifactsDir: o.artifactsDir, ctx,
-    context: (j) => resolveContext(source, j, w.page.me), me: w.page.me, bridge: w.llm?.bridge,
+    context: (j) => resolveContext(source, j, w.page.me), me: w.page.me, bridge: w.llm?.bridge, workDir,
   })
   const offInterrupt = bus.on((e) => {
     if (e.kind === 'bridge' && e.state === 'unavailable')
       void runner.interruptAll('the bridge went away').catch((err) => console.error(`interrupting the runs of ${id}:`, (err as Error).message))
   })
 
+  /** a closed job's work dir goes; what was kept and why is journaled, unless the journal already says it */
+  const cleanUp = async (j: Job) => {
+    const line = await workDir!.closed!(j)
+    if (line && j.jr[0]?.c !== line) await jobs.cmd(j.id, { op: 'journal', o: 'Cleaned up after the job.', c: line, n: '-', a: 'console' }, undefined, 'console')
+  }
+  // one at a time: a load can find many closed jobs, and each is a few git calls
+  let cleaning = Promise.resolve()
+  const clean = (j: Job) => {
+    if (workDir?.closed) cleaning = cleaning.then(() => cleanUp(j)).catch((e) => console.error(`cleaning up after ${j.id}:`, (e as Error).message))
+  }
+
   const known = new Map<string, Job>()
-  bus.on((e) => { if (e.kind === 'job') known.set(e.job.id, e.job) })
+  bus.on((e) => {
+    if (e.kind !== 'job') return
+    const was = known.get(e.job.id)
+    known.set(e.job.id, e.job)
+    if (was && !T.isClosed(was) && T.isClosed(e.job)) clean(e.job)
+  })
   const push: Push = (t, b, u) => o.push(t, b, withWs(u, id))
   const returns = new BoardReturns({
     bus, jobs, ctx, push, key: (i) => w.page.board.key(i),
@@ -141,7 +159,9 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   let recovered = false
   const stopLoading = onBridgeBack(bus, async () => {
     PB = await store.playbooks()
-    for (const j of await store.jobs()) known.set(j.id, j)
+    const all = await store.jobs()
+    for (const j of all) known.set(j.id, j)
+    for (const j of all) if (T.isClosed(j)) clean(j)
     await runner.recover(recovered ? 'the bridge went away' : 'the console restarted')
     recovered = true
   })

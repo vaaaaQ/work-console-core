@@ -7,6 +7,7 @@ import { readToken } from './config.ts'
 import type { Bus } from './events.ts'
 import type { Bridge } from './http/app.ts'
 import type { Jobs } from './jobs/jobs.ts'
+import type { WorkDir } from './llm/worktree.ts'
 import type { Store } from './store/port.ts'
 
 /* The server half of a workspace: how its gateway is reached, what job ids it mints, what its plugins add.
@@ -40,6 +41,8 @@ export interface WorkspaceServer {
   store?(source: Source, cfg: WsConfig, o: { bus: Bus; home: string; ws: string; prefix: string; playbooks: Record<string, Playbook> }): Store
   /** bridge false: no gateway, so runs get neither the bridge MCP server nor its tools */
   llm?: { runTools?: string[]; mcp?: Record<string, unknown>; bridge?: boolean }
+  /** each job's own dir for its runs, cleaned up when the job closes; default: every run in cfg.workDir. Not in fake mode */
+  workDir?(cfg: WsConfig): WorkDir
   plugins?(x: PluginCtx): Plugin[]
   fake?(): FakeSeed                                          // default: derived from page.demo
 }

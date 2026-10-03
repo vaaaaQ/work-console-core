@@ -10,6 +10,7 @@ import type { Jobs } from '../jobs/jobs.ts'
 import type { Store } from '../store/port.ts'
 import { buildPrompt, RESUME_PROMPT } from './prompt.ts'
 import type { Sdk } from './sdk.ts'
+import type { WorkDir } from './worktree.ts'
 
 /* One Claude Code session per ask, at most `max` at a time; the rest wait in order. The run record
    is the durable half (state, session id); the feed lives in memory while the session runs. */
@@ -28,20 +29,21 @@ export function safeName(n: string) {
 export class Runner {
   private store: Store; private jobs: Jobs; private bus: Bus; private sdk: Sdk; private cwd: string
   private max: number; private gate: () => boolean; private artifactsDir: string; private ctx: () => T.Ctx
-  private context: (j: Job) => Promise<Resolved[]>; private me?: string; private bridge?: boolean
+  private context: (j: Job) => Promise<Resolved[]>; private me?: string; private bridge?: boolean; private workDir?: WorkDir
   private queue: { id: string; resume?: string }[] = []
   private live = new Map<string, Live>()
   private feeds = new Map<string, string[]>()
   private settled: ((r: RunRec) => void)[] = []
 
   /** context = reads the job's context items for a new run's prompt; me = what prompts call the user (unset or empty: "the user");
-      bridge false = the workspace has no gateway, so prompts do not point at the bridge tools */
+      bridge false = the workspace has no gateway, so prompts do not point at the bridge tools;
+      workDir = each job's own dir, in place of cwd */
   constructor(o: {
     store: Store; jobs: Jobs; bus: Bus; sdk: Sdk; cwd: string; max?: number; gate: () => boolean; artifactsDir: string; ctx: () => T.Ctx
-    context?: (j: Job) => Promise<Resolved[]>; me?: string; bridge?: boolean
+    context?: (j: Job) => Promise<Resolved[]>; me?: string; bridge?: boolean; workDir?: WorkDir
   }) {
     this.store = o.store; this.jobs = o.jobs; this.bus = o.bus; this.sdk = o.sdk; this.cwd = o.cwd
-    this.max = o.max ?? 3; this.gate = o.gate; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => []); this.me = o.me; this.bridge = o.bridge
+    this.max = o.max ?? 3; this.gate = o.gate; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => []); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir
   }
 
   /** draft ready, failed or interrupted: the moments worth a push */
@@ -174,6 +176,12 @@ export class Runner {
     if (l.why) { await this.end(r, l.why, l.reason || l.why); return }
     const job = await this.jobs.get(r.job)
     if (!job) { await this.end(r, 'failed', 'the job is gone'); return }
+    // a resumed session is found by its dir, so it must get the same one
+    let cwd = this.cwd
+    if (this.workDir) {
+      try { cwd = await this.workDir.dir(job) } catch (e) { if (!l.why) await this.end(r, 'failed', `no work dir: ${(e as Error).message}`); return }
+      if (l.why) return // cancel / interruptAll settled it while the dir was made
+    }
     const rec = r
     const tools = {
       submitDraft: async (t: string) => {
@@ -194,8 +202,9 @@ export class Runner {
     let error: string | undefined
     try {
       // a resumed session already has its context
-      const prompt = resume ? RESUME_PROMPT : buildPrompt(this.ctx(), job, rec.step, rec.q, await this.context(job), this.me, { bridge: this.bridge })
-      for await (const e of this.sdk.start({ prompt, resume, cwd: this.cwd, tools, abort: l.ac })) {
+      const prompt = resume ? RESUME_PROMPT : buildPrompt(this.ctx(), job, rec.step, rec.q, await this.context(job), this.me,
+        { bridge: this.bridge, ...(this.workDir ? { workDir: cwd, branch: this.workDir.branch?.(job) } : {}) })
+      for await (const e of this.sdk.start({ prompt, resume, cwd, tools, abort: l.ac })) {
         if (l.why) break
         if (e.k === 'session') { if (r!.session !== e.id) { r = { ...r!, session: e.id }; await this.save(r) } }
         else if (e.k === 'text') this.line(id, e.t)

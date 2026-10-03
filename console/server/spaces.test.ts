@@ -15,6 +15,7 @@ import type { Space } from './spaces.ts'
 import { acme, acmeServer, fakeSdk } from './testkit.ts'
 import { fakeSeed } from './workspace.ts'
 import type { WorkspaceServer, WsConfig } from './workspace.ts'
+import type { WorkDir } from './llm/worktree.ts'
 import type { Store } from './store/port.ts'
 
 /** Acme under another id and prefix; its playbooks stay Acme's, so it brings none of its own */
@@ -45,9 +46,9 @@ async function twoSpaces(a: WorkspaceServer, b: WorkspaceServer) {
   return [x, y] as const
 }
 
-async function until(f: () => boolean, ms = 5000) {
+async function until(f: () => boolean | Promise<boolean>, ms = 5000) {
   const t0 = Date.now()
-  while (!f()) { if (Date.now() - t0 > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 10)) }
+  while (!(await f())) { if (Date.now() - t0 > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 10)) }
 }
 
 test('a job id finds its space by the prefix before the first dash; an unknown one is a 404 naming it', () => {
@@ -201,4 +202,54 @@ test('in fake mode the fake stands in for the store too: the store hook is not c
     await until(() => space.source.available())
     assert.ok(Array.isArray(await space.store.jobs()))
   } finally { await space.close() }
+})
+
+test("a job's work dir: runs get it, closing the job cleans it once, a load cleans closed jobs, fake mode has none", async () => {
+  install([{ page: acme }])
+  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-')), calls: string[] = []
+  const fakeGw = await startFakeGateway({ seed: fakeSeed(acmeServer), me: acme.me, board: acme.board })
+  const tokenPath = join(dir, 'acme.token')
+  writeFileSync(tokenPath, fakeGw.token)
+  const workDir: WorkDir = {
+    dir: async (j) => join(dir, 'jobs', j.id), branch: (j) => `job/${j.id.toLowerCase()}`,
+    closed: async (j) => { calls.push(j.id); return `kept ${j.id}` },
+  }
+  const w: WorkspaceServer = { ...acmeServer, workDir: () => workDir }
+  const f = fakeSdk()
+  const space = await makeSpace(w, { cfg: { ...wsCfg(dir), gatewayUrl: fakeGw.url, consoleTokenPath: tokenPath }, home: dir, artifactsDir: join(dir, 'arts'), sdk: f.sdk, fake: false, push: async () => {} })
+  try {
+    space.source.start()
+    await until(() => space.source.available())
+    const j = await space.jobs.create({ t: 'Work dir', key: 'NEW', pb: 'action', prj: acme.pack.prj[0], ws: space.id })
+    const started = (await space.jobs.cmd(j.id, { op: 'start' })).job
+    const step = T.steps(space.ctx(), j.pb).find((x) => T.isLive(started.flow[x.id]))!.id
+    await space.runner.ask(j.id, step, 'go')
+    await until(() => f.sessions.length === 1)
+    assert.equal(f.sessions[0].cwd, join(dir, 'jobs', j.id))
+    assert.ok(f.sessions[0].prompt.includes(`Work dir: ${join(dir, 'jobs', j.id)} (a git worktree on branch job/${j.id.toLowerCase()}, yours alone; commit there)`), f.sessions[0].prompt)
+    await f.sessions[0].tools.submitDraft('d'); f.sessions[0].end()
+    await until(async () => (await space.runner.all()).every((r) => r.state !== 'running'))
+    assert.deepEqual(calls, [])
+    await space.jobs.cmd(j.id, { op: 'close', st: 'cancelled' })
+    await until(() => space.known.get(j.id)?.jr[0]?.c === `kept ${j.id}`)
+    const last = space.known.get(j.id)!.jr[0]
+    assert.equal(last.a, 'console')
+    await new Promise((r) => setTimeout(r, 50))
+    assert.deepEqual(calls, [j.id], 'the journal line it wrote does not clean again')
+    // a comeback loads the jobs again: the closed one is checked, and the same line is not written twice
+    const n = space.known.get(j.id)!.jr.length
+    fakeGw.setDown(true); await until(() => !space.source.available())
+    fakeGw.setDown(false); await until(() => calls.length === 2)
+    await new Promise((r) => setTimeout(r, 50))
+    assert.equal((await space.jobs.get(j.id))!.jr.length, n)
+  } finally { await space.close(); await fakeGw.close() }
+  const fakeSpace = await makeSpace(w, { cfg: wsCfg(dir), home: dir, artifactsDir: join(dir, 'arts'), sdk: fakeSdk().sdk, fake: true, push: async () => {} })
+  try {
+    fakeSpace.source.start()
+    await until(() => fakeSpace.source.available())
+    const j = await fakeSpace.jobs.create({ t: 'Fake', key: 'NEW', pb: 'action', prj: acme.pack.prj[0], ws: fakeSpace.id })
+    await fakeSpace.jobs.cmd(j.id, { op: 'start' }); await fakeSpace.jobs.cmd(j.id, { op: 'close', st: 'cancelled' })
+    await new Promise((r) => setTimeout(r, 50))
+    assert.equal(calls.length, 2, 'fake mode never calls the work dir hook')
+  } finally { await fakeSpace.close() }
 })

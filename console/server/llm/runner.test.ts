@@ -343,3 +343,19 @@ test('a workspace without a gateway: the prompt does not point at the bridge too
   await until(() => s.sessions.length === 1)
   assert.ok(!/bridge_/.test(s.sessions[0].prompt))
 })
+
+test("a run works in its job's own dir; when the dir cannot be made the run fails saying why", async () => {
+  const s = setup(), [a, b] = await targets(s.jobs, 2)
+  let fail = false
+  const workDir = { dir: async (j: { id: string }) => { if (fail) throw new Error('boom'); return join(s.dir, j.id) } }
+  const runner = new Runner({ store: s.store, jobs: s.jobs, bus: s.bus, sdk: fakeSdk(s.sessions).sdk, cwd: s.dir, gate: () => true, artifactsDir: join(s.dir, 'arts'), ctx: demoCtx, workDir })
+  await runner.ask(a.job, a.step, 'q')
+  await until(() => s.sessions.length === 1)
+  assert.equal(s.sessions[0].cwd, join(s.dir, a.job))
+  assert.match(s.sessions[0].prompt, new RegExp(`^Work dir: .*${a.job}$`, 'm'), 'no branch named, none shown')
+  fail = true
+  const rb = await runner.ask(b.job, b.step, 'q')
+  await until(() => s.evs.some((e) => e.kind === 'run' && e.run.id === rb.id && e.run.state === 'failed'))
+  assert.equal((await runner.get(rb.id))!.reason, 'no work dir: boom')
+  assert.equal(s.sessions.length, 1, 'no session started without its dir')
+})

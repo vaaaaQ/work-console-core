@@ -22,9 +22,9 @@ export const demoFake = () => fakeSeed(acmeServer)
 
 /** one scripted LLM session: it runs until the test pushes its events and ends it */
 export class FakeSession {
-  prompt: string; resume?: string; tools: RunTools; abort: AbortController
+  prompt: string; resume?: string; cwd?: string; tools: RunTools; abort: AbortController
   private q: (SdkEvent | null)[] = []; private wake: (() => void) | null = null
-  constructor(o: { prompt: string; resume?: string; tools: RunTools; abort: AbortController }) { this.prompt = o.prompt; this.resume = o.resume; this.tools = o.tools; this.abort = o.abort }
+  constructor(o: { prompt: string; resume?: string; cwd?: string; tools: RunTools; abort: AbortController }) { this.prompt = o.prompt; this.resume = o.resume; this.cwd = o.cwd; this.tools = o.tools; this.abort = o.abort }
   push(e: SdkEvent | null) { this.q.push(e); this.wake?.() }
   end(ok = true, error?: string) { this.push({ k: 'result', ok, error }); this.push(null) }
   async *events(): AsyncIterable<SdkEvent> {
