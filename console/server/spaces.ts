@@ -108,10 +108,11 @@ export async function makeSpace(w: WorkspaceServer, o: SpaceOpts): Promise<Space
 function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): Space {
   const id = w.page.id, bus = new Bus()
   const cfg: WsConfig = fake ? { ...o.cfg, gatewayUrl: fake.url } : o.cfg
-  // the fake stands in for whatever source the workspace brings
+  // the fake stands in for whatever source and store the workspace brings
   const source = fake ? gatewaySource(cfg, { bus, token: () => fake.token }) : w.source?.(cfg, { bus }) ?? gatewaySource(cfg, { bus })
   const builtins = { ...CORE_PB, ...w.page.playbooks }
-  const store = w.store?.(source, cfg, { bus, home: o.home }) ?? bridgeStore({ bridge: source, bus, playbooks: builtins, prefix: w.jobPrefix })
+  const store = (fake ? undefined : w.store?.(source, cfg, { bus, home: o.home, ws: id, prefix: w.jobPrefix, playbooks: builtins }))
+    ?? bridgeStore({ bridge: source, bus, playbooks: builtins, prefix: w.jobPrefix })
   // until B answers, the built-in playbooks stand in
   let PB: Record<string, Playbook> = structuredClone(builtins)
   const TPL = { ...CORE_TPL, ...w.page.templates }

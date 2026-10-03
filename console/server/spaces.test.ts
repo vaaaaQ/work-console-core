@@ -15,6 +15,7 @@ import type { Space } from './spaces.ts'
 import { acme, acmeServer, fakeSdk } from './testkit.ts'
 import { fakeSeed } from './workspace.ts'
 import type { WorkspaceServer, WsConfig } from './workspace.ts'
+import type { Store } from './store/port.ts'
 
 /** Acme under another id and prefix; its playbooks stay Acme's, so it brings none of its own */
 const beta2: WorkspaceServer = { ...acmeServer, page: { ...acme, id: 'beta2', playbooks: {}, me: 'Alex' }, jobPrefix: 'B' }
@@ -174,4 +175,30 @@ test('a workspace hook that throws after its fake gateway started closes the fak
   const broken: WorkspaceServer = { ...acmeServer, plugins: () => { throw new Error('plugin broke') } }
   await assert.rejects(makeSpace(broken, { cfg: wsCfg(dir), home: dir, artifactsDir: join(dir, 'arts'), sdk: fakeSdk().sdk, fake: true, push: async () => {} }), /plugin broke/)
   await until(() => servers() === 0)
+})
+
+test('the store hook gets the workspace id, its prefix and its built-in playbooks', async () => {
+  install([{ page: acme }])
+  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-'))
+  let got: { ws: string; prefix: string; playbooks: Record<string, Playbook> } | undefined
+  const w: WorkspaceServer = { ...acmeServer, store: (_s, _c, o) => { got = o; return {} as Store } }
+  const space = await makeSpace(w, { cfg: wsCfg(dir), home: dir, artifactsDir: join(dir, 'arts'), sdk: fakeSdk().sdk, fake: false, push: async () => {} })
+  try {
+    assert.equal(got?.ws, 'acme')
+    assert.equal(got?.prefix, acmeServer.jobPrefix)
+    for (const id of Object.keys(acme.playbooks)) assert.ok(got?.playbooks[id], `built-in ${id} is passed`)
+    assert.equal(space.store, got && space.store)
+  } finally { await space.close() }
+})
+
+test('in fake mode the fake stands in for the store too: the store hook is not called', async () => {
+  install([{ page: acme }])
+  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-'))
+  const w: WorkspaceServer = { ...acmeServer, store: () => { throw new Error('the store hook was called') } }
+  const space = await makeSpace(w, { cfg: wsCfg(dir), home: dir, artifactsDir: join(dir, 'arts'), sdk: fakeSdk().sdk, fake: true, push: async () => {} })
+  try {
+    space.source.start()
+    await until(() => space.source.available())
+    assert.ok(Array.isArray(await space.store.jobs()))
+  } finally { await space.close() }
 })

@@ -1,4 +1,5 @@
 import { CORE_PB } from '../src/data/playbooks.ts'
+import type { Playbook } from '../src/model/types.ts'
 import { wallIso } from '../src/lib/zone.ts'
 import type { GatewayItem, WorkspacePage } from '../src/workspace.ts'
 import { BridgeClient } from './bridge/client.ts'
@@ -35,7 +36,8 @@ export type FakeSeed = {
 export interface WorkspaceServer {
   page: WorkspacePage; jobPrefix: string; defaults?: Partial<WsConfig>
   source?(cfg: WsConfig, o: { bus: Bus }): Source          // default: gatewaySource
-  store?(source: Source, cfg: WsConfig, o: { bus: Bus; home: string }): Store   // default: bridgeStore over the source
+  /** default: bridgeStore over the source; playbooks = the built-in ones, the core's and the page's */
+  store?(source: Source, cfg: WsConfig, o: { bus: Bus; home: string; ws: string; prefix: string; playbooks: Record<string, Playbook> }): Store
   llm?: { runTools?: string[]; mcp?: Record<string, unknown> }
   plugins?(x: PluginCtx): Plugin[]
   fake?(): FakeSeed                                          // default: derived from page.demo
