@@ -14,7 +14,7 @@ export function navDef(): [string, NavItem[]][] {
   const w = W()
   const src = (on: unknown, it: NavItem): NavItem[] => (on ? [it] : [])
   return [['Work', [['jobs', 'Jobs', 'list'], ['approvals', 'Approvals', 'check'], ['knowledge', 'Knowledge', 'file'], ['today', 'Today', 'zap']]],
-    ['Sources', [['chats', 'Chats', 'message', w.src.chat?.n], ...src(w.src.mail, ['mail', 'Mail', 'mail', w.src.mail?.n]),
+    ['Sources', [...src(w.src.chat, ['chats', 'Chats', 'message', w.src.chat?.n]), ...src(w.src.mail, ['mail', 'Mail', 'mail', w.src.mail?.n]),
       ...src(w.src.cal, ['calendar', 'Calendar', 'calendar', w.src.cal?.n]), ...src(w.src.work, ['board', 'Board', 'wrench', w.src.work?.n]),
       ...src(w.src.time, ['time', 'Time', 'hourglass', w.src.time?.n])]],
     ['Setup', [['playbooks', 'Playbooks', 'layers'], ['workspaces', 'Workspaces', 'sliders'], ...(LIVE.on && LIVE.pc ? [['devices', 'Devices', 'user'] as NavItem] : [])]]]

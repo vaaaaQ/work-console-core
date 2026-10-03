@@ -31,9 +31,9 @@ const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp_
 export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__screenshot', 'mcp__run__create_job', 'mcp__run__start_job', ...BRIDGE]
 export const DENY = [
   'mcp__bridge__bridge_act', 'mcp__work-console',
-  'Read(~/.bridge/**)', 'Read(~/.work-console/**)',
+  'Read(~/.bridge/**)', 'Read(~/.work-console/**)', 'Read(**/.work-console/**)',
   'Bash(*.bridge*)', 'PowerShell(*.bridge*)', 'Bash(*console.token*)', 'PowerShell(*console.token*)',
-  'Bash(*mcp.token*)', 'PowerShell(*mcp.token*)',
+  'Bash(*mcp.token*)', 'PowerShell(*mcp.token*)', 'Bash(*.work-console*)', 'PowerShell(*.work-console*)',
 ]
 
 /** the permission half of a session's options: which settings load and which tools it may use.

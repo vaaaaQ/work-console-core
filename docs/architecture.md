@@ -165,13 +165,28 @@ Only `workspaces/page.ts` imports it.
 - A workspace command runs as `node --experimental-strip-types workspaces/<id>/…`, never as an npm
   script, because `package.json` is core-owned.
 
+### Workspaces without a gateway
+
+A workspace may have no gateway: its jobs live in PostgreSQL and its runs work in git worktrees on the PC.
+
+| Piece | What |
+|---|---|
+| Source and store | `pgSource({ url, password, schema, ws, bus })` (`server/store/pg.ts`) is both. The source is up while the database answers; `store()` keeps jobs, runs, playbooks and marks in `schema`, default `work_console`. A write is compare-and-set on `v`, and a NOTIFY tells the other consoles on the same database what changed |
+| Work dir | `workDir(cfg)` returns `gitWorktrees({ repos, root })` (`server/llm/worktree.ts`). Before a job's first run the console adds a worktree of the repo its project names, on `job/<id>` from `base`, at `root/<id>`, and links `links` in from the main checkout. On close it removes a clean worktree and a branch merged into `base`, keeps anything else, and journals one line |
+| `llm.bridge: false` | no bridge MCP server, no bridge tools, no LLM token read |
+| `llm.screenshot` | the run tool `screenshot`: a png of an http, https or file url, kept as the step's artifact. The file url, and every file the page loads, must be under the run's dir. It reaches any http url, so it is only for workspaces whose runs read no untrusted text. `browserPath` in `config.json` picks the browser; unset, an installed Edge or Chrome |
+| `llm.jobTools` | the run tools `create_job` and `start_job`, in the run's workspace only. Defaults: playbook `board.start`, the pack's first project. At most 5 creates a run; the new job is signed `LLM` and its journal names the job it came from |
+
 ## LLM runs
 
 `console/server/llm/` runs one step at a time through the Claude Agent SDK.
 
 - The prompt is built from the job, the step and the playbook's instructions.
 - The run's tools come from the allowlist in `sdk.ts`: it can read A, search knowledge, and propose
-  a note. It cannot act, and it cannot write B.
+  a note. It cannot act, and it cannot write B beyond its own step, plus the jobs `llm.jobTools` lets it create and start.
+- It keeps files with `add_artifact` and `add_artifact_file` (a file under its dir, at most 20 MB).
+  Images show on the page; html and svg are served as text.
+- It never reads the console home: the deny list covers `.work-console` for Read, Bash and PowerShell.
 - The run hands back its draft with `submit_draft`. The page shows the draft, and a person sends it.
 - The gateway serves the run's read tools as MCP at `{gateway}/mcp` with the `llm` token. The fake
   gateway does not serve `/mcp`, so a demo run uses the fake SDK in tests.

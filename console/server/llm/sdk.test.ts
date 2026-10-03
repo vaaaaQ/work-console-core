@@ -59,3 +59,8 @@ test('create_job and start_job only when the run carries them; create_job answer
   const r = await create({ title: 'x' }, {})
   assert.deepEqual(r.content, [{ type: 'text', text: 'created AD-0009' }])
 })
+
+test('a run reads nothing of the console home: its tokens, its config and the database password', () => {
+  const deny = permissions([]).disallowedTools
+  for (const d of ['Read(~/.work-console/**)', 'Read(**/.work-console/**)', 'Bash(*.work-console*)', 'PowerShell(*.work-console*)']) assert.ok(deny.includes(d), d)
+})
