@@ -86,8 +86,12 @@ export function pgSource(o: PgSourceOpts): PgSource {
     const c = new pg.Client(conn)
     c.on('error', () => { if (listener === c) listener = null; void c.end().catch(() => {}); void check() })
     c.on('notification', (m) => { void heard(m.payload) })
-    await c.connect()
-    await c.query(`listen ${CHANNEL}`)
+    try {
+      await c.connect()
+      await c.query(`listen ${CHANNEL}`)
+    } catch (e) { void c.end().catch(() => {}); throw e }
+    // stopped while connecting: nobody would end this client, and it would keep the process alive
+    if (stopped) { void c.end().catch(() => {}); return }
     listener = c
   }
 
