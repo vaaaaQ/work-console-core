@@ -332,3 +332,14 @@ test("a runner told who the user is puts the name in a new run's prompt", async 
   await until(() => blank.sessions.length === 1)
   assert.match(blank.sessions[0].prompt, /in the user's Work Console/)
 })
+
+test('a workspace without a gateway: the prompt does not point at the bridge tools, and the rest is unchanged', async () => {
+  const x = demoCtx(), j = promptJob()
+  const line = '\n- The context above was read when this run started. Read anything more yourself with the bridge tools (bridge_snapshot, bridge_get).'
+  assert.equal(buildPrompt(x, j, 'sn', 'Draft the reply.', [], undefined, { bridge: false }), PROMPT_BEFORE_ME.replace(line, ''))
+  assert.equal(buildPrompt(x, j, 'sn', 'Draft the reply.', [], undefined, { bridge: true }), PROMPT_BEFORE_ME)
+  const s = setup(), [t] = await targets(s.jobs, 1)
+  await new Runner({ store: s.store, jobs: s.jobs, bus: s.bus, sdk: fakeSdk(s.sessions).sdk, cwd: s.dir, gate: () => true, artifactsDir: join(s.dir, 'arts'), ctx: demoCtx, bridge: false }).ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  assert.ok(!/bridge_/.test(s.sessions[0].prompt))
+})

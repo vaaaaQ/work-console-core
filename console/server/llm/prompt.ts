@@ -5,8 +5,9 @@ import type { Job } from '../../src/model/types.ts'
 
 /* What a session is told: the job's frame and its context, read at the run's start; more it reads itself through the bridge. */
 
-/** me = what the prompt calls the person the console works for; unset or empty: "the user" */
-export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, ctx: Resolved[] = [], me?: string): string {
+/** me = what the prompt calls the person the console works for; unset or empty: "the user".
+    bridge false: the workspace has no gateway, so the prompt does not point at the bridge tools */
+export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, ctx: Resolved[] = [], me?: string, o: { bridge?: boolean } = {}): string {
   const who = me || 'the user'
   const s = T.stepOf(x, j, step), pb = x.PB[j.pb]
   const outs = T.steps(x, j.pb).filter((t) => j.flow[t.id]?.out).map((t) => `### ${t.t}\n${j.flow[t.id].out}`)
@@ -26,7 +27,7 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, ctx: Reso
     outs.length ? `## Earlier outputs\n${outs.join('\n\n')}\n` : '',
     jr.length ? `## Journal (latest last)\n${jr.join('\n')}\n` : '',
     `## How to work`,
-    `- The context above was read when this run started. Read anything more yourself with the bridge tools (bridge_snapshot, bridge_get).`,
+    ...(o.bridge === false ? [] : [`- The context above was read when this run started. Read anything more yourself with the bridge tools (bridge_snapshot, bridge_get).`]),
     `- You never send anything to a source (no chat posts, mails, votes, comments or state changes): ${who} sends after review.`,
     `- Write progress with the run tool journal(observed, changed, next) at meaningful points.`,
     `- Save files the step expects with add_artifact(name, content).`,

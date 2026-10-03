@@ -17,8 +17,9 @@ export interface RunTools {
 export type SdkEvent = { k: 'session'; id: string } | { k: 'text'; t: string } | { k: 'tool'; name: string; input: string } | { k: 'result'; ok: boolean; error?: string }
 export interface Sdk { start(o: { prompt: string; resume?: string; cwd: string; tools: RunTools; abort: AbortController }): AsyncIterable<SdkEvent> }
 
-export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__journal', 'mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status',
+const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status',
   'mcp__bridge__knowledge_search', 'mcp__bridge__knowledge_read', 'mcp__bridge__knowledge_propose']
+export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__journal', ...BRIDGE]
 export const DENY = [
   'mcp__bridge__bridge_act', 'mcp__work-console',
   'Read(~/.bridge/**)', 'Read(~/.work-console/**)',
@@ -27,13 +28,14 @@ export const DENY = [
 ]
 
 /** the permission half of a session's options: which settings load and which tools it may use.
-    strictMcpConfig keeps the user's own user-scope MCP servers, the console's own job tools among them, out */
-export function permissions(runTools: string[]) {
+    strictMcpConfig keeps the user's own user-scope MCP servers, the console's own job tools among them, out;
+    bridge false: a workspace without a gateway, so no bridge tools */
+export function permissions(runTools: string[], bridge = true) {
   return {
     settingSources: ['project'] as ('project')[],
     strictMcpConfig: true,
     permissionMode: 'dontAsk' as const,
-    allowedTools: [...ALLOW, ...runTools],
+    allowedTools: [...(bridge ? ALLOW : ALLOW.filter((t) => !BRIDGE.includes(t))), ...runTools],
     disallowedTools: DENY,
   }
 }
@@ -45,17 +47,17 @@ const done = (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
 const failed = (e: unknown) => ({ content: [{ type: 'text' as const, text: `failed: ${(e as Error).message || e}` }], isError: true })
 const wrap = (f: () => Promise<void>, ok: string) => async () => { try { await f(); return done(ok) } catch (e) { return failed(e) } }
 
-/** A's bridge with the LLM's read-only token, the run's own tools, then the workspace's own servers;
-    checkWorkspaces keeps those from taking the name bridge or run */
-export function mcpServers(o: { gatewayUrl: string; llmToken: () => string; mcp?: Record<string, unknown> }, run: McpServerConfig): Record<string, McpServerConfig> {
+/** A's bridge with the LLM's read-only token (none when bridge is false), the run's own tools, then the
+    workspace's own servers; checkWorkspaces keeps those from taking the name bridge or run */
+export function mcpServers(o: { gatewayUrl: string; llmToken: () => string; mcp?: Record<string, unknown>; bridge?: boolean }, run: McpServerConfig): Record<string, McpServerConfig> {
   return {
-    bridge: { type: 'http', url: o.gatewayUrl.replace(/\/$/, '') + '/mcp', headers: { Authorization: `Bearer ${o.llmToken()}` } },
+    ...(o.bridge === false ? {} : { bridge: { type: 'http' as const, url: o.gatewayUrl.replace(/\/$/, '') + '/mcp', headers: { Authorization: `Bearer ${o.llmToken()}` } } }),
     run,
     ...(o.mcp as Record<string, McpServerConfig> | undefined),
   }
 }
 
-export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runTools: string[]; mcp?: Record<string, unknown> }): Sdk {
+export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runTools: string[]; mcp?: Record<string, unknown>; bridge?: boolean }): Sdk {
   return {
     async *start({ prompt, resume, cwd, tools, abort }) {
       const run = createSdkMcpServer({
@@ -73,7 +75,7 @@ export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runToo
         prompt,
         options: {
           cwd, resume, abortController: abort,
-          ...permissions(o.runTools),
+          ...permissions(o.runTools, o.bridge !== false),
           mcpServers: mcpServers(o, run),
         },
       })

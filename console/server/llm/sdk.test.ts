@@ -26,3 +26,15 @@ test("a session gets no user-scope MCP servers and never the console's own job t
   assert.equal(p.strictMcpConfig, true)
   for (const d of ['mcp__work-console', 'Bash(*mcp.token*)', 'PowerShell(*mcp.token*)']) assert.ok(p.disallowedTools.includes(d), d)
 })
+
+test('a workspace without a gateway: no bridge server, no bridge tools, and the deny list still holds', () => {
+  const run = { type: 'sdk' } as never, tracker = { type: 'http', url: 'http://127.0.0.1:1/mcp' }
+  let read = false
+  const s = mcpServers({ gatewayUrl: 'http://g', llmToken: () => { read = true; return '' }, mcp: { tracker }, bridge: false }, run)
+  assert.deepEqual(Object.keys(s), ['run', 'tracker'])
+  assert.equal(read, false, 'no LLM token is read without a bridge')
+  const p = permissions(['Edit'], false)
+  assert.ok(!p.allowedTools.some((t) => t.startsWith('mcp__bridge__')), p.allowedTools.join(', '))
+  for (const t of ['mcp__run__submit_draft', 'mcp__run__journal', 'Edit']) assert.ok(p.allowedTools.includes(t), t)
+  assert.deepEqual(p.disallowedTools, permissions([]).disallowedTools)
+})

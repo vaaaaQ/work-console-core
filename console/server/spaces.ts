@@ -120,10 +120,10 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   const gate = () => source.available()
 
   const jobs = new Jobs({ store, bus, ctx, gate })
-  const sdk = o.sdk ?? agentSdk({ gatewayUrl: cfg.gatewayUrl, llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools, mcp: w.llm?.mcp })
+  const sdk = o.sdk ?? agentSdk({ gatewayUrl: cfg.gatewayUrl, llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools, mcp: w.llm?.mcp, bridge: w.llm?.bridge })
   const runner = new Runner({
     store, jobs, bus, sdk, cwd: cfg.workDir, max: cfg.maxSessions, gate, artifactsDir: o.artifactsDir, ctx,
-    context: (j) => resolveContext(source, j, w.page.me), me: w.page.me,
+    context: (j) => resolveContext(source, j, w.page.me), me: w.page.me, bridge: w.llm?.bridge,
   })
   const offInterrupt = bus.on((e) => {
     if (e.kind === 'bridge' && e.state === 'unavailable')

@@ -38,7 +38,8 @@ export interface WorkspaceServer {
   source?(cfg: WsConfig, o: { bus: Bus }): Source          // default: gatewaySource
   /** default: bridgeStore over the source; playbooks = the built-in ones, the core's and the page's */
   store?(source: Source, cfg: WsConfig, o: { bus: Bus; home: string; ws: string; prefix: string; playbooks: Record<string, Playbook> }): Store
-  llm?: { runTools?: string[]; mcp?: Record<string, unknown> }
+  /** bridge false: no gateway, so runs get neither the bridge MCP server nor its tools */
+  llm?: { runTools?: string[]; mcp?: Record<string, unknown>; bridge?: boolean }
   plugins?(x: PluginCtx): Plugin[]
   fake?(): FakeSeed                                          // default: derived from page.demo
 }
