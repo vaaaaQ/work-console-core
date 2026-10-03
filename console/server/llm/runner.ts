@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { copyFile, mkdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type * as T from '../../src/model/transitions.ts'
 import type { Resolved } from '../../src/model/context.ts'
 import type { Job, RunRec } from '../../src/model/types.ts'
@@ -10,6 +11,8 @@ import type { Jobs } from '../jobs/jobs.ts'
 import type { Store } from '../store/port.ts'
 import { buildPrompt, RESUME_PROMPT } from './prompt.ts'
 import type { Sdk } from './sdk.ts'
+import { checkUrl } from './shot.ts'
+import type { Shot } from './shot.ts'
 import type { WorkDir } from './worktree.ts'
 
 /* One Claude Code session per ask, at most `max` at a time; the rest wait in order. The run record
@@ -32,6 +35,7 @@ export class Runner {
   private store: Store; private jobs: Jobs; private bus: Bus; private sdk: Sdk; private cwd: string
   private max: number; private gate: () => boolean; private artifactsDir: string; private ctx: () => T.Ctx
   private context: (j: Job) => Promise<Resolved[]>; private me?: string; private bridge?: boolean; private workDir?: WorkDir
+  private screenshot?: (o: Shot & { out: string }) => Promise<void>
   private queue: { id: string; resume?: string }[] = []
   private live = new Map<string, Live>()
   private feeds = new Map<string, string[]>()
@@ -43,9 +47,11 @@ export class Runner {
   constructor(o: {
     store: Store; jobs: Jobs; bus: Bus; sdk: Sdk; cwd: string; max?: number; gate: () => boolean; artifactsDir: string; ctx: () => T.Ctx
     context?: (j: Job) => Promise<Resolved[]>; me?: string; bridge?: boolean; workDir?: WorkDir
+    /** takes a png of a page into out; none = runs get no screenshot tool */
+    screenshot?: (o: Shot & { out: string }) => Promise<void>
   }) {
     this.store = o.store; this.jobs = o.jobs; this.bus = o.bus; this.sdk = o.sdk; this.cwd = o.cwd
-    this.max = o.max ?? 3; this.gate = o.gate; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => []); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir
+    this.max = o.max ?? 3; this.gate = o.gate; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => []); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot
   }
 
   /** draft ready, failed or interrupted: the moments worth a push */
@@ -192,6 +198,14 @@ export class Runner {
       await write(join(dir, name))
       await this.jobs.cmd(rec.job, { op: 'artifact', step: rec.step, n: name, link: `/api/artifacts/${encodeURIComponent(rec.job)}/${encodeURIComponent(name)}` }, undefined, 'runner')
     }
+    /** a path under the run's own dir, links resolved, so a run cannot publish the console's files */
+    const within = async (p: string) => {
+      const real = await realpath(resolve(cwd, p)).catch(() => { throw new Error(`no such file: ${p}`) })
+      const rel = relative(await realpath(cwd), real)
+      if (!rel || rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error(`${p} is outside the work dir`)
+      return real
+    }
+    const shot = this.screenshot
     const tools = {
       submitDraft: async (t: string) => {
         if (l.drafted) throw new Error('a draft was already submitted for this run')
@@ -201,17 +215,21 @@ export class Runner {
         await this.save(r)
       },
       addArtifact: (n: string, content: string) => keep(safeName(n), (f) => writeFile(f, content, 'utf8')),
-      // only from under the run's own dir, links resolved, so a run cannot publish the console's files
       addArtifactFile: async (p: string, n?: string) => {
-        const real = await realpath(resolve(cwd, p)).catch(() => { throw new Error(`no such file: ${p}`) })
-        const rel = relative(await realpath(cwd), real)
-        if (!rel || rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error(`${p} is outside the work dir`)
-        const s = await stat(real)
+        const real = await within(p), s = await stat(real)
         if (!s.isFile()) throw new Error(`${p} is not a file`)
         if (s.size > FILE_MAX) throw new Error(`${p} is over 20 MB`)
         await keep(safeName(n || basename(real)), (f) => copyFile(real, f))
       },
       journal: async (o: string, c: string, n: string) => { await this.jobs.cmd(rec.job, { op: 'journal', o, c, n, a: 'LLM' }, undefined, 'runner') },
+      ...(shot ? {
+        screenshot: async (o: Shot & { name: string }) => {
+          const u = checkUrl(o.url)
+          if (u.protocol === 'file:') await within(fileURLToPath(u))
+          const name = safeName(o.name).replace(/\.[a-z0-9]{1,5}$/i, '') + '.png'
+          await keep(name, (f) => shot({ url: u.href, width: o.width, height: o.height, fullPage: o.fullPage, out: f }))
+        },
+      } : {}),
     }
     let error: string | undefined
     try {

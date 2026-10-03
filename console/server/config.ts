@@ -61,6 +61,8 @@ export function coreDefaults(env: NodeJS.ProcessEnv = process.env): WsConfig {
     runTools: ['Read', 'Glob', 'Grep'],
     /** the team time zone for calendar times, e.g. Europe/Berlin; null = none */
     teamTz: null,
+    /** the browser LLM screenshots run in; null = an installed Edge or Chrome */
+    browserPath: null,
   }
 }
 

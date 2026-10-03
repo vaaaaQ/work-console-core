@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import * as T from '../../src/model/transitions.ts'
 import { Bus, HttpError } from '../events.ts'
 import type { Ev } from '../events.ts'
@@ -382,4 +383,28 @@ test('add_artifact_file keeps a file from under the run dir; outside it, through
   writeFileSync(join(dir, 'big.bin'), ''); truncateSync(join(dir, 'big.bin'), (20 << 20) + 1)
   await assert.rejects(tools.addArtifactFile('big.bin'), /over 20 MB/)
   assert.equal((await jobs.get(t.job))!.flow[t.step].arts.length, arts.length, 'nothing refused was kept')
+})
+
+test('screenshot keeps a png of a page as the step\'s artifact; a file outside the run dir or a script url is refused; no tool without the option', async () => {
+  const s = setup(), [t] = await targets(s.jobs, 1), seen: { url: string; out: string; width?: number }[] = []
+  const screenshot = async (o: { url: string; out: string; width?: number }) => { seen.push(o); writeFileSync(o.out, 'png') }
+  const runner = new Runner({ store: s.store, jobs: s.jobs, bus: s.bus, sdk: fakeSdk(s.sessions).sdk, cwd: s.dir, gate: () => true, artifactsDir: join(s.dir, 'arts'), ctx: demoCtx, screenshot })
+  await runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  const tools = s.sessions[0].tools
+  await tools.screenshot!({ url: 'http://127.0.0.1:7420/jobs', name: 'board.jpg', width: 900 })
+  assert.equal(seen[0].url, 'http://127.0.0.1:7420/jobs'); assert.equal(seen[0].width, 900)
+  assert.equal(seen[0].out, join(s.dir, 'arts', t.job, 'board.png'))
+  writeFileSync(join(s.dir, 'page.html'), '<h1>x</h1>')
+  await tools.screenshot!({ url: pathToFileURL(join(s.dir, 'page.html')).href, name: 'page' })
+  const arts = (await s.jobs.get(t.job))!.flow[t.step].arts.map((a) => a.n)
+  assert.deepEqual(arts.filter((n) => n.endsWith('.png')).sort(), ['board.png', 'page.png'])
+  const out = mkdtempSync(join(tmpdir(), 'wc-out-')); writeFileSync(join(out, 'x.html'), 'x')
+  await assert.rejects(tools.screenshot!({ url: pathToFileURL(join(out, 'x.html')).href, name: 'x' }), /outside the work dir/)
+  await assert.rejects(tools.screenshot!({ url: 'javascript:alert(1)', name: 'x' }), /only http, https and file urls/)
+  assert.equal(seen.length, 2, 'refused before any browser started')
+  const plain = setup(), [p] = await targets(plain.jobs, 1)
+  await plain.runner.ask(p.job, p.step, 'q')
+  await until(() => plain.sessions.length === 1)
+  assert.equal(plain.sessions[0].tools.screenshot, undefined)
 })

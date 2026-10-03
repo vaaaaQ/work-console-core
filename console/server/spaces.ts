@@ -8,6 +8,7 @@ import { startFakeGateway } from './bridge/fake.ts'
 import type { FakeGateway } from './bridge/fake.ts'
 import { READY } from './bridge/wire.ts'
 import { readToken } from './config.ts'
+import { shoot } from './llm/shot.ts'
 import { Bus, HttpError } from './events.ts'
 import { Jobs } from './jobs/jobs.ts'
 import { resolveContext } from './llm/context.ts'
@@ -126,6 +127,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   const runner = new Runner({
     store, jobs, bus, sdk, cwd: cfg.workDir, max: cfg.maxSessions, gate, artifactsDir: o.artifactsDir, ctx,
     context: (j) => resolveContext(source, j, w.page.me), me: w.page.me, bridge: w.llm?.bridge, workDir,
+    screenshot: w.llm?.screenshot ? (s) => shoot({ ...s, browserPath: cfg.browserPath }) : undefined,
   })
   const offInterrupt = bus.on((e) => {
     if (e.kind === 'bridge' && e.state === 'unavailable')

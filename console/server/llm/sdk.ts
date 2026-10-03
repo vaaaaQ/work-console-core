@@ -1,6 +1,7 @@
 import { createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk'
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
+import type { Shot } from './shot.ts'
 
 /* The only module that touches the Agent SDK. A session reads untrusted chat and mail text, so it
    runs in dontAsk mode with an explicit tool list: its own tools, A's read tools, the knowledge
@@ -15,13 +16,15 @@ export interface RunTools {
   /** a file already under the run's dir (a screenshot, a build output), path relative to it */
   addArtifactFile(path: string, name?: string): Promise<void>
   journal(o: string, c: string, n: string): Promise<void>
+  /** a png of a page as an artifact; only where the workspace allows it */
+  screenshot?(o: Shot & { name: string }): Promise<void>
 }
 export type SdkEvent = { k: 'session'; id: string } | { k: 'text'; t: string } | { k: 'tool'; name: string; input: string } | { k: 'result'; ok: boolean; error?: string }
 export interface Sdk { start(o: { prompt: string; resume?: string; cwd: string; tools: RunTools; abort: AbortController }): AsyncIterable<SdkEvent> }
 
 const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status',
   'mcp__bridge__knowledge_search', 'mcp__bridge__knowledge_read', 'mcp__bridge__knowledge_propose']
-export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', ...BRIDGE]
+export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__screenshot', ...BRIDGE]
 export const DENY = [
   'mcp__bridge__bridge_act', 'mcp__work-console',
   'Read(~/.bridge/**)', 'Read(~/.work-console/**)',
@@ -59,23 +62,28 @@ export function mcpServers(o: { gatewayUrl: string; llmToken: () => string; mcp?
   }
 }
 
+/** the run server's tools: always its own, then the ones this run's tools carry */
+export function runToolDefs(tools: RunTools) {
+  return [
+    tool('submit_draft', 'Submit the draft for this step for the user to review. Call exactly once, at the end.', { text: z.string().min(1) },
+      (a) => wrap(() => tools.submitDraft(a.text), 'draft submitted')()),
+    tool('add_artifact', 'Save a file this step produces (for example analysis.md). Same name replaces it.', { name: z.string().min(1), content: z.string() },
+      (a) => wrap(() => tools.addArtifact(a.name, a.content), 'artifact saved')()),
+    tool('add_artifact_file', 'Save a file already under your working dir (an image, a log, a build output), at most 20 MB. name defaults to the file name.',
+      { path: z.string().min(1), name: z.string().min(1).optional() },
+      (a) => wrap(() => tools.addArtifactFile(a.path, a.name), 'artifact saved')()),
+    tool('journal', 'Add a line to the job journal: what you observed, what changed, what comes next.', { observed: z.string(), changed: z.string(), next: z.string() },
+      (a) => wrap(() => tools.journal(a.observed, a.changed, a.next), 'journal updated')()),
+    ...(tools.screenshot ? [tool('screenshot', 'Take a png of a page (http, https, or a file under your working dir) and save it as an artifact of this step: the proof of a UI change.',
+      { url: z.string().min(1), name: z.string().min(1), width: z.number().int().optional(), height: z.number().int().optional(), fullPage: z.boolean().optional() },
+      (a) => wrap(() => tools.screenshot!(a), 'screenshot saved')())] : []),
+  ]
+}
+
 export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runTools: string[]; mcp?: Record<string, unknown>; bridge?: boolean }): Sdk {
   return {
     async *start({ prompt, resume, cwd, tools, abort }) {
-      const run = createSdkMcpServer({
-        name: 'run', version: '1.0.0',
-        tools: [
-          tool('submit_draft', 'Submit the draft for this step for the user to review. Call exactly once, at the end.', { text: z.string().min(1) },
-            (a) => wrap(() => tools.submitDraft(a.text), 'draft submitted')()),
-          tool('add_artifact', 'Save a file this step produces (for example analysis.md). Same name replaces it.', { name: z.string().min(1), content: z.string() },
-            (a) => wrap(() => tools.addArtifact(a.name, a.content), 'artifact saved')()),
-          tool('add_artifact_file', 'Save a file already under your working dir (an image, a log, a build output), at most 20 MB. name defaults to the file name.',
-            { path: z.string().min(1), name: z.string().min(1).optional() },
-            (a) => wrap(() => tools.addArtifactFile(a.path, a.name), 'artifact saved')()),
-          tool('journal', 'Add a line to the job journal: what you observed, what changed, what comes next.', { observed: z.string(), changed: z.string(), next: z.string() },
-            (a) => wrap(() => tools.journal(a.observed, a.changed, a.next), 'journal updated')()),
-        ],
-      })
+      const run = createSdkMcpServer({ name: 'run', version: '1.0.0', tools: runToolDefs(tools) })
       const q = query({
         prompt,
         options: {

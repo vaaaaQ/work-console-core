@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ALLOW, mcpServers, permissions } from './sdk.ts'
+import { ALLOW, mcpServers, permissions, runToolDefs } from './sdk.ts'
+import type { RunTools } from './sdk.ts'
 
 test("a session loads no user or local settings, and may use only its own tools, A's reads and runTools", () => {
   const p = permissions(['mcp__my-tools', 'Bash(npm test)'])
@@ -37,4 +38,12 @@ test('a workspace without a gateway: no bridge server, no bridge tools, and the 
   assert.ok(!p.allowedTools.some((t) => t.startsWith('mcp__bridge__')), p.allowedTools.join(', '))
   for (const t of ['mcp__run__submit_draft', 'mcp__run__journal', 'Edit']) assert.ok(p.allowedTools.includes(t), t)
   assert.deepEqual(p.disallowedTools, permissions([]).disallowedTools)
+})
+
+test('the run server has its own four tools, and screenshot only when the run carries it', () => {
+  const none = async () => {}
+  const base: RunTools = { submitDraft: none, addArtifact: none, addArtifactFile: none, journal: none }
+  assert.deepEqual(runToolDefs(base).map((d) => d.name), ['submit_draft', 'add_artifact', 'add_artifact_file', 'journal'])
+  assert.deepEqual(runToolDefs({ ...base, screenshot: none }).map((d) => d.name).at(-1), 'screenshot')
+  for (const d of runToolDefs({ ...base, screenshot: none })) assert.ok(ALLOW.includes(`mcp__run__${d.name}`), d.name)
 })

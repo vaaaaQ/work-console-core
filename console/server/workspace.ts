@@ -17,7 +17,10 @@ import type { Store } from './store/port.ts'
 export type Source = Bridge & { start(): void; stop(): void }
 export interface WsConfig {
   gatewayUrl: string; consoleTokenPath: string; llmTokenPath: string; workDir: string
-  runTools: string[]; teamTz: string | null; maxSessions: number; [own: string]: unknown
+  runTools: string[]; teamTz: string | null; maxSessions: number
+  /** the browser screenshots run in; null = an installed Edge or Chrome */
+  browserPath?: string | null
+  [own: string]: unknown
 }
 export type PluginReq = { q: URLSearchParams; p: string[]; body(): Promise<Record<string, unknown>> }
 export interface Plugin {
@@ -39,8 +42,9 @@ export interface WorkspaceServer {
   source?(cfg: WsConfig, o: { bus: Bus }): Source          // default: gatewaySource
   /** default: bridgeStore over the source; playbooks = the built-in ones, the core's and the page's */
   store?(source: Source, cfg: WsConfig, o: { bus: Bus; home: string; ws: string; prefix: string; playbooks: Record<string, Playbook> }): Store
-  /** bridge false: no gateway, so runs get neither the bridge MCP server nor its tools */
-  llm?: { runTools?: string[]; mcp?: Record<string, unknown>; bridge?: boolean }
+  /** bridge false: no gateway, so runs get neither the bridge MCP server nor its tools;
+      screenshot: runs may take pngs of pages (it reaches any http url, so only where runs read no untrusted text) */
+  llm?: { runTools?: string[]; mcp?: Record<string, unknown>; bridge?: boolean; screenshot?: boolean }
   /** each job's own dir for its runs, cleaned up when the job closes; default: every run in cfg.workDir. Not in fake mode */
   workDir?(cfg: WsConfig): WorkDir
   plugins?(x: PluginCtx): Plugin[]
