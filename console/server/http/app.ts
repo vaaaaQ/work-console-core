@@ -11,6 +11,7 @@ import type { ActRes, ConceptReply } from '../bridge/wire.ts'
 import { HttpError } from '../events.ts'
 import type { Bus, Ev } from '../events.ts'
 import { noteIn } from '../knowledge/notes.ts'
+import { buildIn } from '../llm/builder.ts'
 import { resolveItem } from '../llm/context.ts'
 import { safeName } from '../llm/runner.ts'
 import type { Notify } from '../notify/notify.ts'
@@ -369,6 +370,11 @@ export function createApp(d: Deps) {
       const b = await r.body(30 << 20)
       if (!d.voice) throw new HttpError(503, 'no_key', 'voice is off on this console')
       return { text: await d.voice.transcribe(str(b.audio, 'audio'), str(b.mime, 'mime'), dropped(r)) }
+    }],
+    // a build reads for up to 120 s; a page that goes away stops it. A key another workspace holds is not offered
+    ['POST', /^\/build$/, async (r, s) => {
+      const b = buildIn(await r.body())
+      return { form: await s.build(b, { tz: d.tz, signal: dropped(r), taken: (k) => d.spaces.list.some((o) => o !== s && Object.hasOwn(o.ctx().PB, k)) }) }
     }],
     ['POST', /^\/board\/([^/]+)\/start$/, async (r, s) => {
       const b = await r.body()

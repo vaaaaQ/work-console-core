@@ -151,7 +151,8 @@ function ctxCount(K: Kind, v: unknown) {
   return v as number
 }
 /** one context item as a command or a new job gives it, checked */
-function ctxItem(ws: Ws, c: { k?: unknown; id?: unknown; n?: unknown; name?: unknown }): CtxItem {
+/** one context item as a job keeps it; throws bad_args naming what is wrong */
+export function ctxItem(ws: Ws, c: { k?: unknown; id?: unknown; n?: unknown; name?: unknown }): CtxItem {
   const K = kindOf(c.k), k = c.k as CtxKind
   const it: CtxItem = { k, id: ctxId(ws, k, c.id), n: c.n === undefined ? K.def : ctxCount(K, c.n) }
   const name = typeof c.name === 'string' ? c.name.trim().slice(0, 120) : ''

@@ -249,6 +249,28 @@ hands it to OpenAI's `whisper-1` (`console/server/voice/whisper.ts`) and answers
 - The key never reaches an answer or a log: OpenAI's messages, which can quote part of it, are scrubbed
   first. A page that drops the request aborts the call.
 
+### The builder
+
+The says fill the form: `POST /api/ws/<id>/build {id, say[], form}` answers `{form}`
+(`console/server/llm/builder.ts`). Each build is one read-only Agent SDK session.
+
+| Part | What |
+|---|---|
+| Prompt | the workspace and its projects; now, in the home zone; the playbook catalog with each playbook's `needs` and steps; the note index; whether there are sources; the form as it stands; every say, oldest first |
+| Tools | `knowledge_search` and `knowledge_read`. With a gateway, also `source_list` (one concept's list, newest first, at most 50) and `source_get` (one item, as a run would get it). The session loads no settings and keeps no transcript; it has no built-in tools |
+| Answer | the whole form, in a JSON schema: title and description in English, a catalog playbook or new steps (`once` = this job only), context, due |
+| Check | the playbook and project against the workspace; the context as a job keeps it; due as ISO; new steps by Add playbook's rules, and every `{word}` in their messages must be filled by a step. A failing field stays in the form, and its reason goes into `why` |
+
+- The catalog leaves out other workspaces' playbooks and one job's own steps.
+- A due with only a day means 18:00 that day, home time.
+- New steps get a key that no workspace holds: their slug, with `once-` in front for one job's steps,
+  then `-2`, `-3`… on a clash.
+- A later say is sent with every earlier one and the form as the user left it. A field the says do
+  not touch keeps its value.
+- Each tool call is a `build` event carrying the build's id, so the page shows what the builder reads.
+- A build stops after 120 s (504), when the page drops the request (499), or when Claude Code is
+  signed out (503).
+
 ## Claude Code access
 
 The backend serves its own MCP at `127.0.0.1:7410/mcp` (`console/server/mcp/mcp.ts`). It offers

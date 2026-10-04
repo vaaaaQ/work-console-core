@@ -8,6 +8,8 @@ export type Ev = (
   | { kind: 'job'; job: Job }
   | { kind: 'run'; run: RunRec }
   | { kind: 'feed'; run: string; t: string; tool?: string }
+  /** what the job builder is reading, by the id the page gave the build */
+  | { kind: 'build'; id: string; t: string; tool?: string }
   | { kind: 'bridge'; state: BridgeState; concepts: Record<string, string> }
   | { kind: 'source'; concept: string; upserts: unknown[]; removes: string[]; reset?: boolean }
 ) & { ws?: string }

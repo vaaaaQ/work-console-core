@@ -1,5 +1,5 @@
 import { createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk'
-import type { McpServerConfig, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import type { McpServerConfig, SDKResultMessage, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import type { Hit, Note, ProposalIn } from '../knowledge/notes.ts'
 import type { PromptImage } from './context.ts'
@@ -34,8 +34,16 @@ export interface RunTools {
 }
 export type KnowledgeIn = Omit<ProposalIn, 'by'>
 export type SdkEvent = { k: 'session'; id: string } | { k: 'text'; t: string } | { k: 'tool'; name: string; input: string } | { k: 'result'; ok: boolean; error?: string }
-/** images = pictures the prompt's text names, sent before it */
-export interface Sdk { start(o: { prompt: string; images?: PromptImage[]; resume?: string; cwd: string; tools: RunTools; abort: AbortController }): AsyncIterable<SdkEvent> }
+/** a tool of a one-shot answer, which only reads: its input as zod fields, its answer as text */
+export interface AskTool { name: string; description: string; input: z.ZodRawShape; run(a: Record<string, unknown>): Promise<string> }
+/** tool = a call of one of the ask's own tools, by its bare name; result = the answer in the schema's shape */
+export type AskEvent = { k: 'tool'; name: string; input: Record<string, unknown> } | { k: 'result'; ok: true; out: unknown } | { k: 'result'; ok: false; error: string }
+export interface Sdk {
+  /** images = pictures the prompt's text names, sent before it */
+  start(o: { prompt: string; images?: PromptImage[]; resume?: string; cwd: string; tools: RunTools; abort: AbortController }): AsyncIterable<SdkEvent>
+  /** one answer in the schema's shape from a session that has only the given tools; none = this console cannot ask */
+  ask?(o: { system: string; prompt: string; schema: Record<string, unknown>; tools: AskTool[]; cwd: string; abort: AbortController }): AsyncIterable<AskEvent>
+}
 
 const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status']
 export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__context', 'mcp__run__screenshot', 'mcp__run__create_job', 'mcp__run__start_job',
@@ -60,6 +68,19 @@ export function permissions(runTools: string[], bridge = true) {
   }
 }
 
+/** a one-shot answer's options: no settings of any scope, no built-in tool, no MCP server but its own, whose tools only
+    read, and no transcript kept. The answer comes back in the schema's shape */
+const ASK = 'ask'
+export function askOptions(o: { system: string; schema: Record<string, unknown>; tools: string[]; cwd: string; abort: AbortController }) {
+  return {
+    cwd: o.cwd, abortController: o.abort, systemPrompt: o.system,
+    settingSources: [] as SettingSource[], strictMcpConfig: true, tools: [] as string[], persistSession: false,
+    permissionMode: 'dontAsk' as const,
+    allowedTools: o.tools.map((t) => `mcp__${ASK}__${t}`), disallowedTools: DENY,
+    outputFormat: { type: 'json_schema' as const, schema: o.schema }, maxTurns: 30,
+  }
+}
+
 /** the spec's reason for a session that cannot start because Claude Code is signed out */
 export const signinReason = (e: string) => /\b(401|unauthori[sz]ed|not logged in|please (run )?\/?login|log ?in again|oauth token (has )?expired|invalid api key|authentication)\b/i.test(e) ? `signin_required: ${e}` : e
 
@@ -70,7 +91,14 @@ const answer = (f: () => Promise<string>) => async () => { try { return done(awa
 const list = (xs: string[]) => xs.join(', ') || 'none'
 /** each picture after the line that names it */
 const picBlocks = (ims: PromptImage[]) => ims.flatMap((im) => [{ type: 'text' as const, text: im.label }, { type: 'image' as const, data: im.data, mimeType: im.mime }])
-const hitLine = (h: Hit) => `- ${h.id}: ${h.title} (tags ${list(h.tags)}) ${h.snippet}`
+/** a search hit and a whole note as the knowledge tools answer them */
+export const hitLine = (h: Hit) => `- ${h.id}: ${h.title} (tags ${list(h.tags)}) ${h.snippet}`
+export const noteText = (n: Note) => `# ${n.title}\nid ${n.id} · v${n.v} · tags ${list(n.tags)} · playbooks ${list(n.playbooks)}\n\n${n.text}`
+/** why a session ended without its answer */
+function resultError(m: SDKResultMessage) {
+  const errs = (m as { errors?: string[] }).errors
+  return signinReason(errs?.length ? errs.join('; ') : ('result' in m && typeof m.result === 'string' && m.result) || m.subtype)
+}
 
 /** A's bridge with the LLM's read-only token (none when bridge is false), the run's own tools, then the
     workspace's own servers; checkWorkspaces keeps those from taking the name bridge or run */
@@ -108,7 +136,7 @@ export function runToolDefs(tools: RunTools) {
       { q: z.string(), tags: z.array(z.string()).optional() },
       (a) => answer(async () => (await tools.knowledgeSearch!(a.q, a.tags)).map(hitLine).join('\n') || 'no note matches')())] : []),
     ...(tools.knowledgeRead ? [tool('knowledge_read', 'Read one knowledge note in full by its id.', { id: z.string().min(1) },
-      (a) => answer(async () => { const n = await tools.knowledgeRead!(a.id); return `# ${n.title}\nid ${n.id} · v${n.v} · tags ${list(n.tags)} · playbooks ${list(n.playbooks)}\n\n${n.text}` })())] : []),
+      (a) => answer(async () => noteText(await tools.knowledgeRead!(a.id)))())] : []),
     ...(tools.knowledgePropose ? [tool('knowledge_propose', 'Propose a new knowledge note, or a change to one: note = its id, text = the whole new text in Markdown. The user accepts, edits or rejects it; nothing is written before that. Propose what a later run would need and could not find. playbooks: ids of the playbooks whose every run should read it.',
       { note: z.string().min(1).optional(), title: z.string().min(1), text: z.string().min(1), reason: z.string().min(1), tags: z.array(z.string()).optional(), playbooks: z.array(z.string()).optional() },
       (a) => answer(async () => `proposed ${await tools.knowledgePropose!(a)}; it waits for the user in Approvals`)())] : []),
@@ -152,11 +180,20 @@ export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runToo
           }
         } else if (m.type === 'result') {
           if (m.subtype === 'success' && !m.is_error) yield { k: 'result', ok: true }
-          else {
-            const errs = (m as { errors?: string[] }).errors
-            const error = errs?.length ? errs.join('; ') : ('result' in m && typeof m.result === 'string' && m.result) || m.subtype
-            yield { k: 'result', ok: false, error: signinReason(error) }
-          }
+          else yield { k: 'result', ok: false, error: resultError(m) }
+        }
+      }
+    },
+    async *ask({ system, prompt, schema, tools, cwd, abort }) {
+      const own = createSdkMcpServer({ name: ASK, version: '1.0.0', tools: tools.map((t) => tool(t.name, t.description, t.input, (a) => answer(() => t.run(a))())) })
+      const q = query({ prompt, options: { ...askOptions({ system, schema, tools: tools.map((t) => t.name), cwd, abort }), mcpServers: { [ASK]: own } } })
+      const pre = `mcp__${ASK}__`
+      for await (const m of q) {
+        if (m.type === 'assistant') {
+          for (const b of m.message.content) if (b.type === 'tool_use' && b.name.startsWith(pre)) yield { k: 'tool', name: b.name.slice(pre.length), input: (b.input || {}) as Record<string, unknown> }
+        } else if (m.type === 'result') {
+          if (m.subtype === 'success' && !m.is_error && m.structured_output !== undefined) yield { k: 'result', ok: true, out: m.structured_output }
+          else yield { k: 'result', ok: false, error: m.subtype === 'success' && !m.is_error ? 'the session ended without its answer' : resultError(m) }
         }
       }
     },

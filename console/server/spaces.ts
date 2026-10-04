@@ -10,6 +10,8 @@ import type { FakeGateway } from './bridge/fake.ts'
 import { READY } from './bridge/wire.ts'
 import { readToken } from './config.ts'
 import { shoot } from './llm/shot.ts'
+import { builder } from './llm/builder.ts'
+import type { Build } from './llm/builder.ts'
 import { Bus, HttpError } from './events.ts'
 import { Jobs } from './jobs/jobs.ts'
 import { notesStore } from './knowledge/notes.ts'
@@ -37,6 +39,8 @@ export interface Space {
   notes: Notes
   ctx(): T.Ctx; putPlaybook(id: string, pb: Playbook | null, tpl?: Record<string, Tpl[]>): Promise<void>
   start: ReturnType<typeof startItem>; plugins: Plugin[]; known: Map<string, Job>; fake: FakeGateway | null
+  /** fills the New job form from what the user said; it only reads */
+  build: Build
   /** needs-you, less the jobs a QA return pushes about itself */
   onNeedsYou(f: (j: Job) => void): void
   /** stops loading, the source and the fake gateway */
@@ -145,6 +149,8 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     screenshot: w.llm?.screenshot ? (s) => shoot({ ...s, browserPath: cfg.browserPath }) : undefined,
     jobTools: w.llm?.jobTools ? { ws: id, pb: w.page.board.start, prj: w.page.pack.prj, prefix: w.jobPrefix } : undefined, notes,
   })
+  // a workspace without a gateway gives the builder no sources to read
+  const build = builder({ ws: id, page: w.page, sdk, notes, source: w.llm?.bridge === false ? null : source, ctx, bus })
   const offInterrupt = bus.on((e) => {
     if (e.kind === 'bridge' && e.state === 'unavailable')
       void runner.interruptAll('the bridge went away').catch((err) => console.error(`interrupting the runs of ${id}:`, (err as Error).message))
@@ -185,7 +191,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   })
 
   return {
-    id, page: w.page, prefix: w.jobPrefix, cfg, bus, source, store, jobs, runner, notes, ctx, known, fake,
+    id, page: w.page, prefix: w.jobPrefix, cfg, bus, source, store, jobs, runner, notes, ctx, known, fake, build,
     putPlaybook: async (pid, pb, tpl) => { await store.putPlaybook(pid, pb, tpl); await loadPbs() },
     start: startItem({ jobs, ctx, bridge: source, page: w.page }),
     plugins: w.plugins?.({ id, cfg, home: o.home, jobs, source, artifactsDir: o.artifactsDir }) ?? [],

@@ -23,10 +23,23 @@ import type { Plugin, WorkspaceServer, WsConfig } from '../workspace.ts'
 import { createApp } from './app.ts'
 
 /* The whole backend over real sockets: two workspaces, each on its own fake gateway with its store in B,
-   and a scripted SDK that drafts at once. acme mints A-NNNN and mounts a test plugin; beta is Acme under
+   and a scripted SDK that drafts at once and builds a form from the first say. acme mints A-NNNN and mounts a test plugin; beta is Acme under
    another id, prefix B, no playbooks of its own and no team zone. */
 
-const sdk: Sdk = { async *start({ tools }) { yield { k: 'session', id: 'sess-1' }; await tools.submitDraft('a draft'); yield { k: 'result', ok: true } } }
+const STEPS = { once: false, key: 'weekly-report', name: 'Weekly report', description: '', phases: [{ code: 'W', name: 'Write', steps: [{ id: 'w1', title: 'Write it', who: 'llm', doneWhen: 'written' }] }] }
+const sdk: Sdk = {
+  async *start({ tools }) { yield { k: 'session', id: 'sess-1' }; await tools.submitDraft('a draft'); yield { k: 'result', ok: true } },
+  // a say that starts with "steps:" gets new steps
+  async *ask({ prompt }) {
+    const say = /^1\. (.*)$/m.exec(prompt)?.[1] ?? ''
+    yield { k: 'tool', name: 'knowledge_search', input: { q: 'rate limiting' } }
+    yield {
+      k: 'result', ok: true, out: say.startsWith('steps:')
+        ? { title: 'Weekly report', key: 'weekly-report', project: 'ops', playbook: '', newPlaybook: STEPS, description: say, context: [], due: '', problems: [] }
+        : { title: 'Reply to Sam', key: 'ACME-512', project: 'platform', playbook: 'action', description: say, context: [{ k: 'chat', id: 'c4', name: 'Sam Rivera' }], due: '', problems: [] },
+    }
+  },
+}
 
 const echo: Plugin = {
   name: 'echo',
@@ -733,6 +746,37 @@ test('a workspace route answers only under /api/ws/<id>, and the state has no me
       assert.ok(st.home); assert.deepEqual(st.ws.acme.jobs.map((j: Job) => j.id), ['A-0001'])
     } finally { await stop() }
   }
+})
+
+test('build: one session fills the form from the says, its reading on the event stream; a key another workspace holds is not offered', async () => {
+  const { lp, stop } = await setup()
+  try {
+    const got: string[] = []
+    const q = request({ host: '127.0.0.1', port: lp, path: '/api/events', headers: { host: `127.0.0.1:${lp}` } }, (res) => {
+      res.setEncoding('utf8'); res.on('data', (c: string) => { for (const m of c.matchAll(/event: build\ndata: (.*)\n/g)) got.push(m[1]) })
+    })
+    q.end()
+    await new Promise((r) => setTimeout(r, 50))
+    const r = await call(lp, 'POST', '/api/ws/acme/build', { body: { id: 'b1', say: ['reply to Sam about rate limiting'], form: {} } })
+    assert.equal(r.status, 200, r.text)
+    assert.deepEqual(r.json.form, {
+      t: 'Reply to Sam', key: 'ACME-512', prj: 'platform', pb: 'action', d: 'reply to Sam about rate limiting', ctx: [{ k: 'chat', id: 'c4', n: 10, name: 'Sam Rivera' }], due: '', npb: null, why: [],
+    })
+    await until(() => got.length >= 2)
+    assert.deepEqual(got.map((x) => JSON.parse(x)), [
+      { kind: 'build', id: 'b1', t: 'Started', ws: 'acme' },
+      { kind: 'build', id: 'b1', t: 'Searching notes for “rate limiting”', tool: 'knowledge_search', ws: 'acme' },
+    ])
+    q.destroy()
+    const dev = structuredClone(acme.playbooks['dev-item'])
+    assert.equal((await call(lp, 'PUT', '/api/ws/beta/playbooks/weekly-report', { body: { pb: { ...dev, ws: 'beta', n: 'Weekly', custom: 1 } } })).status, 200)
+    const n = await call(lp, 'POST', '/api/ws/acme/build', { body: { id: 'b2', say: ['steps: a weekly report'], form: {} } })
+    assert.equal(n.status, 200, n.text)
+    assert.equal(n.json.form.pb, 'weekly-report-2'); assert.equal(n.json.form.npb.file.workspace, 'acme')
+    for (const body of [{ id: 'b3', say: [] }, { say: ['x'] }, { id: 'a b', say: ['x'] }])
+      assert.equal((await call(lp, 'POST', '/api/ws/acme/build', { body })).status, 400, JSON.stringify(body))
+    assert.equal((await call(lp, 'POST', '/api/ws/nope/build', { body: { id: 'b', say: ['x'] } })).status, 404)
+  } finally { await stop() }
 })
 
 test('transcribe: the audio reaches the voice, past the usual 2 MB; state says whether there is a key; a dropped request aborts', async () => {

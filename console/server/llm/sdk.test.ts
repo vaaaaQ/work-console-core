@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ALLOW, mcpServers, permissions, runToolDefs, userMessage } from './sdk.ts'
+import { ALLOW, DENY, askOptions, mcpServers, permissions, runToolDefs, userMessage } from './sdk.ts'
 import type { RunTools } from './sdk.ts'
 
 test("a session loads no user or local settings, and may use only its own tools, A's reads and runTools", () => {
@@ -110,6 +110,20 @@ test("the knowledge tools only when the run carries them: search lists, read giv
   const bad = runToolDefs({ ...base, knowledgeRead: async () => { throw new Error("note 'x' does not exist") } }).find((d) => d.name === 'knowledge_read')!
   const r = await (bad.handler as (a: unknown, x: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>)({ id: 'x' }, {})
   assert.equal(r.isError, true); assert.match(r.content[0].text, /does not exist/)
+})
+
+test("an ask loads no settings, has no built-in tool, may use only its own tools, keeps no transcript and answers in the schema's shape", () => {
+  const abort = new AbortController(), schema = { type: 'object' }
+  const o = askOptions({ system: 'Fill the form.', schema, tools: ['knowledge_search', 'source_get'], cwd: 'C:/tmp/build', abort })
+  assert.deepEqual(o.settingSources, [], "not even the project's: a build runs outside any repo")
+  assert.equal(o.strictMcpConfig, true)
+  assert.deepEqual(o.tools, [], 'no Read, Bash or any other built-in tool')
+  assert.equal(o.persistSession, false)
+  assert.equal(o.permissionMode, 'dontAsk')
+  assert.deepEqual(o.allowedTools, ['mcp__ask__knowledge_search', 'mcp__ask__source_get'])
+  assert.deepEqual(o.disallowedTools, DENY)
+  assert.deepEqual(o.outputFormat, { type: 'json_schema', schema })
+  assert.equal(o.systemPrompt, 'Fill the form.'); assert.equal(o.cwd, 'C:/tmp/build'); assert.equal(o.abortController, abort)
 })
 
 test('a run reads nothing of the console home: its tokens, its config and the database password', () => {
