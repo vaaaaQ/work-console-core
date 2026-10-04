@@ -15,8 +15,9 @@ import type { Space, Spaces } from '../spaces.ts'
    through the same Jobs.cmd as the page's, applies at once, is broadcast to open pages and is signed
    "Claude Code" in the journal. Undo walks back this session's own changes. The console's LLM runs
    never get these tools: they load no user-scope MCP servers and deny this one by name.
-   One server for every workspace: a job id names its workspace by its prefix, and create_job and
-   start_item take a ws (optional while only one is registered). */
+   One server for every workspace: a job id names its workspace by its prefix, and create_job,
+   start_item and the knowledge tools take a ws (optional while only one is registered).
+   Knowledge is read here and only proposed: a proposal waits for the user in Approvals. */
 
 export interface Tool {
   name: string; description: string; inputSchema: Record<string, unknown>
@@ -84,6 +85,8 @@ const str = (v: unknown, what: string) => {
   if (typeof v !== 'string' || !v.trim()) throw new HttpError(400, 'bad_args', `${what} is missing`)
   return v.trim()
 }
+/** a list of strings, or undefined when the argument is not a list */
+const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined)
 
 export function jobTools(d: { spaces: Spaces }): Tool[] {
   const { spaces } = d, ids = spaces.list.map((s) => s.id)
@@ -229,6 +232,40 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
       },
     },
     {
+      name: 'knowledge_search',
+      description: "Search a workspace's knowledge notes: how its tools, systems and machines work. Up to 20 notes, best first, each with a snippet; an empty q lists them all. Read one in full with knowledge_read.",
+      inputSchema: {
+        type: 'object', required: ['q'],
+        properties: { q: { type: 'string' }, tags: { type: 'array', items: { type: 'string' }, description: 'only notes carrying every one of these tags' }, ws: wsArg },
+      },
+      async run(a) { return spaces.pick(a.ws).notes.search(typeof a.q === 'string' ? a.q : '', strs(a.tags)) },
+    },
+    {
+      name: 'knowledge_read', description: 'One knowledge note in full by its id: title, tags, the playbooks whose runs read it, v and its Markdown text.',
+      inputSchema: { type: 'object', required: ['id'], properties: { id: { type: 'string' }, ws: wsArg } },
+      async run(a) { return spaces.pick(a.ws).notes.read(str(a.id, 'id')) },
+    },
+    {
+      name: 'knowledge_propose',
+      description: 'Propose a new knowledge note, or a change to one: note = its id, text = the whole new text in Markdown. It waits in the console\'s Approvals; '
+        + 'the user accepts, edits or rejects it, and nothing is written before that. Tags and playbooks left out of a change keep the note\'s.',
+      inputSchema: {
+        type: 'object', required: ['title', 'text', 'reason'],
+        properties: {
+          note: { type: 'string', description: 'id of the note to change; leave out for a new note' }, title: { type: 'string' }, text: { type: 'string' },
+          reason: { type: 'string', description: 'why, in one line' }, tags: { type: 'array', items: { type: 'string' } },
+          playbooks: { type: 'array', items: { type: 'string' }, description: 'playbook ids whose every run should read the note in full' }, ws: wsArg,
+        },
+      },
+      async run(a) {
+        const p = await spaces.pick(a.ws).notes.propose({
+          ...(a.note !== undefined ? { note: str(a.note, 'note') } : {}), title: str(a.title, 'title'), text: str(a.text, 'text'), reason: str(a.reason, 'reason'),
+          tags: strs(a.tags), playbooks: strs(a.playbooks), by: 'session',
+        })
+        return { proposal: p.id, title: p.title, waits: 'in Approvals, for the user' }
+      },
+    },
+    {
       name: 'list_playbooks', description: 'Playbooks a job can follow, with the workspace each belongs to (none: any workspace), their phases and step ids.',
       inputSchema: { type: 'object', properties: {} },
       async run() {
@@ -285,7 +322,9 @@ export function mcpHandler(o: { tools: Tool[]; token: () => string; version?: st
         return reply({
           protocolVersion: PROTOCOLS.includes(asked) ? asked : PROTOCOLS[0], capabilities: { tools: { listChanged: false } },
           serverInfo: { name: 'work-console', version: o.version || '1.0.0' },
-          instructions: 'Work Console jobs. Read a job with get_job before changing it. Every change applies at once, shows live in the console and is journaled as Claude Code; undo takes back this session\'s last change. A job id names its workspace; create_job and start_item take ws, which may be left out while one workspace is registered.',
+          instructions: 'Work Console jobs and knowledge. Read a job with get_job before changing it. Every change applies at once, shows live in the console and is journaled as Claude Code; undo takes back this session\'s last change. '
+            + 'Knowledge notes say how a workspace\'s tools, systems and machines work: search them before guessing, and propose what is missing with knowledge_propose; the user decides. '
+            + 'A job id names its workspace; create_job, start_item and the knowledge tools take ws, which may be left out while one workspace is registered.',
         })
       }
       case 'ping': return reply({})

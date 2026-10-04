@@ -9,7 +9,8 @@ test("a session loads no user or local settings, and may use only its own tools,
   assert.equal(p.permissionMode, 'dontAsk')
   assert.deepEqual(p.allowedTools, [...ALLOW, 'mcp__my-tools', 'Bash(npm test)'])
   assert.ok(!p.allowedTools.includes('mcp__bridge__bridge_act'))
-  for (const k of ['mcp__bridge__knowledge_search', 'mcp__bridge__knowledge_read', 'mcp__bridge__knowledge_propose']) assert.ok(p.allowedTools.includes(k), k)
+  for (const k of ['mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose']) assert.ok(p.allowedTools.includes(k), k)
+  assert.ok(!p.allowedTools.some((t) => t.startsWith('mcp__bridge__knowledge')), 'knowledge is the console\'s, not the bridge\'s')
   for (const d of ['mcp__bridge__bridge_act', 'Read(~/.bridge/**)', 'Read(~/.work-console/**)']) assert.ok(p.disallowedTools.includes(d), d)
 })
 
@@ -58,6 +59,29 @@ test('create_job and start_job only when the run carries them; create_job answer
   const create = defs.find((d) => d.name === 'create_job')!.handler as (a: unknown, x: unknown) => Promise<{ content: unknown }>
   const r = await create({ title: 'x' }, {})
   assert.deepEqual(r.content, [{ type: 'text', text: 'created AD-0009' }])
+})
+
+test("the knowledge tools only when the run carries them: search lists, read gives the note, a proposal answers with its id", async () => {
+  const none = async () => {}
+  const base: RunTools = { submitDraft: none, addArtifact: none, addArtifactFile: none, journal: none }
+  assert.ok(!runToolDefs(base).some((d) => d.name.startsWith('knowledge_')))
+  const asked: unknown[] = []
+  const defs = runToolDefs({
+    ...base,
+    knowledgeSearch: async (q, tags) => { asked.push([q, tags]); return [{ id: 'ado-rest', v: 2, title: 'ADO REST', tags: ['ado'], playbooks: [], updated: '', size: 9, score: 3, snippet: 'use a PAT' }] },
+    knowledgeRead: async (id) => ({ id, v: 2, title: 'ADO REST', tags: ['ado'], playbooks: ['dev-item'], text: 'use a PAT', updated: '' }),
+    knowledgePropose: async (p) => { asked.push(p); return 'P-0004' },
+  })
+  assert.deepEqual(defs.map((d) => d.name).slice(-3), ['knowledge_search', 'knowledge_read', 'knowledge_propose'])
+  for (const d of defs) assert.ok(ALLOW.includes(`mcp__run__${d.name}`), d.name)
+  const call = (n: string, a: unknown) => (defs.find((d) => d.name === n)!.handler as (a: unknown, x: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>)(a, {})
+  assert.equal((await call('knowledge_search', { q: 'pat' })).content[0].text, '- ado-rest: ADO REST (tags ado) use a PAT')
+  assert.equal((await call('knowledge_read', { id: 'ado-rest' })).content[0].text, '# ADO REST\nid ado-rest · v2 · tags ado · playbooks dev-item\n\nuse a PAT')
+  assert.match((await call('knowledge_propose', { title: 't', text: 'x', reason: 'r' })).content[0].text, /^proposed P-0004/)
+  assert.deepEqual(asked, [['pat', undefined], { title: 't', text: 'x', reason: 'r' }])
+  const bad = runToolDefs({ ...base, knowledgeRead: async () => { throw new Error("note 'x' does not exist") } }).find((d) => d.name === 'knowledge_read')!
+  const r = await (bad.handler as (a: unknown, x: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>)({ id: 'x' }, {})
+  assert.equal(r.isError, true); assert.match(r.content[0].text, /does not exist/)
 })
 
 test('a run reads nothing of the console home: its tokens, its config and the database password', () => {

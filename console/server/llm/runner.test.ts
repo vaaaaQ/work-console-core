@@ -12,6 +12,7 @@ import { fileStore } from '../store/file.ts'
 import { demoCtx, demoSeed, fakeSdk } from '../testkit.ts'
 import { GatewayError } from '../bridge/wire.ts'
 import type { ConceptReply } from '../bridge/wire.ts'
+import { notesStore } from '../knowledge/notes.ts'
 import { resolveContext } from './context.ts'
 import { buildPrompt } from './prompt.ts'
 import { Runner, safeName } from './runner.ts'
@@ -332,6 +333,29 @@ test("a runner told who the user is puts the name in a new run's prompt", async 
   await new Runner({ store: blank.store, jobs: blank.jobs, bus: blank.bus, sdk: fakeSdk(blank.sessions).sdk, cwd: blank.dir, gate: () => true, artifactsDir: join(blank.dir, 'arts'), ctx: demoCtx, me: '' }).ask(v.job, v.step, 'q')
   await until(() => blank.sessions.length === 1)
   assert.match(blank.sessions[0].prompt, /in the user's Work Console/)
+})
+
+test("a run's knowledge tools search and read its workspace's notes, and a proposal is signed by the run; without notes there are none", async () => {
+  const s = setup(), [t] = await targets(s.jobs, 1)
+  const notes = notesStore(join(s.dir, 'kn'))
+  await notes.save(null, { title: 'Tracker REST', tags: ['tracker'], playbooks: [], text: 'Use a token header.' }, null)
+  const runner = new Runner({ store: s.store, jobs: s.jobs, bus: s.bus, sdk: fakeSdk(s.sessions).sdk, cwd: s.dir, gate: () => true, artifactsDir: join(s.dir, 'arts'), ctx: demoCtx, notes })
+  await runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  const tools = s.sessions[0].tools
+  assert.deepEqual((await tools.knowledgeSearch!('token')).map((h) => h.id), ['tracker-rest'])
+  assert.equal((await tools.knowledgeRead!('tracker-rest')).text, 'Use a token header.')
+  const pid = await tools.knowledgePropose!({ note: 'tracker-rest', title: 'Tracker REST', text: 'Use a token header; it expires hourly.', reason: 'the run hit an expired token' })
+  const [p] = await notes.proposals()
+  assert.deepEqual([p.id, p.note, p.baseV, p.by], [pid, 'tracker-rest', 1, `run ${t.job}/${t.step}`])
+  assert.equal((await notes.read('tracker-rest')).v, 1, 'a proposal writes nothing')
+  assert.match(s.sessions[0].prompt, /propose a knowledge note or a change with knowledge_propose/)
+  assert.doesNotMatch(s.sessions[0].prompt, /before guessing/, 'the prompt carries the context; it does not send the run off to read')
+  const plain = setup(), [u] = await targets(plain.jobs, 1)
+  await plain.runner.ask(u.job, u.step, 'q')
+  await until(() => plain.sessions.length === 1)
+  assert.equal(plain.sessions[0].tools.knowledgeSearch, undefined)
+  assert.doesNotMatch(plain.sessions[0].prompt, /knowledge_/)
 })
 
 test('a workspace without a gateway: the prompt does not point at the bridge tools, and the rest is unchanged', async () => {

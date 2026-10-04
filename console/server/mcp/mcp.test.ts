@@ -13,6 +13,7 @@ import { GatewayError } from '../bridge/wire.ts'
 import type { ActReq } from '../bridge/wire.ts'
 import { Bus } from '../events.ts'
 import { Jobs } from '../jobs/jobs.ts'
+import { notesStore } from '../knowledge/notes.ts'
 import { Spaces } from '../spaces.ts'
 import type { Space } from '../spaces.ts'
 import { fileStore } from '../store/file.ts'
@@ -34,8 +35,9 @@ function stubSpace(page: WorkspacePage, prefix: string, open: { v: boolean }, se
   const jobs = new Jobs({ store, bus: new Bus(), ctx: demoCtx, gate: () => open.v })
   const acts: ActReq[] = []
   const bridge = { available: () => true, read: async () => ({}), act: async (a: ActReq) => { acts.push(a); return { status: 'ok' as const, result: { title: `Item ${a.args.id}` } } } }
-  const space = { id: page.id, prefix, page, jobs, ctx: demoCtx, start: startItem({ jobs, ctx: demoCtx, bridge, page }) } as unknown as Space
-  return { space, jobs, acts }
+  const notes = notesStore(join(mkdtempSync(join(tmpdir(), 'wc-kn-')), 'kn'))
+  const space = { id: page.id, prefix, page, jobs, ctx: demoCtx, notes, start: startItem({ jobs, ctx: demoCtx, bridge, page }) } as unknown as Space
+  return { space, jobs, acts, notes }
 }
 
 async function setup(t: { after(f: () => unknown): void }, o: { open?: { v: boolean }; both?: boolean } = {}) {
@@ -62,7 +64,7 @@ async function setup(t: { after(f: () => unknown): void }, o: { open?: { v: bool
   }
   const init = await post({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 't', version: '1' } } })
   sid = init.sid!
-  return { jobs: a.jobs, acts: a.acts, beta: b, spaces, open, post, rpc, call, init, setSid: (s: string) => { sid = s } }
+  return { jobs: a.jobs, acts: a.acts, notes: a.notes, beta: b, spaces, open, post, rpc, call, init, setSid: (s: string) => { sid = s } }
 }
 const openJob = async (jobs: Jobs) => {
   const x = demoCtx()
@@ -74,11 +76,11 @@ test('initialize answers the asked protocol, a session id and the tools; a wrong
   assert.equal(s.init.status, 200)
   assert.equal(s.init.body.result.protocolVersion, '2025-03-26')
   assert.equal(s.init.body.result.serverInfo.name, 'work-console')
-  assert.match(s.init.body.result.instructions, /create_job and start_item take ws/)
+  assert.match(s.init.body.result.instructions, /create_job, start_item and the knowledge tools take ws/)
   assert.ok(s.init.sid)
   assert.equal((await s.post({ jsonrpc: '2.0', method: 'notifications/initialized' })).status, 202)
   const names = (await s.rpc('tools/list')).result.tools.map((x: { name: string }) => x.name)
-  assert.deepEqual(names, ['list_jobs', 'get_job', 'job_command', 'job_context', 'return_to', 'create_job', 'start_item', 'undo', 'list_playbooks'])
+  assert.deepEqual(names, ['list_jobs', 'get_job', 'job_command', 'job_context', 'return_to', 'create_job', 'start_item', 'undo', 'knowledge_search', 'knowledge_read', 'knowledge_propose', 'list_playbooks'])
   assert.equal((await s.post({ jsonrpc: '2.0', id: 9, method: 'tools/list' }, 'b'.repeat(64))).status, 401)
   assert.equal((await s.rpc('nope')).error.code, -32601)
   assert.equal((await s.post(null)).body.error.code, -32600)
@@ -319,6 +321,24 @@ test("list_playbooks carries each playbook's own ws; core playbooks have none", 
   const pbs = (await s.call('list_playbooks')).json() as { id: string; ws?: string }[]
   assert.equal(pbs.find((p) => p.id === 'dev-item')!.ws, 'acme')
   assert.equal('ws' in pbs.find((p) => p.id === 'action')!, false, "a core playbook is nobody's: no ws is invented")
+})
+
+test("knowledge: a session searches and reads a workspace's notes; a proposal is signed session and writes nothing", async (t) => {
+  const s = await setup(t, { both: true })
+  await s.notes.save(null, { title: 'Tracker REST', tags: ['tracker'], playbooks: ['dev-item'], text: 'Use a token header.' }, null)
+  const hits = (await s.call('knowledge_search', { q: 'token', ws: 'acme' })).json() as { id: string }[]
+  assert.deepEqual(hits.map((h) => h.id), ['tracker-rest'])
+  assert.deepEqual((await s.call('knowledge_search', { q: 'token', ws: 'beta' })).json(), [], "beta's notes are its own")
+  assert.equal((await s.call('knowledge_read', { id: 'tracker-rest', ws: 'acme' })).json().text, 'Use a token header.')
+  const gone = await s.call('knowledge_read', { id: 'nope', ws: 'acme' })
+  assert.equal(gone.err, true); assert.match(gone.text, /does not exist/)
+  const r = await s.call('knowledge_propose', { note: 'tracker-rest', title: 'Tracker REST', text: 'Use a token header; it expires hourly.', reason: 'expired token', ws: 'acme' })
+  assert.equal(r.err, false, r.text)
+  const [p] = await s.notes.proposals()
+  assert.deepEqual(r.json(), { proposal: p.id, title: 'Tracker REST', waits: 'in Approvals, for the user' })
+  assert.deepEqual([p.by, p.note, p.playbooks], ['session', 'tracker-rest', ['dev-item']], 'a change keeps the playbooks it left out')
+  assert.equal((await s.notes.read('tracker-rest')).v, 1)
+  assert.equal((await s.call('knowledge_propose', { title: 'x', text: 'y', ws: 'acme' })).err, true, 'a proposal needs a reason')
 })
 
 test('ws is an enum of the registered ids and says it may be omitted when there is one', async (t) => {

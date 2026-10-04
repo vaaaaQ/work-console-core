@@ -183,8 +183,8 @@ A workspace may have no gateway: its jobs live in PostgreSQL and its runs work i
 `console/server/llm/` runs one step at a time through the Claude Agent SDK.
 
 - The prompt is built from the job, the step and the playbook's instructions.
-- The run's tools come from the allowlist in `sdk.ts`: it can read A, search knowledge, and propose
-  a note. It cannot act, and it cannot write B beyond its own step, plus the jobs `llm.jobTools` lets it create and start.
+- The run's tools come from the allowlist in `sdk.ts`: it can read A, and search, read and propose the
+  workspace's knowledge notes. It cannot act, and it cannot write B beyond its own step, plus the jobs `llm.jobTools` lets it create and start.
 - It keeps files with `add_artifact` and `add_artifact_file` (a file under its dir, at most 20 MB).
   Images show on the page; html and svg are served as text.
 - It never reads the console home: the deny list covers `.work-console` for Read, Bash and PowerShell.
@@ -207,15 +207,19 @@ Each workspace has a folder of Markdown notes: `knowledgeDir` in its config, def
 
 - Routes live under `/api/ws/<id>/knowledge` and work the same with or without a gateway.
 - With the fake gateway, notes live under the console home, never in a configured folder.
+- A run gets `knowledge_search`, `knowledge_read` and `knowledge_propose` as its own tools; its
+  proposals are signed `run <job>/<step>`. A Claude Code session gets the same three on the
+  console MCP, signed `session`. Neither goes through the gateway.
 
 ## Claude Code access
 
 The backend serves its own MCP at `127.0.0.1:7410/mcp` (`console/server/mcp/mcp.ts`). It offers
 the job tools (`list_jobs`, `get_job`, `job_command`, `job_context`, `return_to`, `create_job`,
-`start_item`, `undo`, `list_playbooks`), so a terminal session can move jobs without the page. These
-are job commands, not source acts. It is one server for every workspace: a job id names its workspace
-by its prefix, and `create_job` and `start_item` take `ws`, which may be omitted while only one
-workspace is registered.
+`start_item`, `undo`, `list_playbooks`), so a terminal session can move jobs without the page, and
+the knowledge tools (`knowledge_search`, `knowledge_read`, `knowledge_propose`). These are console
+commands, not source acts. It is one server for every workspace: a job id names its workspace by its
+prefix, and `create_job`, `start_item` and the knowledge tools take `ws`, which may be omitted while
+only one workspace is registered.
 
 ## Notifications
 

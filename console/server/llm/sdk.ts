@@ -1,11 +1,12 @@
 import { createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk'
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
+import type { Hit, Note, ProposalIn } from '../knowledge/notes.ts'
 import type { Shot } from './shot.ts'
 
 /* The only module that touches the Agent SDK. A session reads untrusted chat and mail text, so it
-   runs in dontAsk mode with an explicit tool list: its own tools, A's read tools, the knowledge
-   tools and config's runTools. The user's own user and local settings are not loaded, because their shell
+   runs in dontAsk mode with an explicit tool list: its own tools (the workspace's knowledge among them),
+   A's read tools and config's runTools. The user's own user and local settings are not loaded, because their shell
    allow rules would let a session reach the console's API or A's tokens; only the repo's project
    settings are, for its CLAUDE.md and skills. It reads A through the gateway's MCP with the llm
    token and writes only through the run's own tools. */
@@ -22,13 +23,19 @@ export interface RunTools {
   createJob?(o: { title: string; playbook?: string; key?: string; project?: string; start?: boolean }): Promise<string>
   /** starts a ready job of the run's own workspace */
   startJob?(id: string): Promise<void>
+  /** the workspace's knowledge notes; a proposal writes nothing until the user accepts it */
+  knowledgeSearch?(q: string, tags?: string[]): Promise<Hit[]>
+  knowledgeRead?(id: string): Promise<Note>
+  /** the proposal's id */
+  knowledgePropose?(p: KnowledgeIn): Promise<string>
 }
+export type KnowledgeIn = Omit<ProposalIn, 'by'>
 export type SdkEvent = { k: 'session'; id: string } | { k: 'text'; t: string } | { k: 'tool'; name: string; input: string } | { k: 'result'; ok: boolean; error?: string }
 export interface Sdk { start(o: { prompt: string; resume?: string; cwd: string; tools: RunTools; abort: AbortController }): AsyncIterable<SdkEvent> }
 
-const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status',
-  'mcp__bridge__knowledge_search', 'mcp__bridge__knowledge_read', 'mcp__bridge__knowledge_propose']
-export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__screenshot', 'mcp__run__create_job', 'mcp__run__start_job', ...BRIDGE]
+const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status']
+export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__screenshot', 'mcp__run__create_job', 'mcp__run__start_job',
+  'mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose', ...BRIDGE]
 export const DENY = [
   'mcp__bridge__bridge_act', 'mcp__work-console',
   'Read(~/.bridge/**)', 'Read(~/.work-console/**)', 'Read(**/.work-console/**)',
@@ -55,6 +62,9 @@ export const signinReason = (e: string) => /\b(401|unauthori[sz]ed|not logged in
 const done = (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
 const failed = (e: unknown) => ({ content: [{ type: 'text' as const, text: `failed: ${(e as Error).message || e}` }], isError: true })
 const wrap = (f: () => Promise<void>, ok: string) => async () => { try { await f(); return done(ok) } catch (e) { return failed(e) } }
+const answer = (f: () => Promise<string>) => async () => { try { return done(await f()) } catch (e) { return failed(e) } }
+const list = (xs: string[]) => xs.join(', ') || 'none'
+const hitLine = (h: Hit) => `- ${h.id}: ${h.title} (tags ${list(h.tags)}) ${h.snippet}`
 
 /** A's bridge with the LLM's read-only token (none when bridge is false), the run's own tools, then the
     workspace's own servers; checkWorkspaces keeps those from taking the name bridge or run */
@@ -86,6 +96,14 @@ export function runToolDefs(tools: RunTools) {
       async (a) => { try { return done(`created ${await tools.createJob!(a)}`) } catch (e) { return failed(e) } })] : []),
     ...(tools.startJob ? [tool('start_job', 'Start a ready job of this workspace by its id.', { id: z.string().min(1) },
       (a) => wrap(() => tools.startJob!(a.id), 'job started')())] : []),
+    ...(tools.knowledgeSearch ? [tool('knowledge_search', "Search this workspace's knowledge notes: how its tools, systems and machines work. Up to 20 notes, best first, each with a snippet; an empty q lists them all. Read one in full with knowledge_read.",
+      { q: z.string(), tags: z.array(z.string()).optional() },
+      (a) => answer(async () => (await tools.knowledgeSearch!(a.q, a.tags)).map(hitLine).join('\n') || 'no note matches')())] : []),
+    ...(tools.knowledgeRead ? [tool('knowledge_read', 'Read one knowledge note in full by its id.', { id: z.string().min(1) },
+      (a) => answer(async () => { const n = await tools.knowledgeRead!(a.id); return `# ${n.title}\nid ${n.id} · v${n.v} · tags ${list(n.tags)} · playbooks ${list(n.playbooks)}\n\n${n.text}` })())] : []),
+    ...(tools.knowledgePropose ? [tool('knowledge_propose', 'Propose a new knowledge note, or a change to one: note = its id, text = the whole new text in Markdown. The user accepts, edits or rejects it; nothing is written before that. Propose what a later run would need and could not find. playbooks: ids of the playbooks whose every run should read it.',
+      { note: z.string().min(1).optional(), title: z.string().min(1), text: z.string().min(1), reason: z.string().min(1), tags: z.array(z.string()).optional(), playbooks: z.array(z.string()).optional() },
+      (a) => answer(async () => `proposed ${await tools.knowledgePropose!(a)}; it waits for the user in Approvals`)())] : []),
   ]
 }
 

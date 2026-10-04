@@ -137,7 +137,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     store, jobs, bus, sdk, cwd: cfg.workDir, max: cfg.maxSessions, gate, artifactsDir: o.artifactsDir, ctx,
     context: (j) => resolveContext(source, j, w.page.me), me: w.page.me, bridge: w.llm?.bridge, workDir,
     screenshot: w.llm?.screenshot ? (s) => shoot({ ...s, browserPath: cfg.browserPath }) : undefined,
-    jobTools: w.llm?.jobTools ? { ws: id, pb: w.page.board.start, prj: w.page.pack.prj, prefix: w.jobPrefix } : undefined,
+    jobTools: w.llm?.jobTools ? { ws: id, pb: w.page.board.start, prj: w.page.pack.prj, prefix: w.jobPrefix } : undefined, notes,
   })
   const offInterrupt = bus.on((e) => {
     if (e.kind === 'bridge' && e.state === 'unavailable')

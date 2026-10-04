@@ -8,9 +8,10 @@ import type { Job, RunRec, Ws } from '../../src/model/types.ts'
 import { HttpError } from '../events.ts'
 import type { Bus } from '../events.ts'
 import type { Jobs } from '../jobs/jobs.ts'
+import type { Notes } from '../knowledge/notes.ts'
 import type { Store } from '../store/port.ts'
 import { buildPrompt, RESUME_PROMPT } from './prompt.ts'
-import type { Sdk } from './sdk.ts'
+import type { KnowledgeIn, Sdk } from './sdk.ts'
 import { checkUrl } from './shot.ts'
 import type { Shot } from './shot.ts'
 import type { WorkDir } from './worktree.ts'
@@ -43,6 +44,7 @@ export class Runner {
   private context: (j: Job) => Promise<Resolved[]>; private me?: string; private bridge?: boolean; private workDir?: WorkDir
   private screenshot?: (o: Shot & { out: string; fileRoot?: string }) => Promise<unknown>
   private jobTools?: JobTools
+  private notes?: Notes
   private queue: { id: string; resume?: string }[] = []
   private live = new Map<string, Live>()
   private feeds = new Map<string, string[]>()
@@ -58,9 +60,11 @@ export class Runner {
     screenshot?: (o: Shot & { out: string; fileRoot?: string }) => Promise<unknown>
     /** runs may create jobs in this workspace and start its jobs; none = no job tools */
     jobTools?: JobTools
+    /** the workspace's knowledge notes; none = no knowledge tools */
+    notes?: Notes
   }) {
     this.store = o.store; this.jobs = o.jobs; this.bus = o.bus; this.sdk = o.sdk; this.cwd = o.cwd
-    this.max = o.max ?? 3; this.gate = o.gate; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => []); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot; this.jobTools = o.jobTools
+    this.max = o.max ?? 3; this.gate = o.gate; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => []); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot; this.jobTools = o.jobTools; this.notes = o.notes
   }
 
   /** draft ready, failed or interrupted: the moments worth a push */
@@ -214,7 +218,7 @@ export class Runner {
       if (!rel || rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error(`${p} is outside the work dir`)
       return real
     }
-    const shot = this.screenshot, jt = this.jobTools
+    const shot = this.screenshot, jt = this.jobTools, kn = this.notes
     let made = 0
     const tools = {
       submitDraft: async (t: string) => {
@@ -256,12 +260,17 @@ export class Runner {
           await this.jobs.cmd(id, { op: 'start' }, undefined, 'run')
         },
       } : {}),
+      ...(kn ? {
+        knowledgeSearch: (q: string, tags?: string[]) => kn.search(q, tags),
+        knowledgeRead: (nid: string) => kn.read(nid),
+        knowledgePropose: async (p: KnowledgeIn) => (await kn.propose({ ...p, by: `run ${rec.job}/${rec.step}` })).id,
+      } : {}),
     }
     let error: string | undefined
     try {
       // a resumed session already has its context
       const prompt = resume ? RESUME_PROMPT : buildPrompt(this.ctx(), job, rec.step, rec.q, await this.context(job), this.me,
-        { bridge: this.bridge, ...(this.workDir ? { workDir: cwd, branch: this.workDir.branch?.(job) } : {}) })
+        { bridge: this.bridge, knowledge: !!kn, ...(this.workDir ? { workDir: cwd, branch: this.workDir.branch?.(job) } : {}) })
       for await (const e of this.sdk.start({ prompt, resume, cwd, tools, abort: l.ac })) {
         if (l.why) break
         if (e.k === 'session') { if (r!.session !== e.id) { r = { ...r!, session: e.id }; await this.save(r) } }

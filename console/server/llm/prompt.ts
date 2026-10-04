@@ -7,8 +7,9 @@ import type { Job } from '../../src/model/types.ts'
 
 /** me = what the prompt calls the person the console works for; unset or empty: "the user".
     bridge false: the workspace has no gateway, so the prompt does not point at the bridge tools.
+    knowledge: the run has the knowledge tools.
     workDir, branch: the job's own dir and the branch it is on, when the workspace gives each job one */
-export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, ctx: Resolved[] = [], me?: string, o: { bridge?: boolean; workDir?: string; branch?: string } = {}): string {
+export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, ctx: Resolved[] = [], me?: string, o: { bridge?: boolean; knowledge?: boolean; workDir?: string; branch?: string } = {}): string {
   const who = me || 'the user'
   const s = T.stepOf(x, j, step), pb = x.PB[j.pb]
   const outs = T.steps(x, j.pb).filter((t) => j.flow[t.id]?.out).map((t) => `### ${t.t}\n${j.flow[t.id].out}`)
@@ -30,6 +31,7 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, ctx: Reso
     jr.length ? `## Journal (latest last)\n${jr.join('\n')}\n` : '',
     `## How to work`,
     ...(o.bridge === false ? [] : [`- The context above was read when this run started. Read anything more yourself with the bridge tools (bridge_snapshot, bridge_get).`]),
+    ...(o.knowledge ? [`- When you learn something a later run would need, propose a knowledge note or a change with knowledge_propose; ${who} decides. Search the other notes (knowledge_search, knowledge_read) only for what this prompt does not cover.`] : []),
     `- You never send anything to a source (no chat posts, mails, votes, comments or state changes): ${who} sends after review.`,
     `- Write progress with the run tool journal(observed, changed, next) at meaningful points.`,
     `- Save files the step expects with add_artifact(name, content), or with add_artifact_file(path) for a file already under your working dir; images show on the page.`,
