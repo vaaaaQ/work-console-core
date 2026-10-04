@@ -196,6 +196,7 @@ What a run's prompt holds, in this order (`console/server/llm/prompt.ts`):
 
 | Part | What |
 |---|---|
+| Pictures | the pictures the context's work items name, at most 20, each after a line `[image N] <item>, <where>: <name>` that the text's `[image N]` points at; they come before the text |
 | Job | id, title, key, playbook, project, step, exit criterion, expected artifacts, work dir |
 | Context | each context item read through the bridge: a work item with its newest comments, a chat's newest messages, a mail whole. An item that cannot be read is a line saying why |
 | Knowledge | the job's notes and its playbook's notes, in full, each once |
@@ -205,7 +206,7 @@ What a run's prompt holds, in this order (`console/server/llm/prompt.ts`):
 | Description | the job's description: the user's own words, Markdown |
 | Instruction | what the user asked this run |
 
-- The run tool `context` returns the same parts but How to work, read anew, for a long run whose first prompt is far behind it.
+- The run tool `context` returns the same parts but How to work, pictures included, read anew, for a long run whose first prompt is far behind it.
 - A resumed run keeps its session and gets one line; it reads nothing until it calls `context`.
 
 ## Knowledge

@@ -37,6 +37,9 @@ const STATE = ['jobs', 'runs', 'playbooks', 'marks']
 const CONSOLE_ONLY = new Set(['/api/act', '/api/state/put', '/api/state/new-job-id'])
 const MAX_DOC = 256 * 1024
 
+/** the demo's one picture, a 32x20 png, for every image a demo work item lists */
+const PIC = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAUCAIAAABj86gYAAAAKElEQVR42mP4SmPAMGoBSRbcsTGiChq1YNSCUQtGLaDEgtHiekAsAAD8b2YsPCRrAwAAAABJRU5ErkJggg=='
+
 /** A's concepts; an empty one still answers, a seed may add more */
 const BASE = ['chat', 'mail', 'cal', 'work', 'review', 'board', 'time', 'ci']
 
@@ -152,6 +155,11 @@ export async function startFakeGateway(o: {
     const m = /^\/api\/items\/([^/]+)\/([^/]+)$/.exec(url.pathname)
     if (req.method === 'GET' && m) {
       const [concept, id] = [decodeURIComponent(m[1]), decodeURIComponent(m[2])], c = cs[concept]
+      // get-only: a picture a work item lists
+      if (concept === 'image') {
+        const im = Object.values(WORK0).flatMap((d) => d.images ?? []).find((i) => i.ref === id)
+        return json(200, im ? { status: 'ok', rev: 1, items: { name: im.name, mime: 'image/png', data: PIC, width: 32, height: 20 } } : { status: 'not_found', message: `no image ${id}` })
+      }
       if (!c) return json(200, { status: 'source_error', message: `unknown concept ${concept}` })
       if (c.down) return json(200, { status: c.down, message: `${concept} is ${c.down}` })
       if (STATE.includes(concept)) {

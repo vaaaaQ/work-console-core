@@ -24,6 +24,7 @@ export const CHATS0: Record<Ws, Chat[]> = {}
 export interface WorkDoc {
   type: string; title: string; state: string; assignedTo: string | null; description: string; reproSteps: string; acceptanceCriteria: string
   comments: { id: string; author: string; at: string; text: string }[]
+  images?: { ref: string; name: string; from: string }[]
 }
 /* work items by id; the fake gateway and the demo context preview read these */
 export const WORK0: Record<string, WorkDoc> = {}

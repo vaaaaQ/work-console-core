@@ -35,10 +35,13 @@ export const ctxUnit = (it: Pick<CtxItem, 'k' | 'n'>) => KINDS[it.k].whole ?? `l
 
 /* ===== reading a bridge item as text ===== */
 type Entry = { author?: string; authorKind?: string; at?: string; text?: string }
-/** work.get: the header fields are absent while the workplace runs an older pack */
+/** a picture a work get lists; its text names it [image N], N its place in the list.
+    ref = what an image get reads; from = where it is: description, reproSteps, acceptanceCriteria or comment:<id> */
+export interface WorkImage { ref: string; name?: string; from?: string }
+/** work.get: the header fields are absent while the workplace runs an older pack, images while it runs one without them */
 export interface WorkDetail {
   type?: string; title?: string; state?: string; assignedTo?: string | null
-  description?: string; reproSteps?: string; acceptanceCriteria?: string; comments?: Entry[]
+  description?: string; reproSteps?: string; acceptanceCriteria?: string; comments?: Entry[]; images?: WorkImage[]
 }
 export interface ChatDetail { messages?: Entry[] }
 /** mail.get */

@@ -7,7 +7,8 @@ import type { Note } from '../knowledge/notes.ts'
 /* What a run is told, read at its start so it can begin working instead of reading. The generated part
    comes first: the job and its step, its context items, its knowledge notes, earlier outputs and the
    journal, then how to work. The user's part comes last: the job's description, then the instruction.
-   The run's context tool returns the same sections but how to work, read anew. */
+   The pictures the context names come before the text. The run's context tool returns the same sections but
+   how to work, and the pictures, read anew. */
 
 /** the journal entries a prompt carries: the latest */
 const JR_MAX = 20
@@ -16,8 +17,9 @@ const JR_MAX = 20
     me = what the prompt calls the person the console works for; unset or empty: "the user".
     bridge false: the workspace has no gateway, so the prompt does not point at the bridge tools.
     knowledge: the run has the knowledge tools.
+    images: how many pictures come before the prompt's text.
     workDir, branch: the job's own dir and the branch it is on, when the workspace gives each job one */
-export interface PromptIn { ctx?: Resolved[]; pbNotes?: Note[]; me?: string; bridge?: boolean; knowledge?: boolean; workDir?: string; branch?: string }
+export interface PromptIn { ctx?: Resolved[]; pbNotes?: Note[]; me?: string; bridge?: boolean; knowledge?: boolean; images?: number; workDir?: string; branch?: string }
 
 const who = (o: PromptIn) => o.me || 'the user'
 const block = (h: string, rows: string[]) => (rows.length ? `${h}\n${rows.join('\n')}` : '')
@@ -62,6 +64,7 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: Prompt
     ...p.data,
     block('## How to work', [
       `- Everything above was read for this step when the run started: work from it, and use tools only for what it does not cover.`,
+      ...(o.images ? [`- [image N] in the text is the picture labelled [image N] before this text.`] : []),
       ...(o.bridge === false ? [] : [`- Read anything else from the sources with the bridge tools (bridge_snapshot, bridge_get).`]),
       `- context() returns these sections again, read anew, when a long run needs them back.`,
       ...(o.knowledge ? [`- When you learn something a later run would need, propose a knowledge note or a change with knowledge_propose; ${w} decides. Notes not given above are found with knowledge_search and knowledge_read.`] : []),

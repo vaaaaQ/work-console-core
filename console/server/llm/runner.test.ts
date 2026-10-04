@@ -273,6 +273,34 @@ test("a new run's prompt carries the job's context; an unreadable item is a line
   assert.equal(seen.length, n, 'a resumed run reads no context')
 })
 
+test("a new run gets the pictures its context's text names, before its prompt; context() gives them again; a resumed run gets none", async () => {
+  const { store, jobs, bus, sessions, dir } = setup(), [t] = await targets(jobs, 1)
+  await jobs.cmd(t.job, { op: 'ctxAdd', k: 'work', id: 'ACME-999', name: 'Limiter' })
+  const b = {
+    get: async (concept: string, id: string): Promise<ConceptReply> => concept === 'image'
+      ? { status: 'ok', rev: 1, items: { name: 'banner.png', mime: 'image/png', data: 'UE5H', width: 1, height: 1 } }
+      : { status: 'ok', rev: 1, items: id === 'ACME-999'
+        ? { title: 'Limiter', description: 'The banner: [image 1]', comments: [], images: [{ ref: 'r1', name: 'banner.png', from: 'description' }] }
+        : { title: 'Its own item', comments: [] } },
+  }
+  const runner = new Runner({ store, jobs, bus, sdk: fakeSdk(sessions).sdk, cwd: dir, gate: () => true, artifactsDir: join(dir, 'arts'), ctx: demoCtx, context: (j) => resolveContext(b, j) })
+  const r = await runner.ask(t.job, t.step, 'q')
+  await until(() => sessions.length === 1)
+  const pic = { label: '[image 1] Limiter, description: banner.png', mime: 'image/png', data: 'UE5H' }
+  assert.deepEqual(sessions[0].images, [pic])
+  assert.match(sessions[0].prompt, /Description:\nThe banner: \[image 1\]\n/)
+  assert.match(sessions[0].prompt, /\n- \[image N\] in the text is the picture labelled \[image N\] before this text\.\n/)
+  const again = await sessions[0].tools.context!()
+  assert.deepEqual(again.images, [pic])
+  assert.match(again.text, /The banner: \[image 1\]/)
+  sessions[0].push({ k: 'session', id: 'sess-1' })
+  await tick()
+  await runner.interruptAll('the bridge went away')
+  await runner.resume(r.id)
+  await until(() => sessions.length === 2)
+  assert.equal(sessions[1].images, undefined, 'a resumed session already has them')
+})
+
 /* a fixed job, so the prompt text can be compared word for word */
 function promptJob() {
   const j = demoSeed().jobs!.find((x) => x.id === 'J-0420')!
@@ -397,7 +425,8 @@ test("a run's prompt carries the job's notes and its playbook's in full, once ea
   assert.ok(p.indexOf('## Context') < k0 && k0 < p.indexOf('## How to work'))
   const tools = s.sessions[0].tools
   await tools.journal('Found the limiter', 'nothing yet', 'read the PR')
-  const again = await tools.context!()
+  const c = await tools.context!(), again = c.text
+  assert.deepEqual(c.images, [])
   assert.ok(again.startsWith(`## Job ${t.job}: `), again.slice(0, 80))
   assert.match(again, /: Found the limiter → nothing yet Next: read the PR\n/)
   assert.match(again, /### Release rules \(note release-rules, the playbook's\)\nTag after merge\./)

@@ -47,7 +47,7 @@ async function (call, env) { ... }   // env is injected only by tests
 | `act` | `action`, `args` | the act's result, small |
 
 `watch` maps a concept to the ids that jobs follow. A read includes them even when they don't
-match the pack's default query.
+match the pack's default query. A get-only concept, such as `image`, answers a read with `[]`.
 
 ## Errors
 

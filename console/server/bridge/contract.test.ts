@@ -60,6 +60,23 @@ test('get work returns the item with its sections and comments', async (t) => {
   for (const m of body.items.comments) for (const f of ['id', 'author', 'at', 'text']) assert.ok(f in m, `comment has ${f}`)
 })
 
+test('get image returns a picture a work item lists', async (t) => {
+  const s = await get('/api/snapshot?concepts=work'), c = s.body.concepts.work
+  if (c.status !== 'ok' || !c.items.length) return t.skip('no work item to read')
+  for (const it of c.items.slice(0, 10)) {
+    const im = (await get(`/api/items/work/${encodeURIComponent(it.id)}`)).body.items?.images?.[0]
+    if (!im) continue
+    for (const f of ['ref', 'name', 'from']) assert.equal(typeof im[f], 'string', `image has ${f}`)
+    const { body } = await get(`/api/items/image/${encodeURIComponent(im.ref)}`)
+    assert.equal(body.status, 'ok')
+    assert.match(body.items.mime, /^image\/(jpeg|png|gif|webp)$/)
+    assert.ok(typeof body.items.data === 'string' && body.items.data.length > 0)
+    for (const f of ['width', 'height']) assert.ok(Number.isInteger(body.items[f]) && body.items[f] > 0, f)
+    return
+  }
+  t.skip('no picture among the first 10 work items')
+})
+
 test('no token is 401; an act without the console token never lands', async () => {
   assert.equal((await get('/api/snapshot', null)).status, 401)
   const r = await fetch(url + '/api/act', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'chat.post', actionId: 'x', args: {} }) })

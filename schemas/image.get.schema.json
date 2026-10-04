@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bridge/image.get",
+  "title": "a picture a work item lists, by its ref",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "mime": {
+      "type": "string",
+      "enum": [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp"
+      ]
+    },
+    "data": {
+      "type": "string",
+      "description": "the picture, base64"
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "height": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "name",
+    "mime",
+    "data",
+    "width",
+    "height"
+  ],
+  "additionalProperties": false
+}

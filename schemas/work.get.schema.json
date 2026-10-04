@@ -35,6 +35,30 @@
         "additionalProperties": false
       },
       "maxItems": 20
+    },
+    "images": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "name",
+          "from"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 20
     }
   },
   "required": [

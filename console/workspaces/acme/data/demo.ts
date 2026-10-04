@@ -73,11 +73,12 @@ export const chats: Chat[] =[
 /* work items as the bridge's work get returns them, by id; the fake gateway and the demo context preview read these */
 export const work: Record<string, WorkDoc> ={
  'ACME-512':{type:'Story',title:'Public API: rate limiting per token',state:'In Progress',assignedTo:'You',
-  description:'Requests to the public API are limited per token, not per user, so one noisy integration cannot starve the others.',
+  description:'Requests to the public API are limited per token, not per user, so one noisy integration cannot starve the others.\n\nThe error banner a limited token sees: [image 1]',
   reproSteps:'',
   acceptanceCriteria:'- A token over its limit gets 429 with a Retry-After header.\n- The limit is read from the gateway\'s existing token bucket.',
   comments:[{id:'1',author:'Dana',at:'2026-09-24T12:10:00Z',text:'Per token, as agreed with the PO.'},
-   {id:'2',author:'Priya Shah',at:'2026-09-25T15:40:00Z',text:'The bucket already exists in the gateway; reusing it.'}]},
+   {id:'2',author:'Priya Shah',at:'2026-09-25T15:40:00Z',text:'The bucket already exists in the gateway; reusing it.'}],
+  images:[{ref:'acme-512-1',name:'limit-banner.png',from:'description'}]},
  'ACME-530':{type:'Story',title:'Search: index archived projects',state:'In Progress',assignedTo:'Sam Rivera',
   description:'Archived projects show up in search results, marked as archived.',reproSteps:'',
   acceptanceCriteria:'- An archived project is found by name.\n- Its result carries an Archived badge.',

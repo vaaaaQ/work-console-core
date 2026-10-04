@@ -3,13 +3,13 @@ import { copyFile, mkdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type * as T from '../../src/model/transitions.ts'
-import type { Resolved } from '../../src/model/context.ts'
 import type { Job, RunRec, Ws } from '../../src/model/types.ts'
 import { HttpError } from '../events.ts'
 import type { Bus } from '../events.ts'
 import type { Jobs } from '../jobs/jobs.ts'
 import type { Notes } from '../knowledge/notes.ts'
 import type { Store } from '../store/port.ts'
+import type { PromptImage, RunContext } from './context.ts'
 import { buildPrompt, contextText, RESUME_PROMPT } from './prompt.ts'
 import type { PromptIn } from './prompt.ts'
 import type { KnowledgeIn, Sdk } from './sdk.ts'
@@ -42,7 +42,7 @@ export type JobTools = { ws: Ws; pb: string; prj: string[]; prefix: string }
 export class Runner {
   private store: Store; private jobs: Jobs; private bus: Bus; private sdk: Sdk; private cwd: string
   private max: number; private gate: () => boolean; private artifactsDir: string; private ctx: () => T.Ctx
-  private context: (j: Job) => Promise<Resolved[]>; private me?: string; private bridge?: boolean; private workDir?: WorkDir
+  private context: (j: Job) => Promise<RunContext>; private me?: string; private bridge?: boolean; private workDir?: WorkDir
   private screenshot?: (o: Shot & { out: string; fileRoot?: string }) => Promise<unknown>
   private jobTools?: JobTools
   private notes?: Notes
@@ -51,12 +51,12 @@ export class Runner {
   private feeds = new Map<string, string[]>()
   private settled: ((r: RunRec) => void)[] = []
 
-  /** context = reads the job's context items for a run's prompt and its context tool; me = what prompts call the user (unset or empty: "the user");
+  /** context = reads the job's context items and their pictures for a run's prompt and its context tool; me = what prompts call the user (unset or empty: "the user");
       bridge false = the workspace has no gateway, so prompts do not point at the bridge tools;
       workDir = each job's own dir, in place of cwd */
   constructor(o: {
     store: Store; jobs: Jobs; bus: Bus; sdk: Sdk; cwd: string; max?: number; gate: () => boolean; artifactsDir: string; ctx: () => T.Ctx
-    context?: (j: Job) => Promise<Resolved[]>; me?: string; bridge?: boolean; workDir?: WorkDir
+    context?: (j: Job) => Promise<RunContext>; me?: string; bridge?: boolean; workDir?: WorkDir
     /** takes a png of a page into out; none = runs get no screenshot tool */
     screenshot?: (o: Shot & { out: string; fileRoot?: string }) => Promise<unknown>
     /** runs may create jobs in this workspace and start its jobs; none = no job tools */
@@ -65,7 +65,7 @@ export class Runner {
     notes?: Notes
   }) {
     this.store = o.store; this.jobs = o.jobs; this.bus = o.bus; this.sdk = o.sdk; this.cwd = o.cwd
-    this.max = o.max ?? 3; this.gate = o.gate; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => []); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot; this.jobTools = o.jobTools; this.notes = o.notes
+    this.max = o.max ?? 3; this.gate = o.gate; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => ({ ctx: [], images: [] })); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot; this.jobTools = o.jobTools; this.notes = o.notes
   }
 
   /** draft ready, failed or interrupted: the moments worth a push */
@@ -221,9 +221,11 @@ export class Runner {
     }
     const shot = this.screenshot, jt = this.jobTools, kn = this.notes
     const wd = this.workDir ? { workDir: cwd, branch: this.workDir.branch?.(job) } : {}
-    /** the prompt's input for the job as it is now */
-    const input = async (j: Job): Promise<PromptIn> =>
-      ({ ctx: await this.context(j), pbNotes: kn ? await kn.forPlaybook(j.pb) : [], me: this.me, bridge: this.bridge, knowledge: !!kn, ...wd })
+    /** the prompt's input for the job as it is now, and the pictures its context names */
+    const input = async (j: Job): Promise<{ o: PromptIn; images: PromptImage[] }> => {
+      const c = await this.context(j)
+      return { o: { ctx: c.ctx, images: c.images.length, pbNotes: kn ? await kn.forPlaybook(j.pb) : [], me: this.me, bridge: this.bridge, knowledge: !!kn, ...wd }, images: c.images }
+    }
     let made = 0
     const tools = {
       submitDraft: async (t: string) => {
@@ -241,7 +243,10 @@ export class Runner {
         await keep(safeName(n || basename(real)), (f) => copyFile(real, f))
       },
       journal: async (o: string, c: string, n: string) => { await this.jobs.cmd(rec.job, { op: 'journal', o, c, n, a: 'LLM' }, undefined, 'runner') },
-      context: async () => { const j = (await this.jobs.get(rec.job)) ?? job; return contextText(this.ctx(), j, rec.step, rec.q, await input(j)) },
+      context: async () => {
+        const j = (await this.jobs.get(rec.job)) ?? job, x = await input(j)
+        return { text: contextText(this.ctx(), j, rec.step, rec.q, x.o), images: x.images }
+      },
       ...(shot ? {
         screenshot: async (o: Shot & { name: string }) => {
           const u = checkUrl(o.url)
@@ -275,8 +280,9 @@ export class Runner {
     let error: string | undefined
     try {
       // a resumed session already has its context
-      const prompt = resume ? RESUME_PROMPT : buildPrompt(this.ctx(), job, rec.step, rec.q, await input(job))
-      for await (const e of this.sdk.start({ prompt, resume, cwd, tools, abort: l.ac })) {
+      const first = resume ? null : await input(job)
+      const prompt = first ? buildPrompt(this.ctx(), job, rec.step, rec.q, first.o) : RESUME_PROMPT
+      for await (const e of this.sdk.start({ prompt, ...(first?.images.length ? { images: first.images } : {}), resume, cwd, tools, abort: l.ac })) {
         if (l.why) break
         if (e.k === 'session') { if (r!.session !== e.id) { r = { ...r!, session: e.id }; await this.save(r) } }
         else if (e.k === 'text') this.line(id, e.t)

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ALLOW, mcpServers, permissions, runToolDefs } from './sdk.ts'
+import { ALLOW, mcpServers, permissions, runToolDefs, userMessage } from './sdk.ts'
 import type { RunTools } from './sdk.ts'
 
 test("a session loads no user or local settings, and may use only its own tools, A's reads and runTools", () => {
@@ -49,14 +49,32 @@ test('the run server has its own four tools, and screenshot only when the run ca
   for (const d of runToolDefs({ ...base, screenshot: none })) assert.ok(ALLOW.includes(`mcp__run__${d.name}`), d.name)
 })
 
-test('context only when the run carries it; it answers with the text', async () => {
+test('context only when the run carries it; it answers with each picture after its label, then the text', async () => {
   const none = async () => {}
   const base: RunTools = { submitDraft: none, addArtifact: none, addArtifactFile: none, journal: none }
   assert.ok(!runToolDefs(base).some((d) => d.name === 'context'))
-  const defs = runToolDefs({ ...base, context: async () => '## Job J-1: x' })
-  const d = defs.find((d) => d.name === 'context')!
-  assert.ok(ALLOW.includes(`mcp__run__${d.name}`))
-  assert.deepEqual((await (d.handler as (a: unknown, x: unknown) => Promise<{ content: unknown }>)({}, {})).content, [{ type: 'text', text: '## Job J-1: x' }])
+  const call = async (context: RunTools['context']) => {
+    const d = runToolDefs({ ...base, context }).find((d) => d.name === 'context')!
+    assert.ok(ALLOW.includes(`mcp__run__${d.name}`))
+    return (d.handler as (a: unknown, x: unknown) => Promise<{ content: unknown; isError?: boolean }>)({}, {})
+  }
+  assert.deepEqual((await call(async () => ({ text: '## Job J-1: x', images: [] }))).content, [{ type: 'text', text: '## Job J-1: x' }])
+  const pic = { label: '[image 1] ACME-1, description: a.png', mime: 'image/png', data: 'UE5H' }
+  assert.deepEqual((await call(async () => ({ text: 'T', images: [pic] }))).content,
+    [{ type: 'text', text: pic.label }, { type: 'image', data: 'UE5H', mimeType: 'image/png' }, { type: 'text', text: 'T' }])
+  const bad = await call(async () => { throw new Error('the job is gone') })
+  assert.deepEqual([bad.content, bad.isError], [[{ type: 'text', text: 'failed: the job is gone' }], true])
+})
+
+test("a first prompt with pictures is one user message: each picture after its label, the prompt's text last", () => {
+  assert.deepEqual(userMessage('the prompt', [{ label: '[image 1] W, description: a.png', mime: 'image/png', data: 'UE5H' }]), {
+    type: 'user', parent_tool_use_id: null,
+    message: { role: 'user', content: [
+      { type: 'text', text: '[image 1] W, description: a.png' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'UE5H' } },
+      { type: 'text', text: 'the prompt' },
+    ] },
+  })
 })
 
 test('create_job and start_job only when the run carries them; create_job answers with the new id', async () => {

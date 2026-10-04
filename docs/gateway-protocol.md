@@ -64,6 +64,14 @@ Actions the backend knows: `chat.post`, `mail.send`, `review.vote`, `review.comm
 `work.setState`, `work.comment`, `work.start` and `time.fill`. `actionId` is unique per
 confirmation, and the gateway should drop a repeat.
 
+A work get may list its pictures in `images`, at most 20, each `{ref, name, from}`. Its text names
+each one `[image N]`, N being its place in that list. The list puts the description's, the repro
+steps' and the acceptance criteria's first, then the comments', newest first; `from` says which, a
+comment as `comment:<id>`. `image` is a get-only concept: `GET /api/items/image/{ref}` answers
+`{name, mime, data, width, height}`, `data` being the picture in base64, and a read of it lists
+nothing. A run gets the pictures its prompt names with that prompt; one the backend cannot read
+says `[image N: unavailable]` there and never fails the run.
+
 `put` with `expectV: null` creates the document; any other value must equal the stored `v`. The
 stored document gets `v = expectV + 1` and `updated`. A document is capped at 256 KB.
 

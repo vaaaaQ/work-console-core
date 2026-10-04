@@ -1,7 +1,8 @@
 import { createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk'
-import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
+import type { McpServerConfig, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import type { Hit, Note, ProposalIn } from '../knowledge/notes.ts'
+import type { PromptImage } from './context.ts'
 import type { Shot } from './shot.ts'
 
 /* The only module that touches the Agent SDK. A session reads untrusted chat and mail text, so it
@@ -17,8 +18,8 @@ export interface RunTools {
   /** a file already under the run's dir (a screenshot, a build output), path relative to it */
   addArtifactFile(path: string, name?: string): Promise<void>
   journal(o: string, c: string, n: string): Promise<void>
-  /** the prompt's sections but how to work, read anew */
-  context?(): Promise<string>
+  /** the prompt's sections but how to work, and its pictures, read anew */
+  context?(): Promise<{ text: string; images: PromptImage[] }>
   /** a png of a page as an artifact; only where the workspace allows it */
   screenshot?(o: Shot & { name: string }): Promise<void>
   /** a new job in the run's own workspace, its id; only where the workspace allows it */
@@ -33,7 +34,8 @@ export interface RunTools {
 }
 export type KnowledgeIn = Omit<ProposalIn, 'by'>
 export type SdkEvent = { k: 'session'; id: string } | { k: 'text'; t: string } | { k: 'tool'; name: string; input: string } | { k: 'result'; ok: boolean; error?: string }
-export interface Sdk { start(o: { prompt: string; resume?: string; cwd: string; tools: RunTools; abort: AbortController }): AsyncIterable<SdkEvent> }
+/** images = pictures the prompt's text names, sent before it */
+export interface Sdk { start(o: { prompt: string; images?: PromptImage[]; resume?: string; cwd: string; tools: RunTools; abort: AbortController }): AsyncIterable<SdkEvent> }
 
 const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status']
 export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__context', 'mcp__run__screenshot', 'mcp__run__create_job', 'mcp__run__start_job',
@@ -66,6 +68,8 @@ const failed = (e: unknown) => ({ content: [{ type: 'text' as const, text: `fail
 const wrap = (f: () => Promise<void>, ok: string) => async () => { try { await f(); return done(ok) } catch (e) { return failed(e) } }
 const answer = (f: () => Promise<string>) => async () => { try { return done(await f()) } catch (e) { return failed(e) } }
 const list = (xs: string[]) => xs.join(', ') || 'none'
+/** each picture after the line that names it */
+const picBlocks = (ims: PromptImage[]) => ims.flatMap((im) => [{ type: 'text' as const, text: im.label }, { type: 'image' as const, data: im.data, mimeType: im.mime }])
 const hitLine = (h: Hit) => `- ${h.id}: ${h.title} (tags ${list(h.tags)}) ${h.snippet}`
 
 /** A's bridge with the LLM's read-only token (none when bridge is false), the run's own tools, then the
@@ -90,8 +94,8 @@ export function runToolDefs(tools: RunTools) {
       (a) => wrap(() => tools.addArtifactFile(a.path, a.name), 'artifact saved')()),
     tool('journal', 'Add a line to the job journal: what you observed, what changed, what comes next.', { observed: z.string(), changed: z.string(), next: z.string() },
       (a) => wrap(() => tools.journal(a.observed, a.changed, a.next), 'journal updated')()),
-    ...(tools.context ? [tool('context', "This run's prompt again, read anew: the job and its step, its context items, its knowledge notes, earlier outputs, the journal, the description and the instruction. One call gives all of it.", {},
-      () => answer(() => tools.context!())())] : []),
+    ...(tools.context ? [tool('context', "This run's prompt again, read anew: the pictures its context names, then the job and its step, its context items, its knowledge notes, earlier outputs, the journal, the description and the instruction. One call gives all of it.", {},
+      async () => { try { const c = await tools.context!(); return { content: [...picBlocks(c.images), { type: 'text' as const, text: c.text }] } } catch (e) { return failed(e) } })] : []),
     ...(tools.screenshot ? [tool('screenshot', 'Take a png of a page (http, https, or a file under your working dir) and save it as an artifact of this step: the proof of a UI change.',
       { url: z.string().min(1), name: z.string().min(1), width: z.number().int().optional(), height: z.number().int().optional(), fullPage: z.boolean().optional() },
       (a) => wrap(() => tools.screenshot!(a), 'screenshot saved')())] : []),
@@ -111,12 +115,28 @@ export function runToolDefs(tools: RunTools) {
   ]
 }
 
+/** the prompt as one user message: each picture after the line that names it, then the text */
+export function userMessage(prompt: string, images: PromptImage[]): SDKUserMessage {
+  return {
+    type: 'user', parent_tool_use_id: null,
+    message: { role: 'user', content: [
+      ...images.flatMap((im) => [
+        { type: 'text' as const, text: im.label },
+        { type: 'image' as const, source: { type: 'base64' as const, media_type: im.mime as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp', data: im.data } },
+      ]),
+      { type: 'text' as const, text: prompt },
+    ] },
+  }
+}
+async function* once<T>(x: T) { yield x }
+
 export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runTools: string[]; mcp?: Record<string, unknown>; bridge?: boolean }): Sdk {
   return {
-    async *start({ prompt, resume, cwd, tools, abort }) {
+    async *start({ prompt, images, resume, cwd, tools, abort }) {
       const run = createSdkMcpServer({ name: 'run', version: '1.0.0', tools: runToolDefs(tools) })
       const q = query({
-        prompt,
+        // pictures need a streamed message; the SDK keeps its input open until the run ends
+        prompt: images?.length ? once(userMessage(prompt, images)) : prompt,
         options: {
           cwd, resume, abortController: abort,
           ...permissions(o.runTools, o.bridge !== false),
