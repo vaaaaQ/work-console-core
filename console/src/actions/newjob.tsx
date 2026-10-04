@@ -116,6 +116,13 @@ async function stopRec() {
   await hear(got)
 }
 
+/** drops the recording: nothing is sent and the form stays as it was */
+function cancelRec() {
+  clearTimeout(recCap)
+  rec?.cancel(); rec = null
+  if (busyK() === 'rec') setB({ busy: null })
+}
+
 /** the recording as words, then a say */
 async function hear(a: { audio: string; mime: string }) {
   if (!F) return
@@ -208,7 +215,7 @@ function Since({ at }: { at: number }) {
 
 function Status({ f }: { f: Nj }) {
   const b = B.busy, mic = LIVE.voice && canRecord()
-  if (b?.k === 'rec') return <>{b.at ? 'Listening. Press the button again when you are done.' : 'Waiting for the mic…'}</>
+  if (b?.k === 'rec') return <>{b.at ? 'Listening. Press the button again when you are done, or Cancel to drop it.' : 'Waiting for the mic…'}</>
   if (b?.k === 'stt') return <><span className="spin" />Turning speech into text…</>
   if (b?.k === 'build') return <><span className="spin" />Filling the form{b.lines.length ? `: ${b.lines.at(-1)}` : '…'}</>
   if (B.err) return <span className="nj-err">{B.err}{B.audio ? <> <button type="button" className="lnk" onClick={() => { const a = B.audio; if (a) void hear(a) }}>Try again</button></> : null}</span>
@@ -226,9 +233,11 @@ function VoiceBar({ f }: { f: Nj }) {
       <input className="inp" value={B.box} onChange={(e) => setB({ box: e.currentTarget.value })} disabled={b?.k === 'rec'}
         placeholder={f.say.length ? 'What to change' : 'What the job is'} aria-label={f.say.length ? 'What to change in the form' : 'What the job is'}
         onKeyDown={(e) => { if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); send() } }} />
-      {b && b.k !== 'rec'
-        ? <button type="button" className="btn" onClick={() => ac?.abort()}><Ic n="stop" sm />Stop</button>
-        : <button type="button" className="btn" onClick={send} disabled={!B.box.trim() || !!b}><Ic n="send" sm />Fill</button>}
+      {b?.k === 'rec'
+        ? <button type="button" className="btn" onClick={cancelRec} aria-label="Cancel the recording" title="Drop what was said; nothing is sent"><Ic n="x" sm />Cancel</button>
+        : b
+          ? <button type="button" className="btn" onClick={() => ac?.abort()}><Ic n="stop" sm />Stop</button>
+          : <button type="button" className="btn" onClick={send} disabled={!B.box.trim()}><Ic n="send" sm />Fill</button>}
     </div>
     <p className="nj-st" aria-live="polite"><Status f={f} /></p>
     {f.why.length ? <ul className="nj-why">{f.why.map((x, i) => <li key={i}>{x}</li>)}</ul> : null}
