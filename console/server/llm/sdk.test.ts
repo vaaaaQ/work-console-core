@@ -49,6 +49,16 @@ test('the run server has its own four tools, and screenshot only when the run ca
   for (const d of runToolDefs({ ...base, screenshot: none })) assert.ok(ALLOW.includes(`mcp__run__${d.name}`), d.name)
 })
 
+test('context only when the run carries it; it answers with the text', async () => {
+  const none = async () => {}
+  const base: RunTools = { submitDraft: none, addArtifact: none, addArtifactFile: none, journal: none }
+  assert.ok(!runToolDefs(base).some((d) => d.name === 'context'))
+  const defs = runToolDefs({ ...base, context: async () => '## Job J-1: x' })
+  const d = defs.find((d) => d.name === 'context')!
+  assert.ok(ALLOW.includes(`mcp__run__${d.name}`))
+  assert.deepEqual((await (d.handler as (a: unknown, x: unknown) => Promise<{ content: unknown }>)({}, {})).content, [{ type: 'text', text: '## Job J-1: x' }])
+})
+
 test('create_job and start_job only when the run carries them; create_job answers with the new id', async () => {
   const none = async () => {}
   const base: RunTools = { submitDraft: none, addArtifact: none, addArtifactFile: none, journal: none }

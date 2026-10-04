@@ -95,6 +95,7 @@ function Count({ j, it }: { j: Job; it: CtxItem }) {
 
 export function CtxPanel({ j }: { j: Job }) {
   const [open, setOpen] = React.useState<string | null>(null), list = ctxOf(j), ro = isClosed(j)
+  const pbNotes = notesOf(j).filter((n) => n.playbooks.includes(j.pb) && !list.some((c) => c.k === 'note' && c.id === n.id))
   return (
     <section className="panel"><header><Ic n="layers" /><h3>Context</h3><span className="src">in every LLM run</span></header>
       <div className="pb">
@@ -110,7 +111,8 @@ export function CtxPanel({ j }: { j: Job }) {
             </div>
             {open === key ? <Preview j={j} it={it} /> : null}
           </li>
-        })}</ul> : <p className="why" style={{ margin: 0 }}>Runs get the job's frame and journal only.</p>}
+        })}</ul> : <p className="why" style={{ margin: 0 }}>No items: runs get the job, its earlier outputs and its journal.</p>}
+        {pbNotes.length ? <p className="why" style={{ margin: 0 }}>Every run also gets the playbook's notes: {pbNotes.map((n) => n.title).join(', ')}.</p> : null}
         {ro ? null : <button className="btn ghost sm cx-add" onClick={() => addCtx(j)}><Ic n="plus" sm />Add</button>}
       </div>
     </section>

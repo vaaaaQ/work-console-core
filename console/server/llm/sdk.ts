@@ -17,6 +17,8 @@ export interface RunTools {
   /** a file already under the run's dir (a screenshot, a build output), path relative to it */
   addArtifactFile(path: string, name?: string): Promise<void>
   journal(o: string, c: string, n: string): Promise<void>
+  /** the prompt's sections but how to work, read anew */
+  context?(): Promise<string>
   /** a png of a page as an artifact; only where the workspace allows it */
   screenshot?(o: Shot & { name: string }): Promise<void>
   /** a new job in the run's own workspace, its id; only where the workspace allows it */
@@ -34,7 +36,7 @@ export type SdkEvent = { k: 'session'; id: string } | { k: 'text'; t: string } |
 export interface Sdk { start(o: { prompt: string; resume?: string; cwd: string; tools: RunTools; abort: AbortController }): AsyncIterable<SdkEvent> }
 
 const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status']
-export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__screenshot', 'mcp__run__create_job', 'mcp__run__start_job',
+export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__context', 'mcp__run__screenshot', 'mcp__run__create_job', 'mcp__run__start_job',
   'mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose', ...BRIDGE]
 export const DENY = [
   'mcp__bridge__bridge_act', 'mcp__work-console',
@@ -88,6 +90,8 @@ export function runToolDefs(tools: RunTools) {
       (a) => wrap(() => tools.addArtifactFile(a.path, a.name), 'artifact saved')()),
     tool('journal', 'Add a line to the job journal: what you observed, what changed, what comes next.', { observed: z.string(), changed: z.string(), next: z.string() },
       (a) => wrap(() => tools.journal(a.observed, a.changed, a.next), 'journal updated')()),
+    ...(tools.context ? [tool('context', "This run's prompt again, read anew: the job and its step, its context items, its knowledge notes, earlier outputs, the journal, the description and the instruction. One call gives all of it.", {},
+      () => answer(() => tools.context!())())] : []),
     ...(tools.screenshot ? [tool('screenshot', 'Take a png of a page (http, https, or a file under your working dir) and save it as an artifact of this step: the proof of a UI change.',
       { url: z.string().min(1), name: z.string().min(1), width: z.number().int().optional(), height: z.number().int().optional(), fullPage: z.boolean().optional() },
       (a) => wrap(() => tools.screenshot!(a), 'screenshot saved')())] : []),

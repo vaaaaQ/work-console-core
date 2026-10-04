@@ -116,7 +116,7 @@ test('recover turns running and queued runs into interrupted', async () => {
 })
 
 test('resume continues the stored session; without a session it is 409', async () => {
-  const { runner, sessions, jobs, open } = setup(), [a, b] = await targets(jobs, 2)
+  const { runner, sessions, jobs, open, evs } = setup(), [a, b] = await targets(jobs, 2)
   const r = await runner.ask(a.job, a.step, 'q')
   await until(() => sessions.length === 1)
   sessions[0].push({ k: 'session', id: 'sess-1' })
@@ -136,7 +136,7 @@ test('resume continues the stored session; without a session it is 409', async (
   const r2 = await runner.ask(b.job, b.step, 'q')
   await until(() => sessions.length === 3)
   sessions[2].end()
-  await tick(); await tick()
+  await until(() => evs.some((e) => e.kind === 'run' && e.run.id === r2.id && e.run.state === 'failed'))
   assert.equal(await state(runner, r2.id), 'failed')
   await assert.rejects(runner.resume(r2.id), code(409, 'no_session'))
 })
@@ -262,7 +262,8 @@ test("a new run's prompt carries the job's context; an unreadable item is a line
   const p = sessions[0].prompt
   assert.match(p, /## Context\n[\s\S]*### Work item ACME-999 \(last 10 comments\)\nWork item ACME-999: Limiter ignores the token header\n[\s\S]*- 2026-09-30 09:00Z Ann: still there/)
   assert.match(p, /### Chat Old chat \(last 10 messages\) — unavailable\nthe chat read timed out/)
-  assert.ok(p.indexOf('## Context') > p.indexOf('Instruction: q') && p.indexOf('## Context') < p.indexOf('## How to work'))
+  const at = (h: string) => p.indexOf(h)
+  assert.ok(at('## Job') < at('## Context') && at('## Context') < at('## How to work') && at('## How to work') < at('## Instruction (from the user)\nq'))
   sessions[0].push({ k: 'session', id: 'sess-1' })
   await tick()
   await runner.interruptAll('the bridge went away')
@@ -278,44 +279,60 @@ function promptJob() {
   j.jr = [{ ts: '2026-10-01T09:00:00.000Z', a: 'you', o: 'Created the job', c: 'playbook Action', n: 'work on the last step' }]
   return j
 }
-/* captured from buildPrompt before it took `me` */
-const PROMPT_BEFORE_ME = [
+/* the whole prompt of a job without context, notes or a description */
+const PROMPT = [
   "You are working one step of a job in the user's Work Console.",
   '',
-  'Job J-0420: Reply to Sam about rate limiting',
+  '## Job J-0420: Reply to Sam about rate limiting',
   'Key: CHAT · playbook: Action · project: platform',
   'Step: Send it',
   'Exit criterion: Sent',
-  '',
-  'Instruction: Draft the reply.',
   '',
   '## Earlier outputs',
   '### Draft the answer',
   'hi Sam,',
   'rate limiting is in review (PR #482), one approval left. I will write here once it is on staging.',
   '',
-  '## Journal (latest last)',
+  '## Journal (oldest first)',
   '- 2026-10-01T09:00:00.000Z you: Created the job → playbook Action Next: work on the last step',
   '',
   '## How to work',
-  '- The context above was read when this run started. Read anything more yourself with the bridge tools (bridge_snapshot, bridge_get).',
+  '- Everything above was read for this step when the run started: work from it, and use tools only for what it does not cover.',
+  '- Read anything else from the sources with the bridge tools (bridge_snapshot, bridge_get).',
+  '- context() returns these sections again, read anew, when a long run needs them back.',
   '- You never send anything to a source (no chat posts, mails, votes, comments or state changes): the user sends after review.',
   '- Write progress with the run tool journal(observed, changed, next) at meaningful points.',
   '- Save files the step expects with add_artifact(name, content), or with add_artifact_file(path) for a file already under your working dir; images show on the page.',
   '- Finish by calling submit_draft(text) exactly once with the draft for the user to review. Without it the run counts as failed.',
+  '',
+  '## Instruction (from the user)',
+  'Draft the reply.',
 ].join('\n')
 
-test('a prompt names the user it was given; without one it is the text it always was', () => {
+test('a prompt names the user it was given; without one it says the user', () => {
   const x = demoCtx(), j = promptJob()
-  assert.equal(buildPrompt(x, j, 'sn', 'Draft the reply.'), PROMPT_BEFORE_ME)
-  assert.equal(buildPrompt(x, j, 'sn', 'Draft the reply.', [], 'the user'), PROMPT_BEFORE_ME)
-  assert.equal(buildPrompt(x, j, 'sn', 'Draft the reply.', [], ''), PROMPT_BEFORE_ME, 'an empty name is no name')
-  const p = buildPrompt(x, j, 'sn', 'Draft the reply.', [], 'Alex')
+  assert.equal(buildPrompt(x, j, 'sn', 'Draft the reply.'), PROMPT)
+  assert.equal(buildPrompt(x, j, 'sn', 'Draft the reply.', { me: 'the user' }), PROMPT)
+  assert.equal(buildPrompt(x, j, 'sn', 'Draft the reply.', { me: '' }), PROMPT, 'an empty name is no name')
+  const p = buildPrompt(x, j, 'sn', 'Draft the reply.', { me: 'Alex' })
   assert.match(p, /in Alex's Work Console/)
   assert.match(p, /: Alex sends after review\./)
   assert.match(p, /the draft for Alex to review\./)
+  assert.match(p, /## Instruction \(from Alex\)\nDraft the reply\.$/)
   assert.ok(!/the user/.test(p), 'no phrase still says "the user"')
-  assert.equal(p, PROMPT_BEFORE_ME.replaceAll("the user's Work Console", "Alex's Work Console").replace('the user sends', 'Alex sends').replace('for the user to review', 'for Alex to review'))
+  assert.equal(p, PROMPT.replaceAll('the user', 'Alex'))
+})
+
+test("the user's part comes last, the description before the instruction; the journal is the latest 20, oldest first", () => {
+  const x = demoCtx(), j = promptJob()
+  j.d = 'Sam asked twice.\n\n- keep it short'
+  j.jr = Array.from({ length: 25 }, (_, i) => ({ ts: `2026-10-01T09:${String(24 - i).padStart(2, '0')}:00.000Z`, a: 'you', o: `entry ${24 - i}`, c: '-', n: '-' }))
+  const p = buildPrompt(x, j, 'sn', 'Draft the reply.')
+  assert.ok(p.endsWith('submit_draft(text) exactly once with the draft for the user to review. Without it the run counts as failed.\n\n'
+    + '## Description (from the user)\nSam asked twice.\n\n- keep it short\n\n## Instruction (from the user)\nDraft the reply.'), p.slice(-400))
+  assert.match(p, /## Journal \(oldest first; the latest 20 of 25\)\n- 2026-10-01T09:05:00\.000Z you: entry 5 → - Next: -\n/)
+  assert.ok(p.indexOf('entry 5 ') < p.indexOf('entry 24 '))
+  assert.doesNotMatch(p, /entry 4 /)
 })
 
 test("a runner told who the user is puts the name in a new run's prompt", async () => {
@@ -358,11 +375,41 @@ test("a run's knowledge tools search and read its workspace's notes, and a propo
   assert.doesNotMatch(plain.sessions[0].prompt, /knowledge_/)
 })
 
+test("a run's prompt carries the job's notes and its playbook's in full, once each, under Knowledge; context() gives the sections again, read anew", async () => {
+  const s = setup(), [t] = await targets(s.jobs, 1), pb = (await s.jobs.get(t.job))!.pb
+  const notes = notesStore(join(s.dir, 'kn'))
+  await notes.save(null, { title: 'Tracker REST', tags: [], playbooks: [], text: 'Use a token header.' }, null)
+  await notes.save(null, { title: 'Release rules', tags: [], playbooks: [pb], text: 'Tag after merge.' }, null)
+  await notes.save(null, { title: 'Both ways', tags: [], playbooks: [pb], text: 'Attached twice.' }, null)
+  await notes.save(null, { title: 'Elsewhere', tags: [], playbooks: ['some-other-playbook'], text: 'Not for this job.' }, null)
+  await s.jobs.cmd(t.job, { op: 'ctxAdd', k: 'note', id: 'tracker-rest', name: 'Tracker REST' })
+  await s.jobs.cmd(t.job, { op: 'ctxAdd', k: 'note', id: 'both-ways', name: 'Both ways' })
+  const b = { get: async (): Promise<ConceptReply> => { throw new GatewayError(504, 'timeout', 'no bridge in this test') } }
+  const runner = new Runner({ store: s.store, jobs: s.jobs, bus: s.bus, sdk: fakeSdk(s.sessions).sdk, cwd: s.dir, gate: () => true, artifactsDir: join(s.dir, 'arts'), ctx: demoCtx, notes,
+    context: (j) => resolveContext(b, j, undefined, notes) })
+  await runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  const p = s.sessions[0].prompt, k0 = p.indexOf('## Knowledge')
+  assert.equal(p.slice(k0, p.indexOf('\n## ', k0)), "## Knowledge\n### Tracker REST (note tracker-rest, this job's)\nUse a token header.\n\n"
+    + "### Both ways (note both-ways, this job's)\nAttached twice.\n\n### Release rules (note release-rules, the playbook's)\nTag after merge.\n")
+  assert.doesNotMatch(p, /Not for this job/)
+  assert.doesNotMatch(p, /### Note /, 'notes are not listed under Context')
+  assert.ok(p.indexOf('## Context') < k0 && k0 < p.indexOf('## How to work'))
+  const tools = s.sessions[0].tools
+  await tools.journal('Found the limiter', 'nothing yet', 'read the PR')
+  const again = await tools.context!()
+  assert.ok(again.startsWith(`## Job ${t.job}: `), again.slice(0, 80))
+  assert.match(again, /: Found the limiter → nothing yet Next: read the PR\n/)
+  assert.match(again, /### Release rules \(note release-rules, the playbook's\)\nTag after merge\./)
+  assert.ok(again.endsWith('## Instruction (from the user)\nq'))
+  assert.doesNotMatch(again, /## How to work/)
+})
+
 test('a workspace without a gateway: the prompt does not point at the bridge tools, and the rest is unchanged', async () => {
   const x = demoCtx(), j = promptJob()
-  const line = '\n- The context above was read when this run started. Read anything more yourself with the bridge tools (bridge_snapshot, bridge_get).'
-  assert.equal(buildPrompt(x, j, 'sn', 'Draft the reply.', [], undefined, { bridge: false }), PROMPT_BEFORE_ME.replace(line, ''))
-  assert.equal(buildPrompt(x, j, 'sn', 'Draft the reply.', [], undefined, { bridge: true }), PROMPT_BEFORE_ME)
+  const line = '\n- Read anything else from the sources with the bridge tools (bridge_snapshot, bridge_get).'
+  assert.equal(buildPrompt(x, j, 'sn', 'Draft the reply.', { bridge: false }), PROMPT.replace(line, ''))
+  assert.equal(buildPrompt(x, j, 'sn', 'Draft the reply.', { bridge: true }), PROMPT)
   const s = setup(), [t] = await targets(s.jobs, 1)
   await new Runner({ store: s.store, jobs: s.jobs, bus: s.bus, sdk: fakeSdk(s.sessions).sdk, cwd: s.dir, gate: () => true, artifactsDir: join(s.dir, 'arts'), ctx: demoCtx, bridge: false }).ask(t.job, t.step, 'q')
   await until(() => s.sessions.length === 1)

@@ -182,7 +182,7 @@ A workspace may have no gateway: its jobs live in PostgreSQL and its runs work i
 
 `console/server/llm/` runs one step at a time through the Claude Agent SDK.
 
-- The prompt is built from the job, the step and the playbook's instructions.
+- The prompt carries what the run needs, read at its start, so the run works instead of reading (see the table below).
 - The run's tools come from the allowlist in `sdk.ts`: it can read A, and search, read and propose the
   workspace's knowledge notes. It cannot act, and it cannot write B beyond its own step, plus the jobs `llm.jobTools` lets it create and start.
 - It keeps files with `add_artifact` and `add_artifact_file` (a file under its dir, at most 20 MB).
@@ -191,6 +191,22 @@ A workspace may have no gateway: its jobs live in PostgreSQL and its runs work i
 - The run hands back its draft with `submit_draft`. The page shows the draft, and a person sends it.
 - The gateway serves the run's read tools as MCP at `{gateway}/mcp` with the `llm` token. The fake
   gateway does not serve `/mcp`, so a demo run uses the fake SDK in tests.
+
+What a run's prompt holds, in this order (`console/server/llm/prompt.ts`):
+
+| Part | What |
+|---|---|
+| Job | id, title, key, playbook, project, step, exit criterion, expected artifacts, work dir |
+| Context | each context item read through the bridge: a work item with its newest comments, a chat's newest messages, a mail whole. An item that cannot be read is a line saying why |
+| Knowledge | the job's notes and its playbook's notes, in full, each once |
+| Earlier outputs | every step's output so far |
+| Journal | the latest 20 entries, oldest first |
+| How to work | tools only for what the prompt lacks; nothing is sent; journal, artifacts, `submit_draft` |
+| Description | the job's description: the user's own words, Markdown |
+| Instruction | what the user asked this run |
+
+- The run tool `context` returns the same parts but How to work, read anew, for a long run whose first prompt is far behind it.
+- A resumed run keeps its session and gets one line; it reads nothing until it calls `context`.
 
 ## Knowledge
 
@@ -207,7 +223,8 @@ Each workspace has a folder of Markdown notes: `knowledgeDir` in its config, def
 
 - Routes live under `/api/ws/<id>/knowledge` and work the same with or without a gateway.
 - With the fake gateway, notes live under the console home, never in a configured folder.
-- A run gets `knowledge_search`, `knowledge_read` and `knowledge_propose` as its own tools; its
+- A run's prompt carries the job's notes and its playbook's notes in full. It also gets
+  `knowledge_search`, `knowledge_read` and `knowledge_propose` as its own tools, for the other notes; its
   proposals are signed `run <job>/<step>`. A Claude Code session gets the same three on the
   console MCP, signed `session`. Neither goes through the gateway.
 

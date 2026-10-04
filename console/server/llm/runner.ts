@@ -10,7 +10,8 @@ import type { Bus } from '../events.ts'
 import type { Jobs } from '../jobs/jobs.ts'
 import type { Notes } from '../knowledge/notes.ts'
 import type { Store } from '../store/port.ts'
-import { buildPrompt, RESUME_PROMPT } from './prompt.ts'
+import { buildPrompt, contextText, RESUME_PROMPT } from './prompt.ts'
+import type { PromptIn } from './prompt.ts'
 import type { KnowledgeIn, Sdk } from './sdk.ts'
 import { checkUrl } from './shot.ts'
 import type { Shot } from './shot.ts'
@@ -50,7 +51,7 @@ export class Runner {
   private feeds = new Map<string, string[]>()
   private settled: ((r: RunRec) => void)[] = []
 
-  /** context = reads the job's context items for a new run's prompt; me = what prompts call the user (unset or empty: "the user");
+  /** context = reads the job's context items for a run's prompt and its context tool; me = what prompts call the user (unset or empty: "the user");
       bridge false = the workspace has no gateway, so prompts do not point at the bridge tools;
       workDir = each job's own dir, in place of cwd */
   constructor(o: {
@@ -219,6 +220,10 @@ export class Runner {
       return real
     }
     const shot = this.screenshot, jt = this.jobTools, kn = this.notes
+    const wd = this.workDir ? { workDir: cwd, branch: this.workDir.branch?.(job) } : {}
+    /** the prompt's input for the job as it is now */
+    const input = async (j: Job): Promise<PromptIn> =>
+      ({ ctx: await this.context(j), pbNotes: kn ? await kn.forPlaybook(j.pb) : [], me: this.me, bridge: this.bridge, knowledge: !!kn, ...wd })
     let made = 0
     const tools = {
       submitDraft: async (t: string) => {
@@ -236,6 +241,7 @@ export class Runner {
         await keep(safeName(n || basename(real)), (f) => copyFile(real, f))
       },
       journal: async (o: string, c: string, n: string) => { await this.jobs.cmd(rec.job, { op: 'journal', o, c, n, a: 'LLM' }, undefined, 'runner') },
+      context: async () => { const j = (await this.jobs.get(rec.job)) ?? job; return contextText(this.ctx(), j, rec.step, rec.q, await input(j)) },
       ...(shot ? {
         screenshot: async (o: Shot & { name: string }) => {
           const u = checkUrl(o.url)
@@ -269,8 +275,7 @@ export class Runner {
     let error: string | undefined
     try {
       // a resumed session already has its context
-      const prompt = resume ? RESUME_PROMPT : buildPrompt(this.ctx(), job, rec.step, rec.q, await this.context(job), this.me,
-        { bridge: this.bridge, knowledge: !!kn, ...(this.workDir ? { workDir: cwd, branch: this.workDir.branch?.(job) } : {}) })
+      const prompt = resume ? RESUME_PROMPT : buildPrompt(this.ctx(), job, rec.step, rec.q, await input(job))
       for await (const e of this.sdk.start({ prompt, resume, cwd, tools, abort: l.ac })) {
         if (l.why) break
         if (e.k === 'session') { if (r!.session !== e.id) { r = { ...r!, session: e.id }; await this.save(r) } }
