@@ -6,7 +6,7 @@ import type { Job } from '../model/types.ts'
 import { commit } from '../store.ts'
 import { LIVE, missingParts } from '../live/api.ts'
 import { go } from '../actions/nav.tsx'
-import { newJob } from '../actions/playbooks.tsx'
+import { newJob } from '../actions/newjob.tsx'
 import { Chips, NextCell, Pill } from '../ui/bits.tsx'
 import { Ic } from '../ui/Icon.tsx'
 

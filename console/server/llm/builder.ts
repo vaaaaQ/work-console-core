@@ -2,11 +2,11 @@ import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { slugify } from '../../src/lib/util.ts'
 import { dayOf, fromWall, offsetAt, zoneName } from '../../src/lib/zone.ts'
 import { KINDS, ctxLabel, ctxUnit } from '../../src/model/context.ts'
-import { FMT, checkPb } from '../../src/model/pbFormat.ts'
+import { FMT, freeKey, stepProblems } from '../../src/model/pbFormat.ts'
 import type { PbFile, PbStepFile } from '../../src/model/pbFormat.ts'
+import type { BuildForm } from '../../src/model/njForm.ts'
 import * as T from '../../src/model/transitions.ts'
 import type { CtxItem, CtxKind, Mode, Playbook } from '../../src/model/types.ts'
 import type { WorkspacePage } from '../../src/workspace.ts'
@@ -25,14 +25,8 @@ import type { AskTool, Sdk } from './sdk.ts'
    workspace's gateway. It proposes; nothing is saved until the user presses Create job. Its answer is checked
    here, and what fails a check stays in the form with the problem in why, never failing the build. */
 
-/** the New job form. pb = a catalog playbook's key, or the key npb is saved under; npb = steps the builder wrote,
-    saved before the job is created (once = steps for this job only); due = ISO or empty;
-    why = what the builder could not settle, in words */
-export interface BuildForm {
-  t: string; key: string; prj: string; pb: string; d: string; ctx: CtxItem[]; due: string
-  npb: { once: boolean; file: PbFile } | null
-  why: string[]
-}
+/** the New job form's shape lives with the page's form */
+export type { BuildForm }
 /** id = the page's name for the build, which its events carry; say = every say so far, oldest first */
 export interface BuildIn { id: string; say: string[]; form: BuildForm }
 /** what the source tools read: a concept's list and one item */
@@ -122,16 +116,6 @@ export const FORM_SCHEMA = {
 /** a playbook a job of this workspace may follow: its own or the core's, never one job's own steps */
 const offered = (PB: Record<string, Playbook>, k: string, ws: string) => Object.hasOwn(PB, k) && !PB[k].once && (!PB[k].ws || PB[k].ws === ws)
 
-/** a key for new steps: their slug, once- in front for one job's steps, and -2, -3… past a key in use;
-    own = the key of the form's unsaved steps, which they may keep */
-export function freeKey(name: string, once: boolean, PB: Record<string, Playbook>, own: string | null, taken?: (k: string) => boolean) {
-  const slug = slugify(name).replace(/^once-/, '') || 'steps', base = once ? `once-${slug}` : slug
-  const busy = (k: string) => k !== own && (Object.hasOwn(PB, k) || !!taken?.(k))
-  let k = base
-  for (let i = 2; busy(k); i++) k = `${base}-${i}`
-  return k
-}
-
 function stepOf(s: Record<string, unknown>): PbStepFile {
   const produces = arr(s.produces).filter((p): p is string => typeof p === 'string' && !!p.trim()).map((p) => p.trim())
   const messages = arr(s.messages).map((m) => { const x = obj(m), to = str(x.to).trim(); return { via: str(x.via) || 'chat', ...(to ? { to } : {}), text: str(x.text) } })
@@ -148,22 +132,6 @@ function fileOf(np: Record<string, unknown>, key: string, ws: string): PbFile {
     format: FMT, key, name: str(np.name).trim(), description: str(np.description).trim(), ...(needs ? { needs } : {}), workspace: ws,
     phases: arr(np.phases).map((p) => { const ph = obj(p); return { code: str(ph.code).trim(), name: str(ph.name).trim(), steps: arr(ph.steps).map((s) => stepOf(obj(s))) } }),
   }
-}
-
-/** what a message may name besides the steps' outputs */
-const VARS = ['key', 'po', 'pr', 'reporter']
-/** Add playbook's checks, then the ones a message needs to be filled: an output is one word, and a message names
-    only words a step fills */
-export function stepProblems(f: PbFile): string[] {
-  const e = checkPb(f), steps = arr(f.phases).flatMap((p) => arr(obj(p).steps).map(obj))
-  const outs = new Set([...VARS, ...steps.map((s) => str(s.output)).filter(Boolean)])
-  for (const s of steps) {
-    const at = `Step “${str(s.id)}”`
-    if (s.output != null && !/^\w+$/.test(str(s.output))) e.push(`${at}: output must be one word of letters, digits or _.`)
-    for (const m of arr(s.messages)) for (const [, v] of str(obj(m).text).matchAll(/\{(\w+)\}/g))
-      if (!outs.has(v)) e.push(`${at}: a message names {${v}}, which no step fills.`)
-  }
-  return e
 }
 
 /** a due as the session writes it, as an instant: a day alone is 18:00 that day, a time without an offset the home zone's */

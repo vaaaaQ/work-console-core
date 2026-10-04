@@ -1,3 +1,4 @@
+import { slugify } from '../lib/util.ts'
 import type { Mode, Playbook, Step, Tpl, Ws } from './types.ts'
 
 /* ===== the playbook file: what Download writes and Add playbook reads =====
@@ -68,4 +69,33 @@ export function checkPb(o: unknown): string[] {
     })
   })
   return e
+}
+
+/** what a message may name besides the steps' outputs */
+const VARS = ['key', 'po', 'pr', 'reporter']
+const list = (x: unknown): unknown[] => (Array.isArray(x) ? x : [])
+const rec = (x: unknown): Record<string, unknown> => (x && typeof x === 'object' && !Array.isArray(x) ? (x as Record<string, unknown>) : {})
+const txt = (x: unknown) => (typeof x === 'string' ? x : '')
+/** Add playbook's checks, then the ones a message needs to be filled: an output is one word, and a message names
+    only words a step fills */
+export function stepProblems(f: PbFile): string[] {
+  const e = checkPb(f), steps = list(f.phases).flatMap((p) => list(rec(p).steps).map(rec))
+  const outs = new Set([...VARS, ...steps.map((s) => txt(s.output)).filter(Boolean)])
+  for (const s of steps) {
+    const at = `Step “${txt(s.id)}”`
+    if (s.output != null && !/^\w+$/.test(txt(s.output))) e.push(`${at}: output must be one word of letters, digits or _.`)
+    for (const m of list(s.messages)) for (const [, v] of txt(rec(m).text).matchAll(/\{(\w+)\}/g))
+      if (!outs.has(v)) e.push(`${at}: a message names {${v}}, which no step fills.`)
+  }
+  return e
+}
+
+/** a key for new steps: their slug, once- in front for one job's steps, and -2, -3… past a key in use;
+    own = the key of the form's unsaved steps, which they may keep */
+export function freeKey(name: string, once: boolean, PB: Record<string, Playbook>, own: string | null, taken?: (k: string) => boolean) {
+  const slug = slugify(name).replace(/^once-/, '') || 'steps', base = once ? `once-${slug}` : slug
+  const busy = (k: string) => k !== own && (Object.hasOwn(PB, k) || !!taken?.(k))
+  let k = base
+  for (let i = 2; busy(k); i++) k = `${base}-${i}`
+  return k
 }

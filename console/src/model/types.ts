@@ -128,5 +128,6 @@ export interface Ui {
   ws: Ws; view: View; job: string | null; sel: string | null; f: string; prj: string; q: string; flash: string | null
   chat: Record<Ws, string>; mail: string | null; mcat: MailCat; pbv: string | null; sum: Record<string, 'run' | 'ok'>
   focusB: number | null; cd: Record<string, string>
-  njSrc: string; njChat: string; njMail: string; njEv: string; njDue: string; njDraft: NjDraft | null; pbRet: 'newjob' | null
+  /** a dialog opened over New job: Cancel there goes back to it */
+  pbRet: 'newjob' | null
 }

@@ -6,7 +6,7 @@ import { dayOf, evDraft, evJobs, onDay, shownDays, weekDays } from '../model/cal
 import type { CalEvent, Job } from '../model/types.ts'
 import { S, W, wsJobs } from '../model/world.ts'
 import { go } from '../actions/nav.tsx'
-import { newJob } from '../actions/playbooks.tsx'
+import { newJob } from '../actions/newjob.tsx'
 import { Ic } from '../ui/Icon.tsx'
 import { Unavailable } from './Chats.tsx'
 

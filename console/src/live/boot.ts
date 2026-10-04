@@ -133,8 +133,11 @@ function soon(k: string, f: () => void) {
   clearTimeout(pending.get(k))
   pending.set(k, setTimeout(() => { pending.delete(k); f() }, 400))
 }
+/** a build's progress lines, by the id the page gave it while it runs */
+export const buildFeed = new Map<string, (t: string, tool?: string) => void>()
 export function onEvent(e: Ev) {
-  if (e.kind === 'job') commit(() => { putJob(e.job) })
+  if (e.kind === 'build') buildFeed.get(e.id)?.(e.t, e.tool)
+  else if (e.kind === 'job') commit(() => { putJob(e.job) })
   else if (e.kind === 'run') commit(() => { LIVE.runs[e.run.id] = e.run })
   else if (e.kind === 'feed') {
     const f = (LIVE.feed[e.run] ||= [])

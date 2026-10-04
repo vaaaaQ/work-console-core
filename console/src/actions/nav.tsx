@@ -7,7 +7,7 @@ import type { View, Ws } from '../model/types.ts'
 import { commit, repaint } from '../store.ts'
 import { closeModal, modal, modalForm } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
-import { newJob } from './playbooks.tsx'
+import { reopenNewJob } from './newjob.tsx'
 
 export const VIEWS: View[] = ['jobs', 'job', 'approvals', 'knowledge', 'today', 'chats', 'mail', 'calendar', 'board', 'time', 'playbooks', 'workspaces', 'devices']
 export const isView = (h: string): h is View => (VIEWS as string[]).includes(h)
@@ -68,7 +68,7 @@ export function toggleTheme() {
 
 /** Cancel, Close, Escape: a dialog opened over New job goes back to it with what was typed */
 export function dismiss() {
-  if (S.pbRet === 'newjob' && modalForm() !== 'newjob') { S.pbRet = null; newJob(S.njDraft || {}) }
+  if (S.pbRet === 'newjob' && modalForm() !== 'newjob') { S.pbRet = null; reopenNewJob() }
   else { S.pbRet = null; closeModal() }
 }
 

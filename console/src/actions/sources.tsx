@@ -13,7 +13,7 @@ import { Ic } from '../ui/Icon.tsx'
 import { CancelBtn } from '../ui/bits.tsx'
 import { closeModal, modal } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
-import { newJob } from './playbooks.tsx'
+import { newJob } from './newjob.tsx'
 import { HID, hideIn, loadHidden, unhideIn } from './hidden.ts'
 
 export const curChat = () => { const L = CHATS[S.ws] || []; return L.find((x) => x.id === S.chat[S.ws]) || L[0] }

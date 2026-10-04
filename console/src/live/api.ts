@@ -1,6 +1,7 @@
 import type { CalEvent, Chat, Cmd, Job, Mail, Msg, Playbook, RunRec, Tpl } from '../model/types.ts'
 import type { NewJob } from '../model/transitions.ts'
 import type { Resolved } from '../model/context.ts'
+import type { BuildForm } from '../model/njForm.ts'
 import type { BoardItem } from '../data/board.ts'
 import type { TimeItem } from '../data/time.ts'
 import { S } from '../model/world.ts'
@@ -32,11 +33,12 @@ export interface State {
   voice: boolean
   ws: Record<string, WsBlock>
 }
-/** every frame names the workspace it came from */
+/** every frame but a build's names the workspace it came from; a build's names the build, which the page named */
 export type Ev =
   | { kind: 'job'; ws: string; job: Job } | { kind: 'run'; ws: string; run: RunRec } | { kind: 'feed'; ws: string; run: string; t: string; tool?: string }
   | { kind: 'bridge'; ws: string; state: 'ok' | 'unavailable'; concepts: Record<string, string> }
   | { kind: 'source'; ws: string; concept: string }
+  | { kind: 'build'; id: string; t: string; tool?: string }
 export type ActRes = { actionId: string; status: 'ok' | 'error' | 'outcome_unknown'; error?: { code: string; message: string }; result?: unknown }
 /** playbooks: keys of the playbooks whose every run reads the note in full */
 export type NoteIndex = { id: string; v: number; title: string; tags: string[]; playbooks: string[]; updated: string; size: number }
@@ -89,8 +91,10 @@ export function setBase(b: string) { base = b }
 
 const enc = encodeURIComponent
 
-async function call<T>(method: string, path: string, body?: unknown, timeout = 15000): Promise<T> {
-  const ac = new AbortController(), t = setTimeout(() => ac.abort(), timeout)
+/** signal = the page dropped the request: it fails as 499 aborted */
+async function call<T>(method: string, path: string, body?: unknown, timeout = 15000, signal?: AbortSignal): Promise<T> {
+  const ac = new AbortController(), t = setTimeout(() => ac.abort(), timeout), drop = () => ac.abort()
+  if (signal?.aborted) ac.abort(); else signal?.addEventListener('abort', drop)
   // every write carries a JSON body: the backend refuses a POST without one (415)
   const b = body === undefined && method !== 'GET' && method !== 'DELETE' ? {} : body
   try {
@@ -107,13 +111,14 @@ async function call<T>(method: string, path: string, body?: unknown, timeout = 1
     return data as T
   } catch (e) {
     if (e instanceof ApiError) throw e
+    if (signal?.aborted) throw new ApiError(499, 'aborted', 'stopped')
     throw new ApiError(0, 'network', ac.signal.aborted ? 'the console backend did not answer' : String((e as Error).message || e))
-  } finally { clearTimeout(t) }
+  } finally { clearTimeout(t); signal?.removeEventListener('abort', drop) }
 }
 
 /** a workspace-bound route: /api/ws/<ws><path> */
-export const wsCall = <T>(ws: string, method: string, path: string, body?: unknown, timeout?: number) =>
-  call<T>(method, `/api/ws/${enc(ws)}${path}`, body, timeout)
+export const wsCall = <T>(ws: string, method: string, path: string, body?: unknown, timeout?: number, signal?: AbortSignal) =>
+  call<T>(method, `/api/ws/${enc(ws)}${path}`, body, timeout, signal)
 
 /** null = no backend (demo); 'unpaired' = this device has no pairing yet */
 export async function detect(): Promise<State | null | 'unpaired'> {
@@ -184,8 +189,11 @@ export const proposals = async (ws: string) => (await wsCall<{ proposals: Propos
 export const decide = async (ws: string, id: string, accept: boolean, text?: string) =>
   (await wsCall<{ note: Note | null }>(ws, 'POST', `/knowledge/proposals/${enc(id)}/decide`, { accept, ...(text !== undefined ? { text } : {}) })).note
 /** the words in a recording; audio = base64, mime = the recorder's type */
-export const transcribe = async (ws: string, audio: string, mime: string) =>
-  (await wsCall<{ text: string }>(ws, 'POST', '/transcribe', { audio, mime }, 130000)).text
+export const transcribe = async (ws: string, audio: string, mime: string, signal?: AbortSignal) =>
+  (await wsCall<{ text: string }>(ws, 'POST', '/transcribe', { audio, mime }, 130000, signal)).text
+/** the New job form filled from what was said: say = every say so far, oldest first; id names the build in its events */
+export const build = async (ws: string, id: string, say: string[], form: BuildForm, signal?: AbortSignal) =>
+  (await wsCall<{ form: BuildForm }>(ws, 'POST', '/build', { id, say, form }, 150000, signal)).form
 export const pairNew = () => call<{ url: string; qr: string; expires: string }>('POST', '/api/pair/new')
 export const devices = () => call<{ devices: Device[] }>('GET', '/api/devices')
 export const revoke = (id: string) => call<object>('DELETE', `/api/devices/${enc(id)}`)
@@ -193,7 +201,7 @@ export const revoke = (id: string) => call<object>('DELETE', `/api/devices/${enc
 /** one EventSource for the page's lifetime; it reconnects by itself, and onOpen runs on every (re)connect */
 export function events(on: (e: Ev) => void, onOpen?: () => void) {
   const es = new EventSource(base + '/api/events')
-  for (const k of ['job', 'run', 'feed', 'bridge', 'source']) {
+  for (const k of ['job', 'run', 'feed', 'bridge', 'source', 'build']) {
     es.addEventListener(k, (m) => { try { on({ ...JSON.parse((m as MessageEvent).data), kind: k }) } catch { /* a broken frame is dropped */ } })
   }
   if (onOpen) es.addEventListener('open', onOpen)

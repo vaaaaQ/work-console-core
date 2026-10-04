@@ -253,6 +253,28 @@ kbd{font:500 11px/1 var(--mono);padding:3px 5px;border:1px solid var(--line);bor
 .cx-t{margin:6px 0 2px 20px;max-height:320px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.45 var(--mono);background:var(--sunken);border:1px solid var(--line);border-radius:var(--r);padding:8px 10px}
 p.cx-t{font-family:var(--font)}
 .cx-kind{justify-self:start}
+/* New job: what was said, the builder at work, and the form it fills */
+.nj-v{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r);background:var(--sunken)}
+.nj-say{display:flex;gap:8px;align-items:center}
+.nj-say .inp{flex:1}
+.nj-mic{justify-content:center;min-width:44px}
+.nj-mic.on{background:color-mix(in oklab,var(--bad) 14%,var(--raised));border-color:var(--bad);color:var(--bad);animation:nj-rec 1.4s ease-in-out infinite}
+@keyframes nj-rec{50%{box-shadow:0 0 0 4px color-mix(in oklab,var(--bad) 25%,transparent)}}
+.nj-st{margin:0;display:flex;align-items:center;gap:7px;min-height:18px;font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
+.nj-err{color:var(--bad)}
+.nj-why{margin:0;padding-left:18px;font-size:12.5px;color:var(--wait)}
+.nj-said{margin:6px 0 0;padding-left:18px}
+.nj-cx{display:flex;align-items:center;gap:6px;min-width:0;flex:1 1 auto}
+/* on a phone a long label takes its own line, the count goes under it */
+.nj-ctx{grid-template-columns:minmax(0,1fr)}
+.nj-ctx .cx-r{flex-wrap:wrap}
+.nj-cu{display:flex;align-items:center;gap:8px;margin-left:auto}
+.nj-add{display:grid;grid-template-columns:minmax(0,1fr);gap:6px}
+.nj-add .nj-err{margin:0;font-size:12.5px}
+.nj-grow{flex:1;min-width:140px}
+.nj-n{display:inline-flex;align-items:center;gap:5px}
+.nj-due{max-width:280px}
+.nj-keep{justify-self:start;flex-wrap:wrap;max-width:100%}
 @media (max-width:980px){.below{grid-template-columns:minmax(0,1fr)}}
 
 /* inspector */

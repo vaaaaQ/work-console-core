@@ -42,6 +42,7 @@ export async function saveThenClose<T>(save: () => Promise<T>, close: () => void
 export const slugify = (s: string) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)
 export const initials = (n: string) => String(n).split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase()
 export const first = (n: string) => String(n).split(/\s+/)[0]
+export const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
 export const snip = (t: string, n: number) => { t = String(t).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t }
 /** channel names compare without case, spaces or punctuation */
 export const norm = (s: string) => String(s).toLowerCase().replace(/[^a-z0-9#]+/g, '')

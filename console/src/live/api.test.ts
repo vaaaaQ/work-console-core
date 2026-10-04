@@ -18,13 +18,24 @@ import * as api from './api.ts'
 import { LIVE } from './api.ts'
 import { setZone, zone } from '../lib/zone.ts'
 import { HID, hiddenOf, hideIn, loadHidden, unhideIn } from '../actions/hidden.ts'
-import { L, applyState, fromQuery, loadSources, onEvent, pbWs, srcState } from './boot.ts'
+import { L, applyState, buildFeed, fromQuery, loadSources, onEvent, pbWs, srcState } from './boot.ts'
 
 /* The page's client against the real backend (fake gateways, scripted SDK): the shapes the page
    sends and reads are the ones the server speaks. Two workspaces: acme mints A-NNNN, beta is Acme
    under another id and prefix, with one playbook of its own, on its own fake gateway. */
 
-const sdk: Sdk = { async *start({ tools }) { yield { k: 'session', id: 'sess-1' }; await tools.submitDraft('a draft'); yield { k: 'result', ok: true } } }
+/** what each build's session was asked, in order */
+const asks: Parameters<NonNullable<Sdk['ask']>>[0][] = []
+const sdk: Sdk = {
+  async *start({ tools }) { yield { k: 'session', id: 'sess-1' }; await tools.submitDraft('a draft'); yield { k: 'result', ok: true } },
+  // a build searches the notes once and answers; one told to hold on waits until it is stopped
+  async *ask(o) {
+    asks.push(o)
+    yield { k: 'tool', name: 'knowledge_search', input: { q: 'login' } }
+    if (o.prompt.includes('hold on')) await new Promise((_ok, no) => o.abort.signal.addEventListener('abort', () => no(new Error('aborted')), { once: true }))
+    yield { k: 'result', ok: true, out: { title: 'Fix login', key: 'ACME-7', project: 'web', playbook: 'dev-item', description: 'Fix it', context: [{ k: 'work', id: 'ACME-7' }], due: '', problems: [] } }
+  },
+}
 const betaPb = { n: 'Beta only', ph: [{ c: 'A', n: 'One', s: [{ id: 'b1', t: 'Do it', m: 'you', x: 'done' }] }] } as unknown as Playbook
 const betaW: WorkspaceServer = { ...acmeServer, page: { ...acme, id: 'beta', playbooks: { 'beta-only': betaPb } }, jobPrefix: 'B' }
 
@@ -314,6 +325,28 @@ test('fromQuery: a job opens in its workspace; ws= opens that workspace', async 
     assert.equal(fromQuery('?job=B-0001&ws=acme'), true)
     assert.equal(S.ws, 'acme', 'ws= wins over the job'); assert.equal(S.job, 'B-0001')
   } finally { S.ws = sel; await m.close() }
+})
+
+test("build: the page sends the says and its form, hears the session's reading under the build's id, and gets the form back checked; Stop drops it", async () => {
+  const m = await backend()
+  // what boot does with the event stream's frames
+  const off = m.hub.on((e) => { if (e.kind === 'build') onEvent(e) })
+  const form = { t: '', key: '', prj: '', pb: '', d: '', ctx: [], due: '', npb: null, why: [] }
+  try {
+    const lines: [string, string | undefined][] = []
+    buildFeed.set('b1', (t, tool) => lines.push([t, tool]))
+    assert.deepEqual(await api.build('acme', 'b1', ['fix the login, ACME-7'], form), {
+      t: 'Fix login', key: 'ACME-7', prj: 'web', pb: 'dev-item', d: 'Fix it', ctx: [{ k: 'work', id: 'ACME-7', n: 10 }], due: '', npb: null, why: [],
+    })
+    assert.deepEqual(lines, [['Started', undefined], ['Searching notes for “login”', 'knowledge_search']])
+    assert.match(asks.at(-1)!.prompt, /^1\. fix the login, ACME-7$/m)
+    const n = asks.length, stop = new AbortController()
+    const held = api.build('acme', 'b2', ['hold on'], form, stop.signal)
+    await until(() => asks.length > n)
+    stop.abort()
+    await assert.rejects(held, (e: unknown) => e instanceof api.ApiError && e.status === 499)
+    await until(() => asks[n].abort.signal.aborted)
+  } finally { off(); buildFeed.clear(); await m.close() }
 })
 
 test('voice: the state says when the PC has a key; the page sends a recording and gets its words', async () => {

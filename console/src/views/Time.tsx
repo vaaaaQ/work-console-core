@@ -4,6 +4,7 @@ import { DEFAULT_WS } from '../data/packs.ts'
 import type { FillArgs, FillResult, TimeItem } from '../data/time.ts'
 import { failText } from '../actions/flow.tsx'
 import { go } from '../actions/nav.tsx'
+import { plural } from '../lib/util.ts'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
 import { L, srcState } from '../live/boot.ts'
@@ -28,7 +29,6 @@ let filling: string | null = null
 
 const srcName = () => W().src.time?.n || 'Timesheet'
 const fmtH = (h: number) => `${Math.round(h * 100) / 100} h`
-const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
 /** newest first: this month, then the one that just ended */
 const months = () => [...(LIVE.on ? L().time : (demo ||= wsPage(DEFAULT_WS).demo.time?.(localDay()) ?? []))].sort((a, b) => b.id.localeCompare(a.id)).slice(0, 2)
 
