@@ -3,10 +3,10 @@ import { WORK0 } from '../data/demo.ts'
 import { PACKS } from '../data/packs.ts'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
-import { CTX_MAX, KINDS, badItem, ctxLabel, ctxOf, okItem, parseWorkId, workId } from '../model/context.ts'
+import { KINDS, badItem, ctxLabel, ctxOf, okItem, parseWorkId, workId } from '../model/context.ts'
 import type { Resolved } from '../model/context.ts'
-import { CHATS, ctxName as label, isClosed } from '../model/world.ts'
-import type { CtxItem, CtxKind, Job } from '../model/types.ts'
+import { CHATS, MAIL, ctxName as label, isClosed } from '../model/world.ts'
+import type { CtxItem, CtxKind, Job, Mail } from '../model/types.ts'
 import { doCmd, failText } from '../actions/flow.tsx'
 import { CancelBtn } from '../ui/bits.tsx'
 import { Ic } from '../ui/Icon.tsx'
@@ -16,11 +16,24 @@ import { pageOf } from '../workspace.ts'
 /* What the job's LLM runs are given. A row expands to the exact text a run would get: live through the
    backend's renderer, in the demo from demo data through the same one. */
 
-const chatName = (j: Job, id: string) => (CHATS[j.ws] || []).find((c) => c.id === id)?.name
+const mailName = (m: Mail) => `${m.subj} — ${m.from}`
+const notesOf = (j: Job) => LIVE.ws[j.ws]?.notes || []
+/** the label an added item keeps: a chat's name, a mail's subject and sender, a note's title */
+function nameOf(j: Job, k: CtxKind, id: string) {
+  if (k === 'chat') return (CHATS[j.ws] || []).find((c) => c.id === id)?.name
+  if (k === 'mail') { const m = (MAIL[j.ws] || []).find((x) => x.id === id); return m ? mailName(m) : undefined }
+  if (k === 'note') return notesOf(j).find((n) => n.id === id)?.title
+  return undefined
+}
 
 function demoItem(j: Job, it: CtxItem): Resolved {
   const me = pageOf(j.ws)?.me
   if (it.k === 'work') return WORK0[it.id] ? okItem(it, WORK0[it.id], me) : badItem(it, 'source_error', `no work item ${it.id} in the demo`)
+  if (it.k === 'note') return badItem(it, 'source_error', 'the demo has no notes')
+  if (it.k === 'mail') {
+    const m = (MAIL[j.ws] || []).find((x) => x.id === it.id)
+    return m ? okItem(it, { body: m.body, attachments: [] }, me) : badItem(it, 'source_error', `no mail ${it.id} in the demo`)
+  }
   const c = (CHATS[j.ws] || []).find((x) => x.id === it.id)
   if (!c) return badItem(it, 'source_error', `no chat ${it.id} in the demo`)
   return okItem(it, { messages: c.msgs.map((m) => ({ author: m.who, authorKind: m.me ? 'me' : m.bot ? 'bot' : 'person', at: m.at, text: m.t })) }, me)
@@ -63,14 +76,14 @@ export function CtxPanel({ j }: { j: Job }) {
             <div className="cx-r">
               <button className="lnk" aria-expanded={open === key} onClick={() => setOpen(open === key ? null : key)} title="Show what a run gets">
                 <Ic n="chevron" sm /><Ic n={k.ic} sm /><span className="cx-k">{k.l}</span><span className="cx-l">{lb}</span></button>
-              <span className="why cx-u">last {ro ? it.n : <Count j={j} it={it} />} {k.unit}</span>
+              <span className="why cx-u">{k.whole ?? <>last {ro ? it.n : <Count j={j} it={it} />} {k.unit}</>}</span>
               {ro ? null : <button className="iconbtn cx-x" aria-label={`Remove ${lb} from the context`} title="Remove"
                 onClick={() => { void doCmd(j.id, { op: 'ctxDel', k: it.k, id: it.id }, `Removed ${lb} from the context`) }}><Ic n="x" sm /></button>}
             </div>
             {open === key ? <Preview j={j} it={it} /> : null}
           </li>
         })}</ul> : <p className="why" style={{ margin: 0 }}>Runs get the job's frame and journal only.</p>}
-        {ro ? null : <button className="btn ghost sm cx-add" disabled={list.length >= CTX_MAX} onClick={() => addCtx(j)}><Ic n="plus" sm />Add</button>}
+        {ro ? null : <button className="btn ghost sm cx-add" onClick={() => addCtx(j)}><Ic n="plus" sm />Add</button>}
       </div>
     </section>
   )
@@ -78,18 +91,22 @@ export function CtxPanel({ j }: { j: Job }) {
 
 function AddBody({ j }: { j: Job }) {
   const [k, setK] = React.useState<CtxKind>(workId(j.ws, j.key) ? 'chat' : 'work')
-  const have = new Set(ctxOf(j).map((c) => `${c.k}/${c.id}`)), chats = (CHATS[j.ws] || []).filter((c) => !have.has(`chat/${c.id}`))
+  const have = new Set(ctxOf(j).map((c) => `${c.k}/${c.id}`)), left = <T extends { id: string }>(kind: CtxKind, xs: T[]) => xs.filter((x) => !have.has(`${kind}/${x.id}`))
+  const K = KINDS[k]
+  const pick = (what: string, opts: [string, string][], none: string) => <label className="field"><span>{what}</span>{opts.length
+    ? <select className="sel" name="id" data-autofocus>{opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+    : <span className="why">{none}</span>}</label>
   return <>
     <div className="field"><span>Kind</span><div className="seg cx-kind" role="group" aria-label="Kind">{(Object.keys(KINDS) as CtxKind[]).map((x) => (
       <button key={x} type="button" aria-pressed={k === x} onClick={() => setK(x)}><Ic n={KINDS[x].ic} sm />{KINDS[x].l}</button>))}</div>
       <input type="hidden" name="k" value={k} /></div>
     {k === 'work'
       ? <label className="field"><span>Work item</span><input className="inp" name="id" placeholder={PACKS[j.ws]?.keyPh} data-autofocus /></label>
-      : <label className="field"><span>Chat</span>{chats.length
-        ? <select className="sel" name="id" data-autofocus>{chats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
-        : <span className="why">Every loaded chat is already in the context.</span>}</label>}
-    <label className="field"><span>Newest {KINDS[k].unit}, up to {KINDS[k].max}</span>
-      <input key={k} className="inp" type="number" name="n" min={1} max={KINDS[k].max} defaultValue={KINDS[k].def} /></label>
+      : k === 'chat' ? pick('Chat', left('chat', CHATS[j.ws] || []).map((c) => [c.id, c.name]), 'Every loaded chat is already in the context.')
+        : k === 'mail' ? pick('Mail', left('mail', MAIL[j.ws] || []).map((m) => [m.id, mailName(m)]), 'Every loaded mail is already in the context.')
+          : pick('Note', left('note', notesOf(j)).map((n) => [n.id, n.title]), 'No note left to add. Notes are written in Knowledge.')}
+    {K.whole ? <p className="why" style={{ margin: 0 }}>Runs get {K.whole}.</p> : <label className="field"><span>Newest {K.unit}, up to {K.max}</span>
+      <input key={k} className="inp" type="number" name="n" min={1} max={K.max} defaultValue={K.def} /></label>}
   </>
 }
 
@@ -100,13 +117,13 @@ export function addCtx(j0: Job) {
     body: <AddBody j={j0} />,
     foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="plus" sm />Add</button></>,
     onSubmit: (fd, f) => {
-      const k = String(fd.get('k')) as CtxKind, raw = String(fd.get('id') || '').trim(), n = Number(fd.get('n'))
+      const k = String(fd.get('k')) as CtxKind, raw = String(fd.get('id') || '').trim(), K = KINDS[k]
       const item = k === 'work' ? parseWorkId(j0.ws, raw) : raw
       if (!item) { const i = f.querySelector<HTMLInputElement>('[name=id]'); if (i) { i.focus(); i.setAttribute('aria-invalid', 'true') } return }
-      const name = k === 'work' ? (workId(j0.ws, raw) ? raw : undefined) : chatName(j0, item)
+      const name = k === 'work' ? (workId(j0.ws, raw) ? raw : undefined) : nameOf(j0, k, item)
       closeModal()
       const lb = name || ctxLabel(j0.ws, { k, id: item })
-      void doCmd(id, { op: 'ctxAdd', k, id: item, n, ...(name ? { name } : {}) }, `Added ${KINDS[k].l.toLowerCase()} ${lb} to the context`)
+      void doCmd(id, { op: 'ctxAdd', k, id: item, ...(K.whole ? {} : { n: Number(fd.get('n')) }), ...(name ? { name } : {}) }, `Added ${K.l.toLowerCase()} ${lb} to the context`)
     },
   })
 }

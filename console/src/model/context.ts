@@ -1,16 +1,20 @@
 import { itemOf, pageOf } from '../data/registry.ts'
 import type { CtxItem, CtxKind, Job, Ws } from './types.ts'
 
-/* What a job gives its LLM runs. Each kind reads one bridge item and turns it into prompt text; the run's
-   prompt and the page's preview both use these renderers, so an expanded row shows what the run gets. */
+/* What a job gives its LLM runs. Each kind reads one bridge item, or one of the workspace's notes, and turns
+   it into prompt text; the run's prompt and the page's preview both use these renderers, so an expanded row
+   shows what the run gets. */
 
-/** concept = the bridge concept its get reads */
-export interface Kind { l: string; unit: string; def: number; max: number; ic: string; concept: string }
+/** concept = the bridge concept its get reads; null = a note, read from the workspace's notes.
+    unit, def, max = how many of its newest entries a run gets; whole = what a run gets of a kind without a count */
+export interface Kind { l: string; unit: string; def: number; max: number; ic: string; concept: string | null; whole?: string }
 export const KINDS: Record<CtxKind, Kind> = {
   work: { l: 'Work item', unit: 'comments', def: 10, max: 20, ic: 'file', concept: 'work' },
   chat: { l: 'Chat', unit: 'messages', def: 10, max: 50, ic: 'message', concept: 'chat' },
+  mail: { l: 'Mail', unit: '', def: 1, max: 1, ic: 'mail', concept: 'mail', whole: 'the whole message' },
+  note: { l: 'Note', unit: '', def: 1, max: 1, ic: 'list', concept: null, whole: 'the whole note' },
 }
-export const CTX_MAX = 10, FIELD_MAX = 4000, ENTRY_MAX = 1500
+export const ENTRY_MAX = 1500, MAIL_MAX = 20000
 
 /** the workspace's board rule; a workspace that is not registered (a job from a removed one) has none */
 const boardOf = (ws: Ws) => pageOf(ws)?.board
@@ -27,7 +31,7 @@ export function ctxDefaults(ws: Ws, key: string, chat?: string, chatName?: strin
 }
 export const ctxOf = (j: Pick<Job, 'ws' | 'key' | 'chat' | 'ctx'>): CtxItem[] => j.ctx ?? ctxDefaults(j.ws, j.key, j.chat)
 export const ctxLabel = (ws: Ws, it: Pick<CtxItem, 'k' | 'id' | 'name'>) => it.name || (it.k === 'work' ? (boardOf(ws)?.key(it.id) ?? it.id) : it.id)
-export const ctxUnit = (it: Pick<CtxItem, 'k' | 'n'>) => `last ${it.n} ${KINDS[it.k].unit}`
+export const ctxUnit = (it: Pick<CtxItem, 'k' | 'n'>) => KINDS[it.k].whole ?? `last ${it.n} ${KINDS[it.k].unit}`
 
 /* ===== reading a bridge item as text ===== */
 type Entry = { author?: string; authorKind?: string; at?: string; text?: string }
@@ -37,6 +41,9 @@ export interface WorkDetail {
   description?: string; reproSteps?: string; acceptanceCriteria?: string; comments?: Entry[]
 }
 export interface ChatDetail { messages?: Entry[] }
+/** mail.get */
+export interface MailDetail { body?: string; attachments?: string[] }
+export interface NoteDetail { text?: string }
 /** status ok = text is the item; anything else = text says why it could not be read */
 export interface Resolved extends CtxItem { status: string; text: string }
 
@@ -49,7 +56,7 @@ const latest = (es: Entry[] | undefined, n: number) => (Array.isArray(es) ? es :
   .slice(-n).map((x) => x.e)
 /** me = what the user's own entries are signed with; unset or empty: "the user", as in the prompt */
 const entry = (me?: string) => (e: Entry) => `- ${stamp(e.at)} ${e.authorKind === 'me' ? me || 'the user' : e.author || 'unknown'}: ${clip(e.text!.trim(), ENTRY_MAX).replace(/\n/g, '\n  ')}`
-const section = (h: string, t: string | undefined) => (t && t.trim() ? [`${h}:`, clip(t.trim(), FIELD_MAX), ''] : [])
+const section = (h: string, t: string | undefined) => (t && t.trim() ? [`${h}:`, t.trim(), ''] : [])
 
 export function renderWork(it: CtxItem, d: WorkDetail, me?: string): string {
   const head = `${d.type || 'Work item'} ${it.id}${d.title ? `: ${d.title}` : ''}`
@@ -63,8 +70,19 @@ export function renderChat(it: CtxItem, d: ChatDetail, me?: string): string {
   const ms = latest(d.messages, it.n)
   return ms.length ? ms.map(entry(me)).join('\n') : 'No messages.'
 }
-export const renderItem = (it: CtxItem, d: unknown, me?: string) =>
-  (it.k === 'work' ? renderWork(it, (d || {}) as WorkDetail, me) : renderChat(it, (d || {}) as ChatDetail, me))
+export function renderMail(d: MailDetail): string {
+  const body = typeof d.body === 'string' && d.body.trim() ? clip(d.body.trim(), MAIL_MAX) : 'No text.'
+  const att = Array.isArray(d.attachments) ? d.attachments.filter((a) => typeof a === 'string' && a) : []
+  return att.length ? `${body}\n\nAttachments: ${att.join(', ')}` : body
+}
+export const renderNote = (d: NoteDetail) => (typeof d.text === 'string' && d.text.trim() ? d.text.trim() : 'The note is empty.')
+export function renderItem(it: CtxItem, d: unknown, me?: string): string {
+  const o = (d || {}) as object
+  if (it.k === 'work') return renderWork(it, o as WorkDetail, me)
+  if (it.k === 'mail') return renderMail(o as MailDetail)
+  if (it.k === 'note') return renderNote(o as NoteDetail)
+  return renderChat(it, o as ChatDetail, me)
+}
 
 export const okItem = (it: CtxItem, d: unknown, me?: string): Resolved => ({ ...it, status: 'ok', text: renderItem(it, d, me) })
 export const badItem = (it: CtxItem, status: string, why: string): Resolved => ({ ...it, status: status === 'ok' ? 'source_error' : status, text: why })

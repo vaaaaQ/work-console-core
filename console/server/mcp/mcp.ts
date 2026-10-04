@@ -152,22 +152,24 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
     },
     {
       name: 'job_context',
-      description: "Change what the job's LLM runs are given: add an item, set how many of its newest comments/messages go in, or remove it. "
-        + 'Each run reads the items at its start and inlines them into its prompt; get_job lists them under context.',
+      description: "Change what the job's LLM runs are given: add an item, set how many of a work item's or a chat's newest comments/messages go in, or remove it. "
+        + 'A mail goes in as its whole message and a knowledge note in full. Each run reads the items at its start and inlines them into its prompt; get_job lists them under context.',
       inputSchema: {
         type: 'object', required: ['id', 'op', 'kind', 'item'],
         properties: {
           id: { type: 'string' }, op: { type: 'string', enum: ['add', 'set', 'del'] }, kind: { type: 'string', enum: Object.keys(KINDS) },
-          item: { type: 'string', description: 'work item key or id (ACME-512), or chat id' },
-          count: { type: 'integer', description: `newest comments or messages; default ${KINDS.work.def}, max ${KINDS.work.max} for work, ${KINDS.chat.max} for a chat` },
+          item: { type: 'string', description: 'work item key or id (ACME-512), chat id, mail id, or note id (knowledge_search)' },
+          count: { type: 'integer', description: `newest comments or messages; default ${KINDS.work.def}, max ${KINDS.work.max} for work, ${KINDS.chat.max} for a chat; a mail or a note takes none` },
           name: { type: 'string', description: 'label for add' },
         },
       },
       async run(a, s) {
-        const { j } = await get(a.id), k = a.kind as keyof typeof KINDS, raw = str(a.item, 'item')
+        const { sp, j } = await get(a.id), k = a.kind as keyof typeof KINDS, raw = str(a.item, 'item')
         const id = k === 'work' ? parseWorkId(j.ws, raw) ?? raw : raw
         const op = a.op === 'add' ? 'ctxAdd' : a.op === 'set' ? 'ctxSet' : a.op === 'del' ? 'ctxDel' : String(a.op)
-        return command(s, j.id, { op, k, id, ...(a.count !== undefined ? { n: a.count } : {}), ...(typeof a.name === 'string' ? { name: a.name } : {}) })
+        // a note is named by its title unless a name is given; an unknown one is refused before it lands
+        const name = typeof a.name === 'string' ? a.name : k === 'note' && op === 'ctxAdd' ? (await sp.notes.read(id)).title : undefined
+        return command(s, j.id, { op, k, id, ...(a.count !== undefined ? { n: a.count } : {}), ...(name !== undefined ? { name } : {}) })
       },
     },
     {

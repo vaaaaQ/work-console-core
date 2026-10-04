@@ -289,7 +289,7 @@ export function createApp(d: Deps) {
       const { s, job } = await jobOf(r.p[0])
       const it = ctxOf(job).find((c) => c.k === r.p[1] && c.id === r.p[2])
       if (!it) throw new HttpError(404, 'not_found', `${r.p[1]} ${r.p[2]} is not in ${job.id}'s context`)
-      return { item: await resolveItem(s.source, it, s.page.me) }
+      return { item: await resolveItem(s.source, it, s.page.me, s.notes) }
     }],
     ['POST', /^\/api\/undo$/, async (r) => {
       const b = await r.body(), id = str(b.job, 'job')

@@ -51,8 +51,8 @@ export type StepOverride = Partial<Pick<Flow, 's' | 'm' | 'arts' | 'b' | 'rv' | 
 /** l = outcome colour for the Today feed */
 export interface JournalEntry extends New { ts: string; a: string; o: string; c: string; n: string; l?: Lamp }
 /** a kind of context a job gives its LLM runs; each kind's reading lives in model/context.ts */
-export type CtxKind = 'work' | 'chat'
-/** one context item: n = how many of its newest comments or messages a run gets, name = its label on the page */
+export type CtxKind = 'work' | 'chat' | 'mail' | 'note'
+/** one context item: n = how many of its newest comments or messages a run gets (1 for a mail or a note, which go in whole), name = its label on the page */
 export interface CtxItem { k: CtxKind; id: string; n: number; name?: string }
 /** at = current step, upd = minutes ago; ev = the calendar event it came from;
  *  due = when it is due (ISO); it needs you from midnight `lead` days before due (default 0), and

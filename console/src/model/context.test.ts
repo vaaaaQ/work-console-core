@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { PB0 } from '../data/playbooks.ts'
 import { JOBS0, JR, OVR, TPL0 } from '../data/demo.ts'
 import { clone } from '../lib/util.ts'
-import { badItem, contextSection, ctxOf, okItem, parseWorkId, renderChat, renderWork, workId } from './context.ts'
+import { MAIL_MAX, badItem, contextSection, ctxOf, okItem, parseWorkId, renderChat, renderItem, renderMail, renderWork, workId } from './context.ts'
 import { CmdError, apply, atOf, freshJob, isClosed, seedFlow } from './transitions.ts'
 import type { Ctx } from './transitions.ts'
 import type { CtxItem, Job } from './types.ts'
@@ -17,6 +17,8 @@ const code = (f: () => unknown, c: string) => assert.throws(f, (e: unknown) => e
 
 const W: CtxItem = { k: 'work', id: 'ACME-603', n: 2, name: 'ACME-603' }
 const C: CtxItem = { k: 'chat', id: 'c4', n: 2, name: 'Sam Rivera' }
+const M: CtxItem = { k: 'mail', id: 'm-17', n: 1, name: 'Quota — Kim Lee' }
+const N: CtxItem = { k: 'note', id: 'tracker-rest', n: 1, name: 'Tracker REST' }
 
 test('a job key that looks like an item id names a work item; any other key names none', () => {
   assert.equal(workId('acme', 'ACME-512'), 'ACME-512')
@@ -42,9 +44,19 @@ test('a work item reads as header, sections and its newest comments, oldest firs
   ].join('\n'))
 })
 
-test('an item from an older pack keeps what it has; long text is clipped', () => {
-  const t = renderWork(W, { description: 'x'.repeat(5000), comments: [] })
-  assert.match(t, /^Work item ACME-603\n\nDescription:\nx{4000} \[…\]\n\nNo comments\.$/)
+test('an item from an older pack keeps what it has; a long field goes in whole', () => {
+  const t = renderWork(W, { description: 'x'.repeat(50000), comments: [] })
+  assert.match(t, /^Work item ACME-603\n\nDescription:\nx{50000}\n\nNo comments\.$/)
+})
+
+test('a mail reads as its body, clipped at 20 000 chars, and its attachments; a note reads in full', () => {
+  assert.equal(renderMail({ body: '  Hi,\nthe quota is 5.  ', attachments: ['q.xlsx', ''] }), 'Hi,\nthe quota is 5.\n\nAttachments: q.xlsx')
+  assert.equal(renderMail({}), 'No text.')
+  assert.equal(renderMail({ body: 'y'.repeat(MAIL_MAX + 5), attachments: [] }), 'y'.repeat(MAIL_MAX) + ' […]')
+  assert.equal(renderItem(N, { text: 'z'.repeat(70000) }), 'z'.repeat(70000))
+  assert.equal(renderItem(N, { text: ' ' }), 'The note is empty.')
+  const s = contextSection('acme', [okItem(M, { body: 'b', attachments: [] }), okItem(N, { text: 't' })])
+  assert.equal(s, '## Context\n### Mail Quota — Kim Lee (the whole message)\nb\n\n### Note Tracker REST (the whole note)\nt\n')
 })
 
 test('a chat reads as its newest messages, oldest first, me as the user', () => {
@@ -99,18 +111,30 @@ test('context ops add, recount and remove items and journal each change', () => 
 
 test('context ops refuse bad kinds, ids, counts, duplicates, missing items and closed jobs', () => {
   const j = apply(X, open(), { op: 'ctxAdd', k: 'work', id: 'ACME-999' }).job
-  code(() => apply(X, j, { op: 'ctxAdd', k: 'mail' as never, id: 'm1' }), 'bad_args')
+  code(() => apply(X, j, { op: 'ctxAdd', k: 'file' as never, id: 'm1' }), 'bad_args')
   code(() => apply(X, j, { op: 'ctxAdd', k: 'work', id: 'hello' }), 'bad_args')
   code(() => apply(X, j, { op: 'ctxAdd', k: 'chat', id: ' ' }), 'bad_args')
   code(() => apply(X, j, { op: 'ctxAdd', k: 'work', id: 'ACME-999' }), 'bad_args')
   code(() => apply(X, j, { op: 'ctxSet', k: 'work', id: 'ACME-999', n: 21 }), 'bad_args')
   code(() => apply(X, j, { op: 'ctxSet', k: 'work', id: 'ACME-999', n: 1.5 }), 'bad_args')
   code(() => apply(X, j, { op: 'ctxDel', k: 'chat', id: 'nope' }), 'bad_args')
-  let full = j
-  while (full.ctx!.length < 10) full = apply(X, full, { op: 'ctxAdd', k: 'chat', id: `c-${full.ctx!.length}` }).job
-  code(() => apply(X, full, { op: 'ctxAdd', k: 'chat', id: 'one-more' }), 'bad_args')
+  code(() => apply(X, j, { op: 'ctxAdd', k: 'chat', id: 'c'.repeat(1001) }), 'bad_args')
   const closed = apply(X, j, { op: 'close', st: 'done' }).job
   code(() => apply(X, closed, { op: 'ctxDel', k: 'work', id: 'ACME-999' }), 'bad_state')
+})
+
+test('a mail and a note go in whole: no count, no recount; the list has no cap', () => {
+  const j = open()
+  const m = apply(X, j, { op: 'ctxAdd', k: 'mail', id: 'm-17', name: 'Quota — Kim Lee' }).job
+  assert.deepEqual(m.ctx!.at(-1), { k: 'mail', id: 'm-17', n: 1, name: 'Quota — Kim Lee' })
+  assert.equal(m.jr[0].o, 'Added mail Quota — Kim Lee to the context.')
+  assert.equal(m.jr[0].c, 'LLM runs get the whole message.')
+  code(() => apply(X, m, { op: 'ctxSet', k: 'mail', id: 'm-17', n: 1 }), 'bad_args')
+  code(() => apply(X, j, { op: 'ctxAdd', k: 'note', id: 'tracker-rest', n: 3 }), 'bad_args')
+  assert.equal(apply(X, j, { op: 'ctxAdd', k: 'note', id: 'tracker-rest', n: 1 }).job.ctx!.at(-1)!.n, 1)
+  let many = m
+  for (let i = 0; i < 25; i++) many = apply(X, many, { op: 'ctxAdd', k: 'chat', id: `c-${i}` }).job
+  assert.equal(many.ctx!.length, ctxOf(m).length + 25)
 })
 
 test('a job made before context lists starts from its defaults on the first edit', () => {

@@ -2,7 +2,7 @@ import { BK } from '../data/core.ts'
 import { PACKS } from '../data/packs.ts'
 import { clone, slugify, tfmt } from '../lib/util.ts'
 import { fromWall, midnight, offsetAt } from '../lib/zone.ts'
-import { CTX_MAX, KINDS, ctxDefaults, ctxLabel, ctxOf, ctxUnit, parseWorkId } from './context.ts'
+import { KINDS, ctxDefaults, ctxLabel, ctxOf, ctxUnit, parseWorkId } from './context.ts'
 import type {
   BadgeKind, Cmd, CtxItem, CtxKind, Flow, Job, JobStatus, JournalEntry, Lamp, NodeState, Playbook, Round, Step, StepOverride, Tpl, Ws,
 } from './types.ts'
@@ -118,26 +118,28 @@ function ctxEdit(x: Ctx, j: Job, c: Extract<Cmd, { op: 'ctxAdd' | 'ctxSet' | 'ct
   const K = Object.hasOwn(KINDS, c.k) ? KINDS[c.k as CtxKind] : undefined
   if (!K) throw new CmdError('bad_args', `unknown context kind ${c.k}`)
   const id = typeof c.id === 'string' ? c.id.trim() : ''
-  if (!id || id.length > 200) throw new CmdError('bad_args', 'a context item needs an id')
+  if (!id || id.length > 1000) throw new CmdError('bad_args', 'a context item needs an id')
   if (c.k === 'work' && parseWorkId(j.ws, id) !== id) throw new CmdError('bad_args', `${id} is not a work item id`)
+  const what = K.l.toLowerCase()
   const count = (v: unknown) => {
+    if (K.whole) { if (v !== 1) throw new CmdError('bad_args', `a ${what} gives ${K.whole}; it has no count`); return 1 }
     if (!Number.isInteger(v) || (v as number) < 1 || (v as number) > K.max) throw new CmdError('bad_args', `the ${K.unit} count is 1–${K.max}`)
     return v as number
   }
-  const list = ctxOf(j).map((it) => ({ ...it })), i = list.findIndex((it) => it.k === c.k && it.id === id), what = K.l.toLowerCase()
+  const list = ctxOf(j).map((it) => ({ ...it })), i = list.findIndex((it) => it.k === c.k && it.id === id)
   const next = nextTxt(x, j, atOf(x, j))
   if (c.op === 'ctxAdd') {
     if (i >= 0) throw new CmdError('bad_args', `${what} ${ctxLabel(j.ws, list[i])} is already in the context`)
-    if (list.length >= CTX_MAX) throw new CmdError('bad_args', `the context holds at most ${CTX_MAX} items`)
     const it: CtxItem = { k: c.k, id, n: c.n === undefined ? K.def : count(c.n) }
     const name = typeof c.name === 'string' ? c.name.trim().slice(0, 120) : ''
     if (name) it.name = name
     list.push(it)
-    jr(x, j, `Added ${what} ${ctxLabel(j.ws, it)} to the context.`, `LLM runs get its ${ctxUnit(it)}.`, next, by(x), 'ok')
+    jr(x, j, `Added ${what} ${ctxLabel(j.ws, it)} to the context.`, `LLM runs get ${K.whole ?? `its ${ctxUnit(it)}`}.`, next, by(x), 'ok')
   } else {
     if (i < 0) throw new CmdError('bad_args', `${what} ${id} is not in the context`)
     const it = list[i]
     if (c.op === 'ctxSet') {
+      if (K.whole) throw new CmdError('bad_args', `${what} ${ctxLabel(j.ws, it)} gives ${K.whole}; it has no count`)
       it.n = count(c.n)
       jr(x, j, `${K.l} ${ctxLabel(j.ws, it)} now gives the ${ctxUnit(it)}.`, 'context changed for the next LLM runs.', next, by(x), 'ok')
     } else {

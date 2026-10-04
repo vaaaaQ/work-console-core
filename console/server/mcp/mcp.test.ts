@@ -175,6 +175,18 @@ test("job_context edits the runs' context by key or id; get_job lists it; undo t
   assert.equal((await s.call('get_job', { id: j.id })).json().context.length, base)
 })
 
+test('job_context adds a note by its id under its title, refuses an unknown one, and takes no count for a mail', async (t) => {
+  const s = await setup(t), j = await openJob(s.jobs)
+  await s.notes.save(null, { title: 'Tracker REST', tags: [], playbooks: [], text: 'Use a token header.' }, null)
+  const r = await s.call('job_context', { id: j.id, op: 'add', kind: 'note', item: 'tracker-rest' })
+  assert.equal(r.err, false, r.text)
+  assert.deepEqual((await s.call('get_job', { id: j.id })).json().context.at(-1), { kind: 'note', item: 'tracker-rest', count: 1, name: 'Tracker REST' })
+  const gone = await s.call('job_context', { id: j.id, op: 'add', kind: 'note', item: 'nope' })
+  assert.equal(gone.err, true); assert.match(gone.text, /does not exist/)
+  assert.match((await s.call('job_context', { id: j.id, op: 'add', kind: 'mail', item: 'm-17', count: 3 })).text, /^bad_args.*no count/)
+  assert.equal((await s.call('job_context', { id: j.id, op: 'add', kind: 'mail', item: 'm-17', name: 'Quota' })).err, false)
+})
+
 test('with two workspaces create_job needs a ws; ws picks the space, its prefix and its default project', async (t) => {
   const s = await setup(t, { both: true }), pb = 'action'
   const none = await s.call('create_job', { title: 'Which one?', playbook: pb })
