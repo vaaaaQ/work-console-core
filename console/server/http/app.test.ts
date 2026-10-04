@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import type { TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, request } from 'node:http'
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -614,23 +614,48 @@ test('without a built page a route is 404, not a crash', async () => {
   } finally { await stop() }
 })
 
-test('knowledge: an LLM proposes, the user accepts in Approvals, then edits the note by hand', async () => {
-  const { lp, fakes, stop } = await setup()
+test('knowledge: an LLM proposes, the user accepts in Approvals, edits the note by hand, then deletes it', async () => {
+  const { lp, fakes, spaces, dir, stop } = await setup()
   try {
-    const r = await fetch(`${fakes.acme.url}/api/knowledge/propose`, { method: 'POST', headers: { authorization: `Bearer ${fakes.acme.llmToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Test note', tags: ['smoke'], text: 'one', reason: 'a test' }) })
-    const p = ((await r.json()) as { items: { doc: { id: string } } }).items.doc
-    await until(async () => (await call(lp, 'GET', '/api/ws/acme/knowledge/proposals')).json.proposals.length === 1)
+    const p = await spaces.get('acme').notes.propose({ title: 'Test note', tags: ['smoke'], text: 'one', reason: 'a test', by: 'run A-0001/s1' })
+    assert.deepEqual((await call(lp, 'GET', '/api/ws/acme/knowledge/proposals')).json.proposals.map((x: { id: string }) => x.id), [p.id])
     assert.deepEqual((await call(lp, 'GET', '/api/ws/beta/knowledge/proposals')).json.proposals, [])
+    // a workspace's notes are its own folder, and need no bridge
+    fakes.acme.setDown(true)
+    await until(() => !spaces.get('acme').source.available())
     const d = await call(lp, 'POST', `/api/ws/acme/knowledge/proposals/${p.id}/decide`, { body: { accept: true, text: 'one, edited' } })
     assert.equal(d.status, 200, d.text); assert.equal(d.json.note.text, 'one, edited')
-    await until(async () => (await call(lp, 'GET', '/api/ws/acme/knowledge')).json.notes.length === 1)
     const id = d.json.note.id as string
-    assert.equal((await call(lp, 'GET', `/api/ws/acme/knowledge/notes/${id}`)).json.note.v, 1)
-    const e = await call(lp, 'PUT', `/api/ws/acme/knowledge/notes/${id}`, { body: { title: 'Test note', tags: ['smoke'], text: 'two', v: 1 } })
-    assert.equal(e.json.note.v, 2)
-    assert.equal((await call(lp, 'PUT', `/api/ws/acme/knowledge/notes/${id}`, { body: { title: 'Test note', tags: [], text: 'x', v: 1 } })).status, 409)
+    assert.match(readFileSync(join(dir, 'knowledge', 'acme', `${id}.md`), 'utf8'), /^---\ntitle: "Test note"\n[\s\S]*\n---\none, edited$/)
+    assert.deepEqual((await call(lp, 'GET', '/api/ws/acme/knowledge')).json.notes.map((n: { id: string; v: number }) => [n.id, n.v]), [[id, 1]])
+    assert.deepEqual((await call(lp, 'GET', '/api/ws/beta/knowledge')).json.notes, [])
+    const e = await call(lp, 'PUT', `/api/ws/acme/knowledge/notes/${id}`, { body: { title: 'Test note', tags: ['smoke'], playbooks: ['action'], text: 'two', v: 1 } })
+    assert.equal(e.json.note.v, 2); assert.deepEqual(e.json.note.playbooks, ['action'])
+    assert.equal((await call(lp, 'PUT', `/api/ws/acme/knowledge/notes/${id}`, { body: { title: 'Test note', tags: [], text: 'x', v: 1 } })).json.error.code, 'conflict')
+    assert.equal((await call(lp, 'PUT', `/api/ws/acme/knowledge/notes/${id}`, { body: { title: 'Test note', text: 'x' } })).status, 400)
     assert.equal((await call(lp, 'POST', '/api/ws/acme/knowledge/notes', { body: { title: '', text: 'x' } })).status, 400)
+    assert.equal((await call(lp, 'GET', '/api/ws/acme/knowledge/notes/..%5Cx')).status, 400)
     assert.deepEqual((await call(lp, 'GET', '/api/ws/acme/knowledge/search?q=two')).json.hits.map((h: { id: string }) => h.id), [id])
+    assert.equal((await call(lp, 'DELETE', `/api/ws/acme/knowledge/notes/${id}?v=1`)).status, 409)
+    assert.equal((await call(lp, 'DELETE', `/api/ws/acme/knowledge/notes/${id}`)).status, 400)
+    assert.equal((await call(lp, 'DELETE', `/api/ws/acme/knowledge/notes/${id}?v=2`)).status, 200)
+    assert.equal((await call(lp, 'GET', `/api/ws/acme/knowledge/notes/${id}`)).status, 404)
+  } finally { await stop() }
+})
+
+test('a knowledge change reaches the page as a source event of its workspace', async () => {
+  const { lp, spaces, stop } = await setup()
+  try {
+    const got: string[] = []
+    const q = request({ host: '127.0.0.1', port: lp, path: '/api/events', headers: { host: `127.0.0.1:${lp}` } }, (res) => {
+      res.setEncoding('utf8'); res.on('data', (c: string) => { for (const m of c.matchAll(/event: source\ndata: (.*)\n/g)) got.push(m[1]) })
+    })
+    q.end()
+    await new Promise((r) => setTimeout(r, 50))
+    await spaces.get('beta').notes.save(null, { title: 'Seen', tags: [], playbooks: [], text: 'x' }, null)
+    await until(() => got.length > 0)
+    assert.deepEqual(JSON.parse(got[0]), { kind: 'source', concept: 'notes', upserts: [], removes: [], ws: 'beta' })
+    q.destroy()
   } finally { await stop() }
 })
 

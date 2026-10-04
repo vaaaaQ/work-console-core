@@ -29,10 +29,10 @@ Every request carries `Authorization: Bearer <token>`. There are two callers:
 | Caller | Token file (backend side) | May |
 |---|---|---|
 | `console` | `~/.bridge/console.token` | everything |
-| `llm` | `~/.bridge/llm.token` | reads, `knowledge/search`, `knowledge/propose`, `/mcp` |
+| `llm` | `~/.bridge/llm.token` | reads, `/mcp` |
 
-The `llm` caller gets `403 {error:'forbidden_for_caller'}` on `/api/act`, `/api/state/put`,
-`/api/state/new-job-id` and `/api/knowledge/decide`. A missing or wrong token gets
+The `llm` caller gets `403 {error:'forbidden_for_caller'}` on `/api/act`, `/api/state/put` and
+`/api/state/new-job-id`. A missing or wrong token gets
 `401 {error:'unauthorized'}`.
 
 ## Reply shape
@@ -58,9 +58,6 @@ Every endpoint except `/api/events` and `/api/snapshot` answers `200` with one r
 | `POST /api/act` | `{action, actionId, args}` | the act's own result, or `null` |
 | `POST /api/state/put` | `{concept, id, doc \| null, expectV}` | `{doc, replaced}`; `conflict` carries `{current}` |
 | `POST /api/state/new-job-id` | none | `{id: 'J-0001'}`, always `J-NNNN`; a console renames it to its workspace's prefix and stores the job under that id, as `put` takes any id |
-| `POST /api/knowledge/propose` | `{title, text, tags?, reason?, note?}` | `{doc}`: a proposal `P-0001` |
-| `POST /api/knowledge/decide` | `{proposal, accept, text?}` | the note written, or `{doc:null}` on reject |
-| `GET /api/knowledge/search?q=&tags=` | | up to 20 `{id, v, title, tags, updated, size, score, snippet}` |
 | `GET /api/events` | | SSE: `status` and `delta` frames |
 
 Actions the backend knows: `chat.post`, `mail.send`, `review.vote`, `review.comment`,
@@ -68,8 +65,7 @@ Actions the backend knows: `chat.post`, `mail.send`, `review.vote`, `review.comm
 confirmation, and the gateway should drop a repeat.
 
 `put` with `expectV: null` creates the document; any other value must equal the stored `v`. The
-stored document gets `v = expectV + 1` and `updated`. A document is capped at 256 KB, and a note's
-text at 64 KB.
+stored document gets `v = expectV + 1` and `updated`. A document is capped at 256 KB.
 
 ## Events
 

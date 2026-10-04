@@ -63,6 +63,8 @@ export function coreDefaults(env: NodeJS.ProcessEnv = process.env): WsConfig {
     teamTz: null,
     /** the browser LLM screenshots run in; null = an installed Edge or Chrome */
     browserPath: null,
+    /** the workspace's knowledge notes, Markdown files; null = <home>/knowledge/<id> */
+    knowledgeDir: null,
   }
 }
 

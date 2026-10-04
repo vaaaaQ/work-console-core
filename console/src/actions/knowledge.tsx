@@ -2,7 +2,7 @@ import * as React from 'react'
 import * as api from '../live/api.ts'
 import type { Note, Proposal } from '../live/api.ts'
 import { L, loadKnowledge } from '../live/boot.ts'
-import { S } from '../model/world.ts'
+import { pbs, S } from '../model/world.ts'
 import { commit } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
 import { CancelBtn } from '../ui/bits.tsx'
@@ -10,10 +10,11 @@ import { closeModal, modal } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
 import { saveThenClose } from '../lib/util.ts'
 
-/* Knowledge lives in B on the workplace; the page only asks the backend and reloads what changed. */
+/* Knowledge is the workspace's folder of Markdown notes on the PC; the page only asks the backend and
+   reloads what changed. */
 
 const why = (e: unknown, conflict: string) => (e instanceof api.ApiError && e.code === 'conflict' ? conflict : (e as Error).message || String(e))
-const tagsOf = (s: string) => s.split(',').map((t) => t.trim()).filter(Boolean)
+const listOf = (s: string) => s.split(',').map((t) => t.trim()).filter(Boolean)
 
 /** close runs only once the decision went through, so an edited text survives a failure */
 export async function decide(p: Proposal, accept: boolean, text?: string, close: () => void = () => undefined) {
@@ -46,15 +47,33 @@ export function editNote(n: Note | null, done?: (n: Note) => void) {
     body: <>
       <label className="field"><span>Title</span><input className="inp" name="title" required data-autofocus defaultValue={n?.title ?? ''} /></label>
       <label className="field"><span>Tags, comma separated</span><input className="inp" name="tags" defaultValue={n?.tags.join(', ') ?? ''} /></label>
+      <label className="field"><span>Playbooks, comma separated: every run of their jobs reads the note</span>
+        <input className="inp" name="playbooks" defaultValue={n?.playbooks.join(', ') ?? ''} placeholder={pbs(ws).join(', ')} /></label>
       <label className="field"><span>Text, markdown</span><textarea className="ta" name="text" rows={16} defaultValue={n?.text ?? ''} /></label>
     </>,
     foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="check" sm />Save</button></>,
     onSubmit: (fd) => {
       const title = String(fd.get('title') ?? '').trim()
       if (!title) return
-      saveThenClose(() => api.saveNote(ws, n ? n.id : null, { title, tags: tagsOf(String(fd.get('tags') ?? '')), text: String(fd.get('text') ?? '') }, n?.v), closeModal).then(
+      const note = { title, tags: listOf(String(fd.get('tags') ?? '')), playbooks: listOf(String(fd.get('playbooks') ?? '')), text: String(fd.get('text') ?? '') }
+      saveThenClose(() => api.saveNote(ws, n ? n.id : null, note, n?.v), closeModal).then(
         (s) => { toast(<>Saved <b>{s.title}</b></>); done?.(s); void loadKnowledge(ws) },
         (e) => toast(why(e, n ? 'The note changed elsewhere. Copy your text, open the note again and redo the edit.' : 'A note with this title exists. Pick another title.')))
+    },
+  })
+}
+
+/** done runs once the note is gone */
+export function deleteNote(n: Note, done?: () => void) {
+  const ws = S.ws
+  modal({
+    title: `Delete note · ${n.title}`, form: 'kn-del',
+    body: <p className="why" style={{ margin: 0 }}>The file <span className="mono">{n.id}.md</span> leaves the knowledge folder, and runs stop reading it. There is no undo.</p>,
+    foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="x" sm />Delete</button></>,
+    onSubmit: () => {
+      saveThenClose(() => api.deleteNote(ws, n.id, n.v), closeModal).then(
+        () => { toast(<>Deleted <b>{n.title}</b></>); done?.(); void loadKnowledge(ws) },
+        (e) => toast(why(e, 'The note changed since you opened it. Open it again, then delete.')))
     },
   })
 }

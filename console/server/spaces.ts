@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { CORE_PB, CORE_TPL } from '../src/data/playbooks.ts'
 import * as T from '../src/model/transitions.ts'
 import type { Job, Playbook } from '../src/model/types.ts'
@@ -11,6 +12,8 @@ import { readToken } from './config.ts'
 import { shoot } from './llm/shot.ts'
 import { Bus, HttpError } from './events.ts'
 import { Jobs } from './jobs/jobs.ts'
+import { notesStore } from './knowledge/notes.ts'
+import type { Notes } from './knowledge/notes.ts'
 import { resolveContext } from './llm/context.ts'
 import { Runner } from './llm/runner.ts'
 import { agentSdk } from './llm/sdk.ts'
@@ -30,6 +33,8 @@ export type Push = (title: string, body: string, url: string) => Promise<void>
 export interface Space {
   id: string; page: WorkspacePage; prefix: string; cfg: WsConfig
   bus: Bus; source: Source; store: Store; jobs: Jobs; runner: Runner
+  /** the workspace's knowledge folder */
+  notes: Notes
   ctx(): T.Ctx; putPlaybook(id: string, pb: Playbook | null): Promise<void>
   start: ReturnType<typeof startItem>; plugins: Plugin[]; known: Map<string, Job>; fake: FakeGateway | null
   /** needs-you, less the jobs a QA return pushes about itself */
@@ -119,6 +124,10 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   const TPL = { ...CORE_TPL, ...w.page.templates }
   const ctx = (): T.Ctx => ({ PB, TPL })
   const gate = () => source.available()
+  // the page re-reads knowledge on these, and Web Push announces a new proposal; the fake never touches a real folder
+  const notes = notesStore(!fake && cfg.knowledgeDir ? cfg.knowledgeDir : join(o.home, 'knowledge', id), {
+    onChange: (concept, upserts, removes) => bus.emit({ kind: 'source', concept, upserts, removes }),
+  })
 
   const jobs = new Jobs({ store, bus, ctx, gate })
   const sdk = o.sdk ?? agentSdk({ gatewayUrl: cfg.gatewayUrl, llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools, mcp: w.llm?.mcp, bridge: w.llm?.bridge })
@@ -170,7 +179,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   })
 
   return {
-    id, page: w.page, prefix: w.jobPrefix, cfg, bus, source, store, jobs, runner, ctx, known, fake,
+    id, page: w.page, prefix: w.jobPrefix, cfg, bus, source, store, jobs, runner, notes, ctx, known, fake,
     putPlaybook: async (pid, pb) => { await store.putPlaybook(pid, pb); PB = await store.playbooks() },
     start: startItem({ jobs, ctx, bridge: source, page: w.page }),
     plugins: w.plugins?.({ id, cfg, home: o.home, jobs, source, artifactsDir: o.artifactsDir }) ?? [],

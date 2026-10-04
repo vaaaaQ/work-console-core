@@ -20,6 +20,8 @@ export interface WsConfig {
   runTools: string[]; teamTz: string | null; maxSessions: number
   /** the browser screenshots run in; null = an installed Edge or Chrome */
   browserPath?: string | null
+  /** the workspace's knowledge notes; null = <home>/knowledge/<id> */
+  knowledgeDir?: string | null
   [own: string]: unknown
 }
 export type PluginReq = { q: URLSearchParams; p: string[]; body(): Promise<Record<string, unknown>> }

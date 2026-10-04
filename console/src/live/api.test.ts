@@ -201,21 +201,24 @@ test('an act, a run with its feed, cancel without a body, playbooks and pairing'
   } finally { await m.close() }
 })
 
-test('knowledge: the page lists, decides and edits through the backend', async () => {
+test('knowledge: the page lists, decides, edits and deletes through the backend', async () => {
   const m = await backend()
   try {
-    const r = await fetch(`${m.fakes.acme.url}/api/knowledge/propose`, { method: 'POST', headers: { authorization: `Bearer ${m.fakes.acme.llmToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Page note', text: 'a', reason: 'test' }) })
-    assert.equal(r.status, 200)
+    await m.spaces.get('acme')!.notes.propose({ title: 'Page note', text: 'a', reason: 'test', by: 'run A-0001/s1' })
     await until(async () => (await api.proposals('acme')).length === 1)
     assert.deepEqual(await api.proposals('beta'), [], "acme's proposal is not beta's")
     const [p] = await api.proposals('acme')
     const n = await api.decide('acme', p.id, true)
     assert.equal(n?.title, 'Page note')
     await until(async () => (await api.notes('acme')).some((x) => x.id === n!.id))
-    const e = await api.saveNote('acme', n!.id, { title: 'Page note', tags: ['x'], text: 'b' }, n!.v)
+    const e = await api.saveNote('acme', n!.id, { title: 'Page note', tags: ['x'], playbooks: ['action'], text: 'b' }, n!.v)
+    assert.deepEqual((await api.note('acme', e.id)).playbooks, ['action'])
     assert.equal((await api.note('acme', e.id)).text, 'b')
     assert.equal((await api.searchNotes('acme', 'b')).length, 1)
-    await assert.rejects(api.saveNote('acme', n!.id, { title: 'Page note', tags: [], text: 'c' }, n!.v), (x: unknown) => x instanceof api.ApiError && x.code === 'conflict')
+    await assert.rejects(api.saveNote('acme', n!.id, { title: 'Page note', tags: [], playbooks: [], text: 'c' }, n!.v), (x: unknown) => x instanceof api.ApiError && x.code === 'conflict')
+    await assert.rejects(api.deleteNote('acme', e.id, n!.v), (x: unknown) => x instanceof api.ApiError && x.code === 'conflict')
+    await api.deleteNote('acme', e.id, e.v)
+    assert.deepEqual(await api.notes('acme'), [])
   } finally { await m.close() }
 })
 

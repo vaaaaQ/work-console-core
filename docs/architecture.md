@@ -10,7 +10,8 @@ flowchart LR
     cc[Claude Code session] <-- MCP /mcp --> backend
     gw <--> carrier[Extension carrier]
     carrier <--> tabs[Signed-in tool tabs<br/>pack script]
-    gw --- state[(State store<br/>jobs, runs, notes…)]
+    gw --- state[(State store<br/>jobs, runs, marks…)]
+    backend --- kn[(Knowledge<br/>Markdown notes<br/>per workspace)]
   end
 ```
 *Every box runs on one PC. The backend sees only the gateway. Tools are reached through tabs the
@@ -21,7 +22,7 @@ user already signed into, so no credential is ever stored.*
 | Group | Concepts | Served by | Written by |
 |---|---|---|---|
 | A, sources | `work`, `board`, `review`, `chat`, `mail`, `cal`, `ci`, `tickets`, `docs`, `time` | the pack, in a tab | `/api/act`, only after a person confirms |
-| B, state | `jobs`, `runs`, `playbooks`, `marks`, `notes`, `proposals` | the gateway's store | `/api/state/put` (compare-and-set on `v`) |
+| B, state | `jobs`, `runs`, `playbooks`, `marks` | the gateway's store | `/api/state/put` (compare-and-set on `v`) |
 
 Each A concept is a list of items plus a detail by id; its schema is `schemas/<concept>.item.schema.json`
 and `schemas/<concept>.get.schema.json`. A concept that cannot answer reports an error code and
@@ -112,7 +113,7 @@ Only `workspaces/page.ts` imports it.
 | Field | What |
 |---|---|
 | `page`, `jobPrefix` | the page half; job ids are `<prefix>-NNNN`, with a prefix matching `^[A-Z][A-Z0-9]{0,7}$`, unique. The default store renames the gateway's `J-NNNN` to `<prefix>-NNNN` |
-| `defaults` | config defaults: `gatewayUrl`, `consoleTokenPath`, `llmTokenPath`, `workDir`, `runTools`, `teamTz`, `maxSessions`, and the workspace's own keys. The core's `workDir` is the repo around the console: the nearest folder with a `.git`, else the console's parent |
+| `defaults` | config defaults: `gatewayUrl`, `consoleTokenPath`, `llmTokenPath`, `workDir`, `runTools`, `teamTz`, `maxSessions`, `knowledgeDir`, and the workspace's own keys. The core's `workDir` is the repo around the console: the nearest folder with a `.git`, else the console's parent |
 | `source(cfg, { bus })` | a `Bridge`; the default is the HTTP gateway client |
 | `store(source, cfg, { bus, home })` | the default is B through the source |
 | `llm` | the default `runTools` and the MCP servers for its LLM runs; `llm.mcp` may not name `bridge` or `run` |
@@ -190,6 +191,22 @@ A workspace may have no gateway: its jobs live in PostgreSQL and its runs work i
 - The run hands back its draft with `submit_draft`. The page shows the draft, and a person sends it.
 - The gateway serves the run's read tools as MCP at `{gateway}/mcp` with the `llm` token. The fake
   gateway does not serve `/mcp`, so a demo run uses the fake SDK in tests.
+
+## Knowledge
+
+Each workspace has a folder of Markdown notes: `knowledgeDir` in its config, default
+`<home>/knowledge/<id>`. The store is `console/server/knowledge/notes.ts`.
+
+| What | How |
+|---|---|
+| A note | `<id>.md`: front matter whose values are JSON (`title`, `tags`, `playbooks`, `v`, `updated`), then the text, at most 64 KB. The id is the title's slug and never changes |
+| An edit | names the `v` it replaces. A stale one is a 409 and writes nothing. A write goes to a temp file and is renamed into place |
+| A proposal | an LLM's new note or change, kept in `.proposals/P-NNNN.json`; ids never repeat. Approvals accepts it, edits then accepts it, or rejects it. Accepting a change whose note moved on is a 409, and the proposal stays |
+| Search | in memory over every note, on each call: title ×3, tags ×2, text ×1, with a snippet. A file edited by hand shows on the next read |
+| Events | a write emits a `source` event, `notes` or `proposals`, for the page; a new proposal sends a Web Push |
+
+- Routes live under `/api/ws/<id>/knowledge` and work the same with or without a gateway.
+- With the fake gateway, notes live under the console home, never in a configured folder.
 
 ## Claude Code access
 

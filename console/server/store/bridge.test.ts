@@ -176,11 +176,9 @@ test('a write the bridge never confirms is outcome_unknown, not a failure', asyn
 test('the fake refuses the llm token on the console-only state routes', async () => {
   const fake = await startFakeGateway()
   try {
-    for (const path of ['/api/state/put', '/api/state/new-job-id', '/api/knowledge/decide']) {
+    for (const path of ['/api/state/put', '/api/state/new-job-id']) {
       const r = await fetch(fake.url + path, { method: 'POST', headers: { authorization: `Bearer ${fake.llmToken}`, 'content-type': 'application/json' }, body: '{}' })
       assert.equal(r.status, 403, path)
     }
-    const p = await fetch(fake.url + '/api/knowledge/propose', { method: 'POST', headers: { authorization: `Bearer ${fake.llmToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ title: 'VPN', text: 'use the VPN profile', reason: 'seen' }) })
-    assert.equal(((await p.json()) as any).items.doc.by, 'llm')
   } finally { await fake.close() }
 })

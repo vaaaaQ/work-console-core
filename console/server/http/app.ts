@@ -10,7 +10,7 @@ import { GatewayError, READY } from '../bridge/wire.ts'
 import type { ActRes, ConceptReply } from '../bridge/wire.ts'
 import { HttpError } from '../events.ts'
 import type { Bus, Ev } from '../events.ts'
-import { knowledge, noteIn } from '../knowledge/knowledge.ts'
+import { noteIn } from '../knowledge/notes.ts'
 import { resolveItem } from '../llm/context.ts'
 import { safeName } from '../llm/runner.ts'
 import type { Notify } from '../notify/notify.ts'
@@ -366,19 +366,25 @@ export function createApp(d: Deps) {
       await s.putPlaybook(r.p[0], null)
       return { playbooks: s.ctx().PB }
     }],
-    ['GET', /^\/knowledge$/, async (_r, s) => ({ notes: await knowledge(s.source).list() })],
-    ['GET', /^\/knowledge\/search$/, async (r, s) => ({ hits: await knowledge(s.source).search(r.q.get('q') || '', (r.q.get('tags') || '').split(',').map((x) => x.trim()).filter(Boolean)) })],
-    ['GET', /^\/knowledge\/notes\/([^/]+)$/, async (r, s) => ({ note: await knowledge(s.source).read(r.p[0]) })],
-    ['POST', /^\/knowledge\/notes$/, async (r, s) => ({ note: await knowledge(s.source).save(null, noteIn(await r.body()), null) })],
+    ['GET', /^\/knowledge$/, async (_r, s) => ({ notes: await s.notes.list() })],
+    ['GET', /^\/knowledge\/search$/, async (r, s) => ({ hits: await s.notes.search(r.q.get('q') || '', (r.q.get('tags') || '').split(',').map((x) => x.trim()).filter(Boolean)) })],
+    ['GET', /^\/knowledge\/notes\/([^/]+)$/, async (r, s) => ({ note: await s.notes.read(r.p[0]) })],
+    ['POST', /^\/knowledge\/notes$/, async (r, s) => ({ note: await s.notes.save(null, noteIn(await r.body()), null) })],
     ['PUT', /^\/knowledge\/notes\/([^/]+)$/, async (r, s) => {
       const b = await r.body()
       if (typeof b.v !== 'number') throw new HttpError(400, 'bad_args', 'an edit names the v it replaces')
-      return { note: await knowledge(s.source).save(r.p[0], noteIn(b), b.v) }
+      return { note: await s.notes.save(r.p[0], noteIn(b), b.v) }
     }],
-    ['GET', /^\/knowledge\/proposals$/, async (_r, s) => ({ proposals: await knowledge(s.source).proposals() })],
+    ['DELETE', /^\/knowledge\/notes\/([^/]+)$/, async (r, s) => {
+      const v = Number(r.q.get('v'))
+      if (!Number.isInteger(v) || v < 1) throw new HttpError(400, 'bad_args', 'a delete names the v it removes')
+      await s.notes.remove(r.p[0], v)
+      return { ok: true }
+    }],
+    ['GET', /^\/knowledge\/proposals$/, async (_r, s) => ({ proposals: await s.notes.proposals() })],
     ['POST', /^\/knowledge\/proposals\/([^/]+)\/decide$/, async (r, s) => {
       const b = await r.body()
-      return { note: await knowledge(s.source).decide(r.p[0], b.accept === true, typeof b.text === 'string' ? b.text : undefined) }
+      return { note: await s.notes.decide(r.p[0], b.accept === true, typeof b.text === 'string' ? b.text : undefined) }
     }],
   ]
 

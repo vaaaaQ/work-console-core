@@ -12,8 +12,8 @@ import type { ActReq, Delta } from './wire.ts'
 
 /* A stand-in for the bridge gateway, speaking its wire: bearer per caller class, concept replies,
    SSE status/delta frames. A's concepts are seeded from the workspace's FakeSeed (none without one); B's start
-   empty and keep B's rules in memory: compare-and-set, caller rights, the mail and chat joins, knowledge
-   proposals. Used by tests, the smoke run and `npm start` without a real bridge. */
+   empty and keep B's rules in memory: compare-and-set, caller rights, the mail and chat joins. Used by tests,
+   the smoke run and `npm start` without a real bridge. */
 
 type Item = { id: string; [k: string]: unknown }
 type Concept = { rev: number; items: Item[]; down?: string }
@@ -32,10 +32,10 @@ export interface FakeGateway {
 }
 
 const ACTIONS = new Set(['chat.post', 'mail.send', 'review.vote', 'review.comment', 'work.setState', 'work.comment', 'work.start', 'time.fill'])
-/** B's concepts; notes are served as an index, a note's text by get */
-const STATE = ['jobs', 'runs', 'playbooks', 'marks', 'notes', 'proposals']
-const CONSOLE_ONLY = new Set(['/api/act', '/api/state/put', '/api/state/new-job-id', '/api/knowledge/decide'])
-const MAX_DOC = 256 * 1024, MAX_NOTE_TEXT = 64 * 1024
+/** B's concepts */
+const STATE = ['jobs', 'runs', 'playbooks', 'marks']
+const CONSOLE_ONLY = new Set(['/api/act', '/api/state/put', '/api/state/new-job-id'])
+const MAX_DOC = 256 * 1024
 
 /** A's concepts; an empty one still answers, a seed may add more */
 const BASE = ['chat', 'mail', 'cal', 'work', 'review', 'board', 'time', 'ci']
@@ -53,9 +53,8 @@ export async function startFakeGateway(o: {
   const cs: Record<string, Concept> = {}
   for (const k of [...BASE, ...Object.keys(seed.concepts)]) cs[k] ??= { rev: 1, items: seed.concepts[k] ?? [] }
   for (const k of STATE) cs[k] = { rev: 1, items: [] }
-  const notes = new Map<string, Item>()
   const acts: ActReq[] = [], streams = new Set<ServerResponse>()
-  let down = false, seq = 0, pseq = 0
+  let down = false, seq = 0
   const now = () => new Date().toISOString()
   const find = (concept: string, id: string) => cs[concept].items.find((i) => i.id === id)
 
@@ -104,21 +103,19 @@ export async function startFakeGateway(o: {
     if (c.down) return { status: c.down, message: `${name} is ${c.down}` }
     return { status: 'ok', rev: c.rev, items: joined(name, c.items) }
   }
-  const index = (n: Item): Item => ({ id: n.id, v: n.v, title: n.title, tags: n.tags ?? [], updated: n.updated, size: String(n.text ?? '').length })
 
   function put(concept: string, id: string, doc: Record<string, unknown> | null, expectV: number | null): Reply {
     if (!STATE.includes(concept) || !id) return { status: 'bad_request', message: 'put needs a state concept and an id' }
-    const cur = concept === 'notes' ? notes.get(id) : find(concept, id)
+    const cur = find(concept, id)
     if ((cur?.v ?? null) !== expectV)
       return { status: 'conflict', message: `${concept} '${id}' is at v${cur?.v ?? '-'}, not v${expectV ?? '-'}`, items: cur ? { current: cur } : null }
     if (doc === null) {
-      if (cur) { if (concept === 'notes') notes.delete(id); change({ concept, removes: [id] }); rejoin(concept) }
+      if (cur) { change({ concept, removes: [id] }); rejoin(concept) }
       return { status: 'ok', rev: cs[concept].rev, items: { doc: null, replaced: cur ?? null } }
     }
-    if (concept === 'notes' && String(doc.text ?? '').length > MAX_NOTE_TEXT) return { status: 'too_large', message: 'a note text is capped at 64 KB' }
     const saved: Item = { ...doc, id, v: (expectV ?? 0) + 1, updated: now() }
     if (JSON.stringify(saved).length > MAX_DOC) return { status: 'too_large', message: 'a document is capped at 256 KB' }
-    if (concept === 'notes') { notes.set(id, saved); change({ concept, upserts: [index(saved)] }) } else change({ concept, upserts: [saved] })
+    change({ concept, upserts: [saved] })
     rejoin(concept)
     return { status: 'ok', rev: cs[concept].rev, items: { doc: saved, replaced: cur ?? null } }
   }
@@ -131,57 +128,6 @@ export async function startFakeGateway(o: {
     const up = started(it as unknown as BoardItem, me, o.board, now()) as unknown as Item
     change({ concept: 'board', upserts: [up] })
     return { status: 'ok', rev: cs.board.rev, items: { id, type: it.type, title: it.title, state: up.state } }
-  }
-
-  const slug = (title: string) => {
-    const base = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'note'
-    let s = base
-    for (let n = 2; notes.has(s); n++) s = `${base}-${n}`
-    return s
-  }
-
-  function propose(b: Record<string, unknown>, caller: string): Reply {
-    const title = String(b.title ?? '').trim(), text = String(b.text ?? '')
-    if (!title || !text.trim()) return { status: 'bad_request', message: 'a proposal needs a title and a text' }
-    const note = typeof b.note === 'string' && b.note ? b.note : undefined
-    if (note && !notes.has(note)) return { status: 'not_found', message: `notes '${note}' does not exist` }
-    // the llm token cannot name its author; the console's may
-    const by = caller === 'llm' ? 'llm' : typeof b.by === 'string' && b.by ? b.by : caller
-    const doc: Item = {
-      id: `P-${String(++pseq).padStart(4, '0')}`, v: 1, updated: now(), ...(note ? { note, baseV: notes.get(note)!.v } : {}),
-      title, tags: Array.isArray(b.tags) ? b.tags : [], text, reason: String(b.reason ?? ''), by, at: now(),
-    }
-    change({ concept: 'proposals', upserts: [doc] })
-    return { status: 'ok', rev: cs.proposals.rev, items: { doc } }
-  }
-
-  function decide(b: Record<string, unknown>): Reply {
-    const p = find('proposals', String(b.proposal ?? ''))
-    if (!p) return { status: 'not_found', message: `proposals '${String(b.proposal ?? '')}' does not exist` }
-    if (b.accept !== true) { change({ concept: 'proposals', removes: [p.id] }); return { status: 'ok', rev: cs.proposals.rev, items: { doc: null, replaced: null } } }
-    const id = typeof p.note === 'string' ? p.note : slug(String(p.title))
-    const cur = notes.get(id)
-    if (typeof p.note === 'string' && (cur?.v ?? null) !== (p.baseV ?? null))
-      return { status: 'conflict', message: `notes '${id}' changed since the proposal`, items: cur ? { current: cur } : null }
-    const r = put('notes', id, { title: p.title, tags: p.tags, text: typeof b.text === 'string' ? b.text : p.text }, (cur?.v as number | undefined) ?? null)
-    if (r.status === 'ok') change({ concept: 'proposals', removes: [p.id] })
-    return r
-  }
-
-  function search(q: string, tags: string[]): Reply {
-    const terms = q.toLowerCase().split(/\s+/).filter(Boolean)
-    const hits = [...notes.values()]
-      .filter((n) => tags.every((t) => ((n.tags as string[]) ?? []).some((x) => x.toLowerCase() === t.toLowerCase())))
-      .map((n) => {
-        const title = String(n.title).toLowerCase(), raw = String(n.text ?? ''), text = raw.toLowerCase(), ts = ((n.tags as string[]) ?? []).map((t) => t.toLowerCase())
-        const score = terms.reduce((s, t) => s + (title.includes(t) ? 3 : 0) + (ts.some((x) => x.includes(t)) ? 2 : 0) + (text.includes(t) ? 1 : 0), 0)
-        const first = terms.find((t) => text.includes(t)), at = Math.max(0, (first ? text.indexOf(first) : 0) - 60)
-        return { ...index(n), score, snippet: raw.slice(at, at + 160) }
-      })
-      .filter((h) => !terms.length || h.score > 0)
-      .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
-      .slice(0, 20)
-    return { status: 'ok', rev: cs.notes.rev, items: hits }
   }
 
   const body = (req: IncomingMessage) => new Promise<string>((ok) => { let s = ''; req.on('data', (d) => (s += d)); req.on('end', () => ok(s)) })
@@ -209,7 +155,7 @@ export async function startFakeGateway(o: {
       if (!c) return json(200, { status: 'source_error', message: `unknown concept ${concept}` })
       if (c.down) return json(200, { status: c.down, message: `${concept} is ${c.down}` })
       if (STATE.includes(concept)) {
-        const it = concept === 'notes' ? notes.get(id) : find(concept, id)
+        const it = find(concept, id)
         return json(200, it ? { status: 'ok', rev: c.rev, items: it } : { status: 'not_found', message: `${concept} '${id}' does not exist` })
       }
       const it = c.items.find((i) => i.id === id)
@@ -250,10 +196,6 @@ export async function startFakeGateway(o: {
       seq = Math.max(seq, ...cs.jobs.items.map((j) => { const i = j.id.indexOf('-'); return i > 0 ? +j.id.slice(i + 1) || 0 : 0 })) + 1
       return json(200, { status: 'ok', rev: cs.jobs.rev, items: { id: `J-${String(seq).padStart(4, '0')}` } })
     }
-    if (req.method === 'POST' && url.pathname === '/api/knowledge/propose') return json(200, propose(await parse(req), caller))
-    if (req.method === 'POST' && url.pathname === '/api/knowledge/decide') return json(200, decide(await parse(req)))
-    if (req.method === 'GET' && url.pathname === '/api/knowledge/search')
-      return json(200, search(url.searchParams.get('q') || '', (url.searchParams.get('tags') || '').split(',').map((s) => s.trim()).filter(Boolean)))
     if (req.method === 'GET' && url.pathname === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' })
       streams.add(res)

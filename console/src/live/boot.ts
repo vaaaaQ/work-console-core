@@ -142,7 +142,7 @@ export function onEvent(e: Ev) {
     if (!l) return
     const back = l.bridge !== 'ok' && e.state === 'ok'
     commit(() => { l.bridge = e.state; l.concepts = e.concepts })
-    if (back) { void loadSources(e.ws); void loadKnowledge(e.ws); void api.state().then((s) => commit(() => applyState(s))).catch(() => undefined) }
+    if (back) { void loadSources(e.ws); void api.state().then((s) => commit(() => applyState(s))).catch(() => undefined) }
   } else if (e.kind === 'source' && LIVE.ws[e.ws] && CONCEPTS.includes(e.concept)) {
     soon(`${e.ws}/${e.concept}`, () => void loadSources(e.ws, [e.concept]))
   } else if (e.kind === 'source' && LIVE.ws[e.ws] && KNOWLEDGE.includes(e.concept)) {

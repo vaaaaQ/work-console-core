@@ -34,11 +34,12 @@ export type Ev =
   | { kind: 'bridge'; ws: string; state: 'ok' | 'unavailable'; concepts: Record<string, string> }
   | { kind: 'source'; ws: string; concept: string }
 export type ActRes = { actionId: string; status: 'ok' | 'error' | 'outcome_unknown'; error?: { code: string; message: string }; result?: unknown }
-export type NoteIndex = { id: string; v: number; title: string; tags: string[]; updated: string; size: number }
-export type Note = { id: string; v: number; title: string; tags: string[]; text: string; updated: string }
+/** playbooks: keys of the playbooks whose every run reads the note in full */
+export type NoteIndex = { id: string; v: number; title: string; tags: string[]; playbooks: string[]; updated: string; size: number }
+export type Note = { id: string; v: number; title: string; tags: string[]; playbooks: string[]; text: string; updated: string }
 export type Hit = NoteIndex & { score: number; snippet: string }
-export type Proposal = { id: string; note?: string; baseV?: number; title: string; tags: string[]; text: string; reason: string; by: string; at: string }
-export type NoteIn = { title: string; tags: string[]; text: string }
+export type Proposal = { id: string; note?: string; baseV?: number; title: string; tags: string[]; playbooks: string[]; text: string; reason: string; by: string; at: string }
+export type NoteIn = { title: string; tags: string[]; playbooks: string[]; text: string }
 
 export class ApiError extends Error {
   status: number; code: string
@@ -50,7 +51,7 @@ export interface LiveWs {
   bridge: 'ok' | 'unavailable'; concepts: Record<string, string>
   /** per concept: ok, loading, or why it is unavailable */
   sources: Record<string, string>; cal: CalItem[]; time: TimeItem[]; board: BoardItem[]
-  /** knowledge in B: the note index, proposals waiting in Approvals, and 'ok', 'loading' or why not */
+  /** knowledge, the workspace's notes folder: the note index, proposals waiting in Approvals, and 'ok', 'loading' or why not */
   notes: NoteIndex[]; proposals: Proposal[]; kn: string
   parts: Record<string, Part>
   /** each plugin's state block, by plugin name */
@@ -170,6 +171,8 @@ export const note = async (ws: string, id: string) => (await wsCall<{ note: Note
 /** id null = a new note; an edit names the v it replaces */
 export const saveNote = async (ws: string, id: string | null, n: NoteIn, v?: number) =>
   (await wsCall<{ note: Note }>(ws, id ? 'PUT' : 'POST', id ? `/knowledge/notes/${enc(id)}` : '/knowledge/notes', id ? { ...n, v } : n)).note
+/** a delete names the v it removes */
+export const deleteNote = (ws: string, id: string, v: number) => wsCall<object>(ws, 'DELETE', `/knowledge/notes/${enc(id)}?v=${v}`)
 export const proposals = async (ws: string) => (await wsCall<{ proposals: Proposal[] }>(ws, 'GET', '/knowledge/proposals')).proposals
 export const decide = async (ws: string, id: string, accept: boolean, text?: string) =>
   (await wsCall<{ note: Note | null }>(ws, 'POST', `/knowledge/proposals/${enc(id)}/decide`, { accept, ...(text !== undefined ? { text } : {}) })).note

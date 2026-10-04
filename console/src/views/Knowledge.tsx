@@ -4,13 +4,14 @@ import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
 import type { Hit, Note, NoteIndex } from '../live/api.ts'
 import { L } from '../live/boot.ts'
-import { editNote } from '../actions/knowledge.tsx'
+import { deleteNote, editNote } from '../actions/knowledge.tsx'
+import { md } from '../lib/md.ts'
 import { S, W } from '../model/world.ts'
 import { Ic } from '../ui/Icon.tsx'
 import { toast } from '../ui/toasts.tsx'
 
-/* Notes an LLM reads on the workplace: the domain, and the machine itself. The user reads and edits
-   them here; an LLM only proposes, and its proposals wait in Approvals. */
+/* The workspace's notes, Markdown files in a folder on the PC: the domain, the tools and the machine.
+   The user reads and edits them here; an LLM only proposes, and its proposals wait in Approvals. */
 
 const box = (t: React.ReactNode) => <div className="pb"><p className="why" style={{ margin: 0 }}>{t}</p></div>
 
@@ -29,10 +30,10 @@ export function Knowledge() {
     return () => clearTimeout(t)
   }, [q, ws])
   const head = (acts?: React.ReactNode) => (
-    <div className="vh"><div><div className="eyebrow">{W().n} · workplace</div><h1>Knowledge</h1>
-      <p>Notes an LLM reads on the workplace: the domain, and the machine itself. An LLM only proposes; proposals wait in Approvals.</p></div>{acts}</div>
+    <div className="vh"><div><div className="eyebrow">{W().n} · work</div><h1>Knowledge</h1>
+      <p>Notes LLM runs read: the domain, the tools and the machine. A note names the playbooks whose every run gets it in full. An LLM only proposes; proposals wait in Approvals.</p></div>{acts}</div>
   )
-  if (!LIVE.on) return <>{head()}{box('Knowledge lives in the bridge on the workplace. This demo has no backend.')}</>
+  if (!LIVE.on) return <>{head()}{box('Knowledge is a folder of Markdown notes on the PC. This demo has no backend.')}</>
   const open = (id: string) => api.note(ws, id).then(mine(setSel), mine((e: unknown) => toast((e as Error).message)))
   const l = L(ws), list: (NoteIndex | Hit)[] = hits ?? l.notes
   return <>
@@ -47,9 +48,11 @@ export function Knowledge() {
               <span className="why">{'snippet' in n ? snip(n.snippet, 120) : n.tags.join(', ')}</span></li>))}</ul>
             : box(hits ? 'No note matches.' : 'No notes yet. Add one, or accept a proposal in Approvals.')}</section>
       <section className="panel"><header><Ic n="file" /><h3>{sel ? sel.title : 'Note'}</h3>
-        {sel ? <button className="btn sm ghost" onClick={() => editNote(sel, setSel)}><Ic n="pen" sm />Edit…</button> : null}</header>
+        {sel ? <><button className="btn sm ghost" onClick={() => editNote(sel, setSel)}><Ic n="pen" sm />Edit…</button>
+          <button className="btn sm ghost" onClick={() => deleteNote(sel, () => setSel(null))}><Ic n="x" sm />Delete…</button></> : null}</header>
         {sel ? <div className="pb" style={{ display: 'grid', gap: 8 }}>
-          <div className="why">{sel.tags.join(', ') || 'no tags'} · v{sel.v} · {tfmt(sel.updated)}</div><pre className="out">{sel.text}</pre></div>
+          <div className="why">{sel.tags.join(', ') || 'no tags'} · {sel.playbooks.length ? `playbooks ${sel.playbooks.join(', ')}` : 'no playbook'} · {sel.id}.md · v{sel.v} · {tfmt(sel.updated)}</div>
+          <div className="md">{md(sel.text)}</div></div>
           : box('Pick a note to read it.')}</section>
     </div>
   </>

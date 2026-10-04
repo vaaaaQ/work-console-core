@@ -48,7 +48,7 @@ function KnCard({ p }: { p: Proposal }) {
   return (
     <article className="dc">
       <div className="dc-h"><span className="st"><Ic n="file" sm /><b>Knowledge · {p.note ? 'change' : 'new note'}</b></span><span className="mono">{p.title}</span><span className="src">{p.by} · {tfmt(p.at)}</span></div>
-      <div className="why">{p.reason || 'no reason given'}{p.tags.length ? ` · ${p.tags.join(', ')}` : ''}</div>
+      <div className="why">{p.reason || 'no reason given'}{p.tags.length ? ` · ${p.tags.join(', ')}` : ''}{p.playbooks.length ? ` · playbooks ${p.playbooks.join(', ')}` : ''}</div>
       {d ? <pre className="out diff">{d.map((l, i) => <span key={i} className={l.k === '+' ? 'add' : l.k === '-' ? 'del' : undefined}>{l.k === '=' ? '  ' : l.k + ' '}{l.t}{'\n'}</span>)}</pre>
         : <div className="why">Loading the note…</div>}
       <div className="row"><button className="btn sm pri" onClick={() => void decide(p, true)}><Ic n="check" sm />Accept</button>
