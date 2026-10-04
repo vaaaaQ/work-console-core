@@ -12,15 +12,16 @@ export interface PbStepFile {
   /** the console action the step offers */
   act?: string
 }
+/** needs = in plain words, the context the playbook's jobs need */
 export interface PbFile {
-  format?: string; key?: string; name: string; description?: string; workspace?: Ws | null
+  format?: string; key?: string; name: string; description?: string; needs?: string; workspace?: Ws | null
   phases: { code: string; name: string; steps: PbStepFile[] }[]
 }
 
 export function pbToFile(k: string): PbFile {
   const p = PB[k]
   return {
-    format: FMT, key: k, name: p.n, description: p.d || '', workspace: p.ws || null,
+    format: FMT, key: k, name: p.n, description: p.d || '', ...(p.needs ? { needs: p.needs } : {}), workspace: p.ws || null,
     phases: p.ph.map((ph) => ({
       code: ph.c, name: ph.n, steps: ph.s.map((s) => {
         const o: PbStepFile = { id: s.fid || s.id, title: s.t, who: s.m, doneWhen: s.x }
@@ -38,7 +39,7 @@ export function pbToFile(k: string): PbFile {
 export function toInternal(o: PbFile, k: string) {
   const tpl: Record<string, Tpl[]> = {}
   const pb: Playbook = {
-    n: o.name.trim(), d: (o.description || '').trim(), ws: o.workspace || undefined, custom: 1,
+    n: o.name.trim(), d: (o.description || '').trim(), ...(o.needs?.trim() ? { needs: o.needs.trim() } : {}), ws: o.workspace || undefined, custom: 1,
     ph: o.phases.map((ph) => ({
       c: String(ph.code).toUpperCase(), n: ph.name.trim(), s: ph.steps.map((s) => {
         const id = k + '/' + s.id, st: Step = { id, fid: s.id, t: s.title.trim(), m: s.who, x: s.doneWhen.trim() }
@@ -54,6 +55,8 @@ export function toInternal(o: PbFile, k: string) {
   return { pb, tpl }
 }
 export function addPb(o: PbFile & { key: string }) { const { pb, tpl } = toInternal(o, o.key); PB[o.key] = pb; Object.assign(TPL, tpl) }
+/** a playbook's planned messages by step id, as the backend keeps them with it */
+export const pbMsgs = (k: string): Record<string, Tpl[]> => Object.fromEntries(steps(k).filter((s) => TPL[s.id]).map((s) => [s.id, TPL[s.id]]))
 
 /** every problem with a parsed file, in words; empty when it can be added */
 export function checkPb(o: unknown): string[] {
@@ -62,6 +65,7 @@ export function checkPb(o: unknown): string[] {
   const f = o as Record<string, any>
   if (f.format != null && f.format !== FMT) e.push(`Unknown format “${f.format}”; expected ${FMT}.`)
   if (!str(f.name)) e.push('Add a name.')
+  if (f.needs != null && typeof f.needs !== 'string') e.push('needs must be words: the context its jobs need.')
   if (!Array.isArray(f.phases) || !f.phases.length) { e.push('Add at least one phase.'); return e }
   const ids = new Set<string>()
   f.phases.forEach((ph: any, i: number) => {

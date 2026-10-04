@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Job } from '../../src/model/types.ts'
+import type { Job, Tpl } from '../../src/model/types.ts'
 import { fileStore } from './file.ts'
 import { Conflict } from './port.ts'
 
@@ -69,4 +69,14 @@ test('job ids carry the prefix the store was opened with, and count within it', 
   assert.equal(await fileStore(p, () => ({}), 'T').nextJobId(), 'T-0001')
   assert.equal(await fileStore(join(dir(), 'j.json'), () => ({ jobs: [job('J-0007')] }), 'T').nextJobId(), 'T-0001', 'another prefix does not move the count')
   assert.equal(await fileStore(join(dir(), 'd.json'), () => ({ jobs: [job('A1-0003')] }), 'A1').nextJobId(), 'A1-0004', 'digits in a prefix are not part of the number')
+})
+
+test("a playbook's planned messages are kept with it, read back after a restart, and go with it", async () => {
+  const p = join(dir(), 's.json'), tpl: Record<string, Tpl[]> = { 'x/tell': [['chat', 'team', 'hi']] }
+  const a = fileStore(p, () => ({ jobs: [] }))
+  assert.deepEqual(await a.templates(), {})
+  await a.putPlaybook('x', { n: 'X', ph: [] }, tpl)
+  assert.deepEqual(await fileStore(p).templates(), tpl)
+  await a.putPlaybook('x', null)
+  assert.deepEqual(await fileStore(p).templates(), {})
 })

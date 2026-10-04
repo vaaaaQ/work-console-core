@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import pg from 'pg'
-import type { Job, Playbook, RunRec } from '../../src/model/types.ts'
+import type { Job, Playbook, RunRec, Tpl } from '../../src/model/types.ts'
 import { GatewayError } from '../bridge/wire.ts'
 import type { ConceptReply } from '../bridge/wire.ts'
 import type { Bus } from '../events.ts'
@@ -171,9 +171,14 @@ export function pgSource(o: PgSourceOpts): PgSource {
         for (const r of await all('playbooks')) { if (r.doc.pb) out[r.id] = clone(r.doc.pb as Playbook); else delete out[r.id] }
         return out
       },
+      async templates() {
+        const out: Record<string, Tpl[]> = {}
+        for (const r of await all('playbooks')) if (r.doc.pb && r.doc.tpl) Object.assign(out, clone(r.doc.tpl as Record<string, Tpl[]>))
+        return out
+      },
       // a built-in playbook is deleted by a tombstone; an added one by removing its row
-      async putPlaybook(id, pb) {
-        if (pb) await upsert('playbooks', id, { pb })
+      async putPlaybook(id, pb, tpl) {
+        if (pb) await upsert('playbooks', id, tpl && Object.keys(tpl).length ? { pb, tpl } : { pb })
         else if (so.playbooks[id]) await upsert('playbooks', id, { pb: null })
         else await remove('playbooks', id)
       },

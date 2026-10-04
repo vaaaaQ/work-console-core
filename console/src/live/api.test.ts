@@ -11,9 +11,9 @@ import type { Sdk } from '../../server/llm/sdk.ts'
 import type { WorkspaceServer } from '../../server/workspace.ts'
 import acmeServer from '../../workspaces/acme/server.ts'
 import { acme } from '../testkit.ts'
-import { CHATS, JOBS, PB, S } from '../model/world.ts'
+import { CHATS, JOBS, PB, S, TPL } from '../model/world.ts'
 import * as T from '../model/transitions.ts'
-import type { Playbook } from '../model/types.ts'
+import type { Playbook, Tpl } from '../model/types.ts'
 import * as api from './api.ts'
 import { setZone, zone } from '../lib/zone.ts'
 import { HID, hiddenOf, hideIn, loadHidden, unhideIn } from '../actions/hidden.ts'
@@ -272,6 +272,23 @@ test('applyState takes the home zone and remembers which workspace holds each pl
     assert.equal(pbWs('action'), 'beta', "a key both carry is the last block's, the copy PB holds")
     assert.equal(pbWs('not-yet'), 'beta', 'a new one goes to the workspace on screen')
   } finally { S.ws = sel; setZone(was); await m.close() }
+})
+
+test("a saved playbook's planned messages come back in the state, reach the page, and go with it", async () => {
+  const m = await backend()
+  try {
+    const pb = { n: 'Mine', ph: [{ c: 'A', n: 'One', s: [{ id: 'mine1', t: 'Tell', m: 'you', x: 'told', msg: 1 }] }] } as unknown as Playbook
+    const msg: Tpl[] = [['chat', 'team chat', 'done: {key}']]
+    assert.deepEqual((await api.putPlaybook('beta', 'mine', pb, { mine1: msg })).templates.mine1, msg)
+    const st = await api.state()
+    assert.deepEqual(st.ws.beta.templates.mine1, msg); assert.equal(st.ws.acme.templates.mine1, undefined)
+    applyState(st)
+    assert.deepEqual(TPL.mine1, msg)
+    assert.ok(Object.keys(acme.templates!).every((k) => TPL[k]), 'the built-in ones are there too')
+    assert.equal((await api.putPlaybook('beta', 'mine', null)).templates.mine1, undefined)
+    applyState(await api.state())
+    assert.equal(TPL.mine1, undefined)
+  } finally { await m.close() }
 })
 
 test('fromQuery: a job opens in its workspace; ws= opens that workspace', async () => {

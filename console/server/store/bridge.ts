@@ -1,4 +1,4 @@
-import type { Job, Playbook, RunRec } from '../../src/model/types.ts'
+import type { Job, Playbook, RunRec, Tpl } from '../../src/model/types.ts'
 import { GatewayError, READY, stateError } from '../bridge/wire.ts'
 import type { ConceptReply } from '../bridge/wire.ts'
 import type { Bus } from '../events.ts'
@@ -111,8 +111,13 @@ export function bridgeStore(o: { bridge: StateGateway; bus: Bus; playbooks: Reco
       for (const d of (await docs()).playbooks.values()) { if (d.pb) out[d.id] = clone(d.pb as Playbook); else delete out[d.id] }
       return out
     },
+    async templates() {
+      const out: Record<string, Tpl[]> = {}
+      for (const d of (await docs()).playbooks.values()) if (d.pb && d.tpl) Object.assign(out, clone(d.tpl as Record<string, Tpl[]>))
+      return out
+    },
     // a built-in playbook is deleted by a tombstone; an added one by removing its document
-    async putPlaybook(id, pb) { await putLatest('playbooks', id, () => (pb ? { pb } : o.playbooks[id] ? { pb: null } : null)) },
+    async putPlaybook(id, pb, tpl) { await putLatest('playbooks', id, () => (pb ? { pb, ...(tpl && Object.keys(tpl).length ? { tpl } : {}) } : o.playbooks[id] ? { pb: null } : null)) },
     async marks() { return Object.fromEntries([...(await docs()).marks.values()].map((d) => [d.id, asMark(d)])) },
     async putMark(id, m) { await putLatest('marks', id, (cur) => (m ? { ...asMark(cur), ...m } : null)) },
     async nextJobId() {

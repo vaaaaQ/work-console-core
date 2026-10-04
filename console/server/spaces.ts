@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { CORE_PB, CORE_TPL } from '../src/data/playbooks.ts'
 import * as T from '../src/model/transitions.ts'
-import type { Job, Playbook } from '../src/model/types.ts'
+import type { Job, Playbook, Tpl } from '../src/model/types.ts'
 import type { WorkspacePage } from '../src/workspace.ts'
 import { BoardReturns } from './board/returns.ts'
 import { startItem } from './board/start.ts'
@@ -35,7 +35,7 @@ export interface Space {
   bus: Bus; source: Source; store: Store; jobs: Jobs; runner: Runner
   /** the workspace's knowledge folder */
   notes: Notes
-  ctx(): T.Ctx; putPlaybook(id: string, pb: Playbook | null): Promise<void>
+  ctx(): T.Ctx; putPlaybook(id: string, pb: Playbook | null, tpl?: Record<string, Tpl[]>): Promise<void>
   start: ReturnType<typeof startItem>; plugins: Plugin[]; known: Map<string, Job>; fake: FakeGateway | null
   /** needs-you, less the jobs a QA return pushes about itself */
   onNeedsYou(f: (j: Job) => void): void
@@ -121,8 +121,14 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     ?? bridgeStore({ bridge: source, bus, playbooks: builtins, prefix: w.jobPrefix })
   // until B answers, the built-in playbooks stand in
   let PB: Record<string, Playbook> = structuredClone(builtins)
-  const TPL = { ...CORE_TPL, ...w.page.templates }
+  const builtinTpl = { ...CORE_TPL, ...w.page.templates }
+  let TPL = builtinTpl
   const ctx = (): T.Ctx => ({ PB, TPL })
+  /** the stored playbooks over the built-in ones, their planned messages likewise */
+  const loadPbs = async () => {
+    const [pb, tpl] = await Promise.all([store.playbooks(), store.templates()])
+    PB = pb; TPL = { ...builtinTpl, ...tpl }
+  }
   const gate = () => source.available()
   // the page re-reads knowledge on these, and Web Push announces a new proposal; the fake never touches a real folder
   const notes = notesStore(!fake && cfg.knowledgeDir ? cfg.knowledgeDir : join(o.home, 'knowledge', id), {
@@ -170,7 +176,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
 
   let recovered = false
   const stopLoading = onBridgeBack(bus, async () => {
-    PB = await store.playbooks()
+    await loadPbs()
     const all = await store.jobs()
     for (const j of all) known.set(j.id, j)
     for (const j of all) if (T.isClosed(j)) clean(j)
@@ -180,7 +186,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
 
   return {
     id, page: w.page, prefix: w.jobPrefix, cfg, bus, source, store, jobs, runner, notes, ctx, known, fake,
-    putPlaybook: async (pid, pb) => { await store.putPlaybook(pid, pb); PB = await store.playbooks() },
+    putPlaybook: async (pid, pb, tpl) => { await store.putPlaybook(pid, pb, tpl); await loadPbs() },
     start: startItem({ jobs, ctx, bridge: source, page: w.page }),
     plugins: w.plugins?.({ id, cfg, home: o.home, jobs, source, artifactsDir: o.artifactsDir }) ?? [],
     // a QA return pushes its own message; the reopen and note it makes would push a second one

@@ -272,11 +272,12 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
       },
     },
     {
-      name: 'list_playbooks', description: 'Playbooks a job can follow, with the workspace each belongs to (none: any workspace), their phases and step ids.',
+      name: 'list_playbooks', description: 'Playbooks a job can follow, with the workspace each belongs to (none: any workspace), what context their jobs need, their phases and step ids.',
       inputSchema: { type: 'object', properties: {} },
       async run() {
         const PB = spaces.ctx().PB
-        return Object.entries(PB).map(([id, p]) => ({ id, ws: p.ws, name: p.n, about: p.d, phases: p.ph.map((h) => `${h.c} ${h.n}: ${h.s.map((s) => `${s.id} ${s.t}`).join('; ')}`) }))
+        // a once playbook is one job's own steps, not one to follow
+        return Object.entries(PB).filter(([, p]) => !p.once).map(([id, p]) => ({ id, ws: p.ws, name: p.n, about: p.d, ...(p.needs ? { needs: p.needs } : {}), phases: p.ph.map((h) => `${h.c} ${h.n}: ${h.s.map((s) => `${s.id} ${s.t}`).join('; ')}`) }))
       },
     },
   ]

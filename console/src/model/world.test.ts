@@ -1,7 +1,7 @@
 import '../testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { JOBS, LOG, S, applyLocal, atOf, byId, createJob, initFlow, isClosed, jobAtAct, jobForAct, keySrc, nextJobId, putJob, restore, setJobs, snap, timesheetJob } from './world.ts'
+import { JOBS, LOG, PB, S, applyLocal, atOf, byId, createJob, initFlow, isClosed, jobAtAct, jobForAct, keySrc, nextJobId, pbs, putJob, restore, setJobs, snap, timesheetJob } from './world.ts'
 
 JOBS.forEach(initFlow)
 
@@ -131,4 +131,12 @@ test("a demo job id takes the prefix its workspace's jobs carry, numbered past t
   assert.equal(createJob({ t: 'Next', key: 'NEW', pb: 'action', prj: '', ws: 'acme' }).id, 'ACME-0008')
   assert.equal(nextJobId('empty'), 'J-0421', 'no jobs of its own: J, above the J max; other prefixes do not count')
   restore(x)
+})
+
+test('no playbook list offers a once playbook; PB still holds it for its job', () => {
+  PB['once-x'] = { n: 'For one job', once: 1, ph: [] }
+  try {
+    assert.equal(pbs().includes('once-x'), false)
+    assert.ok(pbs().length > 0)
+  } finally { delete PB['once-x'] }
 })

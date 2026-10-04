@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom'
 import { MODES } from '../data/core.ts'
 import { PACKS } from '../data/packs.ts'
 import { slugify, store, tfmt } from '../lib/util.ts'
-import { FMT, addPb, blankFile, checkPb, pbToFile, toInternal } from '../model/playbookFile.ts'
+import { FMT, addPb, blankFile, checkPb, pbMsgs, pbToFile, toInternal } from '../model/playbookFile.ts'
 import type { PbFile } from '../model/playbookFile.ts'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
@@ -156,7 +156,7 @@ function PbAddBody({ w }: { w: Pack }) {
     <div className="prev" id="pbprev" hidden={!pv}>{pv ? <>
       <div className="eyebrow">Preview · {pv.pb.n} · {pv.pb.ph.length} phases · {pv.pb.ph.reduce((a, p) => a + p.s.length, 0)} steps</div>
       <FlowMap p={pv.pb} T={pv.tpl} /></> : null}</div>
-    <details className="why"><summary>File format</summary><p style={{ margin: '6px 0 0' }}>A JSON object: <span className="mono">name</span>, <span className="mono">description</span>, <span className="mono">phases</span>. Each phase: <span className="mono">code</span> (1–4 letters), <span className="mono">name</span>, <span className="mono">steps</span>. Each step: <span className="mono">id</span>, <span className="mono">title</span>, <span className="mono">who</span> (you or llm), <span className="mono">doneWhen</span>, and optionally <span className="mono">produces</span> (file names), <span className="mono">messages</span> (via chat, work or mail; to; text with {'{key}'}-style fields), <span className="mono">review</span>, <span className="mono">output</span>.</p></details>
+    <details className="why"><summary>File format</summary><p style={{ margin: '6px 0 0' }}>A JSON object: <span className="mono">name</span>, <span className="mono">description</span>, <span className="mono">phases</span>, and optionally <span className="mono">needs</span> (in plain words, the context its jobs need). Each phase: <span className="mono">code</span> (1–4 letters), <span className="mono">name</span>, <span className="mono">steps</span>. Each step: <span className="mono">id</span>, <span className="mono">title</span>, <span className="mono">who</span> (you or llm), <span className="mono">doneWhen</span>, and optionally <span className="mono">produces</span> (file names), <span className="mono">messages</span> (via chat, work or mail; to; text with {'{key}'}-style fields), <span className="mono">review</span>, <span className="mono">output</span>.</p></details>
     <div className="field"><span className="lbl">Available in</span><div className="pbc" role="radiogroup" aria-label="Available in">
       <label><input type="radio" name="scope" value="ws" defaultChecked /><b>{w.n} only</b><small>Uses {w.d}</small></label>
       <label><input type="radio" name="scope" value="core" /><b>Every workspace</b><small>A core playbook</small></label></div></div>
@@ -181,7 +181,7 @@ export function pbAdd(fromNewJob?: boolean) {
       if (PB[key]) { let n = 2; while (PB[key + '-' + n]) n++; key = key + '-' + n }
       o.key = key
       addPb(o)
-      if (LIVE.on) void api.putPlaybook(pbWs(key), key, PB[key]).catch((e) => toast(`The backend did not keep it: ${(e as Error).message}`))
+      if (LIVE.on) void api.putPlaybook(pbWs(key), key, PB[key], pbMsgs(key)).catch((e) => toast(`The backend did not keep it: ${(e as Error).message}`))
       const x = store.get<Record<string, PbFile>>('pbx', {}); x[key] = o; store.set('pbx', x)
       toast(<>Added playbook <b>{o.name}</b></>)
       if (S.pbRet === 'newjob') { S.pbRet = null; newJob({ ...(S.njDraft || {}), pb: key }); return }
@@ -204,7 +204,7 @@ export function pbRemove(k: string) {
   if (LIVE.on) void api.putPlaybook(ws, k, null).catch((e) => toast(`The backend still has it: ${(e as Error).message}`))
   toast(<>Removed <b>{p.n}</b></>, 'Undo', () => commit(() => {
     PB[k] = p; Object.assign(TPL, tp)
-    if (LIVE.on) void api.putPlaybook(ws, k, p).catch(() => undefined)
+    if (LIVE.on) void api.putPlaybook(ws, k, p, tp).catch(() => undefined)
     if (o) { const y = store.get<Record<string, PbFile>>('pbx', {}); y[k] = o; store.set('pbx', y) }
     S.pbv = k
   }))

@@ -1,4 +1,4 @@
-import { CHATS, JOBS, MAIL, PB, S, byId, putJob, setJobs } from '../model/world.ts'
+import { CHATS, JOBS, MAIL, PB, S, TPL, byId, putJob, setJobs } from '../model/world.ts'
 import type { Chat, Mail, Ws } from '../model/types.ts'
 import { DEFAULT_WS, PACKS } from '../data/packs.ts'
 import type { BoardItem } from '../data/board.ts'
@@ -47,6 +47,9 @@ export function applyState(st: State) {
   for (const k of Object.keys(PB_WS)) delete PB_WS[k]
   // a key two blocks carry is the last block's, as in the server's Spaces.ctx(), in PB and PB_WS alike
   for (const [id, b] of blocks) { for (const k of Object.keys(b.playbooks)) PB_WS[k] = id; Object.assign(PB, b.playbooks) }
+  // their planned messages come with them: a stored playbook's too
+  for (const k of Object.keys(TPL)) delete TPL[k]
+  for (const [, b] of blocks) Object.assign(TPL, b.templates)
   // a job event may have landed while the state was on its way: keep whichever copy is newer
   const have = new Map(JOBS.map((j) => [j.id, j]))
   setJobs(blocks.flatMap(([, b]) => b.jobs).map((j) => { const o = have.get(j.id); return o && o.v != null && j.v != null && o.v > j.v ? o : j }))

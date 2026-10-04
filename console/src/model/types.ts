@@ -19,8 +19,9 @@ type New = { nw?: 0 | 1 }
  *  act = the console action its inspector offers: 'time' opens the Time view, a workspace adds its own */
 export interface Step { id: string; fid?: string; t: string; m: Mode; x: string; a?: string[]; msg?: number; rv?: 1; out?: string; act?: string }
 export interface Phase { c: string; n: string; s: Step[] }
-/** ws = owning pack; none = core, offered in every workspace */
-export interface Playbook { ws?: Ws; ks?: SrcKey; n: string; d?: string; ph: Phase[]; custom?: 1 }
+/** ws = owning pack; none = core, offered in every workspace; needs = in plain words, the context its jobs need;
+ *  once = one job's own steps, which no playbook list, catalog or list_playbooks shows */
+export interface Playbook { ws?: Ws; ks?: SrcKey; n: string; d?: string; ph: Phase[]; custom?: 1; needs?: string; once?: 1 }
 
 export interface Src { n: string; item?: string }
 export interface Pack {

@@ -4,7 +4,7 @@ import { extname, join, resolve, sep } from 'node:path'
 import { adapt } from '../../src/live/adapt.ts'
 import { ctxOf } from '../../src/model/context.ts'
 import type * as T from '../../src/model/transitions.ts'
-import type { Cmd, Job, Playbook, RunRec } from '../../src/model/types.ts'
+import type { Cmd, Job, Playbook, RunRec, Tpl } from '../../src/model/types.ts'
 import { resolveAct } from '../bridge/actions.ts'
 import { GatewayError, READY } from '../bridge/wire.ts'
 import type { ActRes, ConceptReply } from '../bridge/wire.ts'
@@ -108,6 +108,26 @@ const str = (v: unknown, what: string) => {
   return v
 }
 const BAD_PATH = () => new HttpError(400, 'bad_path', 'bad path')
+/** a saved playbook as a body names it: a name, and phases whose steps have ids */
+function pbOf(v: unknown): Playbook | null {
+  if (v == null) return null
+  const p = v as Playbook
+  if (typeof v !== 'object' || typeof p.n !== 'string' || !Array.isArray(p.ph) || !p.ph.every((h) => h && Array.isArray(h.s) && h.s.every((s) => s && typeof s.id === 'string')))
+    throw new HttpError(400, 'bad_args', 'pb must be a playbook: a name n and phases ph, each with steps s that have an id')
+  return p
+}
+/** a saved playbook's planned messages: [via, to, text] lists, each under one of its own steps */
+function tplOf(pb: Playbook, v: unknown): Record<string, Tpl[]> | undefined {
+  if (v == null) return undefined
+  if (typeof v !== 'object' || Array.isArray(v)) throw new HttpError(400, 'bad_args', 'tpl must map step ids to messages')
+  const ids = new Set(pb.ph.flatMap((h) => h.s.map((s) => s.id)))
+  for (const [sid, list] of Object.entries(v)) {
+    if (!ids.has(sid)) throw new HttpError(400, 'bad_args', `tpl names step ${sid}, which the playbook does not have`)
+    if (!Array.isArray(list) || !list.every((m) => Array.isArray(m) && m.length === 3 && m.every((x) => typeof x === 'string')))
+      throw new HttpError(400, 'bad_args', `tpl ${sid} must be a list of [via, to, text]`)
+  }
+  return v as Record<string, Tpl[]>
+}
 
 /** the first route of the method whose path matches, its params decoded; 'method' when only another method's does */
 function find<R extends readonly [string, RegExp, unknown]>(table: readonly R[], m: string, path: string): { run: R[2]; p: string[] } | 'method' | null {
@@ -160,7 +180,7 @@ export function createApp(d: Deps) {
         plugins[p.name] = { error: message }
       }
     }
-    return { jobs, runs, marks, parts: { jobs: js, runs: rs, marks: ms }, playbooks: s.ctx().PB, bridge: bridgeOf(s), plugins }
+    return { jobs, runs, marks, parts: { jobs: js, runs: rs, marks: ms }, playbooks: s.ctx().PB, templates: s.ctx().TPL, bridge: bridgeOf(s), plugins }
   }
   async function state(r: Req) {
     const list = d.spaces.list, blocks = await Promise.all(list.map(block))
@@ -354,17 +374,17 @@ export function createApp(d: Deps) {
       hidden: Object.entries(await s.store.marks()).filter(([id, m]) => id.startsWith('chat:') && m.hidden).map(([id, m]) => ({ id: id.slice(5), name: m.name ?? id.slice(5) })),
     })],
     ['PUT', /^\/playbooks\/([^/]+)$/, async (r, s) => {
-      const b = await r.body(), id = r.p[0], pb = b.pb as Playbook | null | undefined
+      const b = await r.body(), id = r.p[0], pb = pbOf(b.pb), tpl = pb ? tplOf(pb, b.tpl) : undefined
       if (pb && pb.ws != null && pb.ws !== s.id) throw new HttpError(400, 'bad_args', `the playbook names workspace ${pb.ws}, not ${s.id}`)
       // a built-in playbook belongs to the workspace that brings it; another one saving it would shadow it there
       const owner = d.spaces.list.find((o) => o !== s && o.ctx().PB[id]?.ws === o.id)
       if (owner) throw new HttpError(409, 'playbook_taken', `${id} belongs to workspace ${owner.id}`)
-      await s.putPlaybook(id, pb ?? null)
-      return { playbooks: s.ctx().PB }
+      await s.putPlaybook(id, pb, tpl)
+      return { playbooks: s.ctx().PB, templates: s.ctx().TPL }
     }],
     ['DELETE', /^\/playbooks\/([^/]+)$/, async (r, s) => {
       await s.putPlaybook(r.p[0], null)
-      return { playbooks: s.ctx().PB }
+      return { playbooks: s.ctx().PB, templates: s.ctx().TPL }
     }],
     ['GET', /^\/knowledge$/, async (_r, s) => ({ notes: await s.notes.list() })],
     ['GET', /^\/knowledge\/search$/, async (r, s) => ({ hits: await s.notes.search(r.q.get('q') || '', (r.q.get('tags') || '').split(',').map((x) => x.trim()).filter(Boolean)) })],

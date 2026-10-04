@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as T from '../src/model/transitions.ts'
-import type { Playbook, RunRec } from '../src/model/types.ts'
+import type { Playbook, RunRec, Tpl } from '../src/model/types.ts'
 import { install } from '../src/workspace.ts'
 import { startFakeGateway } from './bridge/fake.ts'
 import { Bus, HttpError } from './events.ts'
@@ -252,4 +252,36 @@ test("a job's work dir: runs get it, closing the job cleans it once, a load clea
     await new Promise((r) => setTimeout(r, 50))
     assert.equal(calls.length, 2, 'fake mode never calls the work dir hook')
   } finally { await fakeSpace.close() }
+})
+
+test("a stored playbook's planned messages outlive a restart: sent works on the space made anew over the same B", async () => {
+  install([{ page: acme }])
+  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-'))
+  const fake = await startFakeGateway({ seed: fakeSeed(acmeServer), me: acme.me, board: acme.board })
+  const tokenPath = join(dir, 'acme.token')
+  writeFileSync(tokenPath, fake.token)
+  const cfg = { ...wsCfg(dir), gatewayUrl: fake.url, consoleTokenPath: tokenPath }
+  const up = async () => {
+    const s = await makeSpace(acmeServer, { cfg, home: dir, artifactsDir: join(dir, 'arts'), sdk: fakeSdk().sdk, fake: false, push: async () => {} })
+    s.source.start()
+    await until(() => s.source.available())
+    return s
+  }
+  const pb: Playbook = { n: 'Tell', custom: 1, ph: [{ c: 'TL', n: 'Tell', s: [{ id: 'tell/post', fid: 'post', t: 'Post it', m: 'you', x: 'Posted', msg: 1 }] }] }
+  const msg: Tpl[] = [['chat', 'team chat', 'hi all, {key} is done.']]
+  let a: Space | undefined, b: Space | undefined
+  try {
+    a = await up()
+    await a.putPlaybook('tell', pb, { 'tell/post': msg })
+    assert.deepEqual(a.ctx().TPL['tell/post'], msg)
+    const j = await a.jobs.create({ t: 'Tell them', key: 'ACME-77', pb: 'tell', prj: acme.pack.prj[0], ws: 'acme' })
+    await a.jobs.cmd(j.id, { op: 'start' })
+    await a.close(); a = undefined
+
+    b = await up()
+    await until(() => 'tell/post' in b!.ctx().TPL)
+    assert.ok(b.ctx().TPL[Object.keys(acme.templates!)[0]], 'the built-in ones are there too')
+    const sent = (await b.jobs.cmd(j.id, { op: 'sent', step: 'tell/post', i: 0, t: 'hi all, ACME-77 is done.', to: 'team chat' })).job
+    assert.equal(sent.flow['tell/post'].sent[0]?.t, 'hi all, ACME-77 is done.')
+  } finally { await a?.close(); await b?.close(); await fake.close() }
 })

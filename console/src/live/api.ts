@@ -1,4 +1,4 @@
-import type { CalEvent, Chat, Cmd, Job, Mail, Msg, Playbook, RunRec } from '../model/types.ts'
+import type { CalEvent, Chat, Cmd, Job, Mail, Msg, Playbook, RunRec, Tpl } from '../model/types.ts'
 import type { NewJob } from '../model/transitions.ts'
 import type { Resolved } from '../model/context.ts'
 import type { BoardItem } from '../data/board.ts'
@@ -16,6 +16,8 @@ export type Part = 'ok' | 'unavailable'
 /** one workspace's part of the state, from its own gateway and B */
 export interface WsBlock {
   jobs: Job[]; runs: RunRec[]; playbooks: Record<string, Playbook>
+  /** planned messages by step id: the core's, the workspace page's and its stored playbooks' */
+  templates: Record<string, Tpl[]>
   marks: Record<string, { done?: boolean; job?: string }>
   /** a part B could not give comes back empty and unavailable */
   parts: { jobs: Part; runs: Part; marks: Part }
@@ -162,8 +164,9 @@ export const markMail = (ws: string, id: string, m: { done?: boolean; job?: stri
 export const hideChat = (ws: string, id: string, hidden: boolean, name?: string) =>
   wsCall<object>(ws, 'POST', `/chats/${enc(id)}/hide`, { hidden, ...(name ? { name } : {}) })
 export const hiddenChats = async (ws: string) => (await wsCall<{ hidden: { id: string; name: string }[] }>(ws, 'GET', '/chats/hidden')).hidden
-export const putPlaybook = (ws: string, id: string, pb: Playbook | null) =>
-  wsCall<{ playbooks: Record<string, Playbook> }>(ws, pb ? 'PUT' : 'DELETE', `/playbooks/${enc(id)}`, pb ? { pb } : undefined)
+/** tpl = the playbook's planned messages by step id, saved with it */
+export const putPlaybook = (ws: string, id: string, pb: Playbook | null, tpl?: Record<string, Tpl[]>) =>
+  wsCall<{ playbooks: Record<string, Playbook>; templates: Record<string, Tpl[]> }>(ws, pb ? 'PUT' : 'DELETE', `/playbooks/${enc(id)}`, pb ? { pb, ...(tpl ? { tpl } : {}) } : undefined)
 export const notes = async (ws: string) => (await wsCall<{ notes: NoteIndex[] }>(ws, 'GET', '/knowledge')).notes
 export const searchNotes = async (ws: string, q: string, tags: string[] = []) =>
   (await wsCall<{ hits: Hit[] }>(ws, 'GET', `/knowledge/search?q=${enc(q)}&tags=${tags.map(enc).join(',')}`)).hits

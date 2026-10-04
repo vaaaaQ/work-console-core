@@ -175,7 +175,7 @@ test('state: the PC zone in home, one block per workspace with its jobs, playboo
     assert.deepEqual(Object.keys(st.json.ws), ['acme', 'beta'])
     const { acme: a, beta: b } = st.json.ws
     for (const w of [a, b]) {
-      for (const k of ['jobs', 'runs', 'marks', 'parts', 'playbooks', 'bridge', 'plugins']) assert.ok(k in w, k)
+      for (const k of ['jobs', 'runs', 'marks', 'parts', 'playbooks', 'templates', 'bridge', 'plugins']) assert.ok(k in w, k)
       assert.deepEqual(w.parts, { jobs: 'ok', runs: 'ok', marks: 'ok' }); assert.equal(w.bridge.state, 'ok')
       assert.ok(Object.keys(w.bridge.concepts).length > 0)
     }
@@ -441,6 +441,32 @@ test('playbooks: saved in their own workspace; an id another workspace owns is 4
     assert.equal(st.ws.beta.playbooks.mine2, undefined); assert.equal(st.ws.acme.playbooks.mine2, undefined)
     const del = await call(lp, 'DELETE', '/api/ws/beta/playbooks/mine')
     assert.equal(del.status, 200, del.text); assert.equal(del.json.playbooks.mine, undefined)
+  } finally { await stop() }
+})
+
+test('playbooks: a saved one keeps its planned messages, which may name only its own steps', async () => {
+  const { lp, stop } = await setup()
+  try {
+    const pb = { n: 'Tell', custom: 1, ph: [{ c: 'TL', n: 'Tell', s: [{ id: 'tell/post', fid: 'post', t: 'Post it', m: 'you', x: 'Posted', msg: 1 }] }] }
+    const msg = [['chat', 'team chat', 'hi all, {key} is done.']]
+    const ok = await call(lp, 'PUT', '/api/ws/acme/playbooks/tell', { body: { pb, tpl: { 'tell/post': msg } } })
+    assert.equal(ok.status, 200, ok.text); assert.deepEqual(ok.json.templates['tell/post'], msg)
+    const builtin = Object.keys(acme.templates!)[0]
+    assert.ok(ok.json.templates[builtin], 'the built-in ones stay')
+    const st = (await call(lp, 'GET', '/api/state')).json
+    assert.deepEqual(st.ws.acme.templates['tell/post'], msg); assert.equal(st.ws.beta.templates['tell/post'], undefined)
+
+    const foreign = await call(lp, 'PUT', '/api/ws/acme/playbooks/tell', { body: { pb, tpl: { [builtin]: msg } } })
+    assert.equal(foreign.status, 400, foreign.text)
+    assert.equal(foreign.json.error.message, `tpl names step ${builtin}, which the playbook does not have`)
+    const bad = await call(lp, 'PUT', '/api/ws/acme/playbooks/tell', { body: { pb, tpl: { 'tell/post': [['chat', 'only two']] } } })
+    assert.equal(bad.status, 400, bad.text); assert.equal(bad.json.error.message, 'tpl tell/post must be a list of [via, to, text]')
+    const shapeless = await call(lp, 'PUT', '/api/ws/acme/playbooks/tell', { body: { pb: { n: 'No phases' } } })
+    assert.equal(shapeless.status, 400, shapeless.text); assert.equal(shapeless.json.error.code, 'bad_args')
+    assert.deepEqual((await call(lp, 'GET', '/api/state')).json.ws.acme.templates['tell/post'], msg, 'a refused save changes nothing')
+
+    const del = await call(lp, 'DELETE', '/api/ws/acme/playbooks/tell')
+    assert.equal(del.status, 200, del.text); assert.equal(del.json.templates['tell/post'], undefined); assert.ok(del.json.templates[builtin])
   } finally { await stop() }
 })
 

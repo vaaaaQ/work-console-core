@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as T from '../../src/model/transitions.ts'
+import type { Playbook } from '../../src/model/types.ts'
 import { install } from '../../src/workspace.ts'
 import type { WorkspacePage } from '../../src/workspace.ts'
 import { startItem } from '../board/start.ts'
@@ -345,6 +346,16 @@ test("list_playbooks carries each playbook's own ws; core playbooks have none", 
   const pbs = (await s.call('list_playbooks')).json() as { id: string; ws?: string }[]
   assert.equal(pbs.find((p) => p.id === 'dev-item')!.ws, 'acme')
   assert.equal('ws' in pbs.find((p) => p.id === 'action')!, false, "a core playbook is nobody's: no ws is invented")
+})
+
+test('list_playbooks leaves out a once playbook and says what context a playbook needs', async () => {
+  const PB: Record<string, Playbook> = { ...demoCtx().PB, mine: { n: 'Mine', needs: 'the work item and its chat', ph: [] }, 'once-1': { n: 'For one job', once: 1, ph: [] } }
+  const space = { id: 'acme', prefix: 'J', page: acme, ctx: () => ({ PB, TPL: {} }) } as unknown as Space
+  const tool = jobTools({ spaces: new Spaces([space]) }).find((x) => x.name === 'list_playbooks')!
+  const pbs = (await tool.run({}, {} as never)) as { id: string; needs?: string }[]
+  assert.equal(pbs.find((p) => p.id === 'mine')!.needs, 'the work item and its chat')
+  assert.equal(pbs.some((p) => p.id === 'once-1'), false, 'a once playbook is not one to follow')
+  assert.equal('needs' in pbs.find((p) => p.id === 'action')!, false)
 })
 
 test("knowledge: a session searches and reads a workspace's notes; a proposal is signed session and writes nothing", async (t) => {

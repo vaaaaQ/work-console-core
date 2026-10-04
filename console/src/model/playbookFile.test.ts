@@ -1,7 +1,7 @@
 import '../testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { addPb, blankFile, checkPb, pbToFile, toInternal } from './playbookFile.ts'
+import { addPb, blankFile, checkPb, pbMsgs, pbToFile, toInternal } from './playbookFile.ts'
 import { PB, TPL } from './world.ts'
 
 test('the blank template is a valid playbook', () => {
@@ -64,4 +64,24 @@ test('checkPb refuses an act that is not a name', () => {
     const e = checkPb(f)
     assert.ok(e.some((x) => x.includes('step 1 “read”: act must be')), `${JSON.stringify(act)} → ${JSON.stringify(e)}`)
   }
+})
+
+test('needs goes through download and re-add; a playbook without it carries no needs key', () => {
+  addPb({ ...blankFile(), needs: '  the work item and its chat ', key: 'nd' })
+  try {
+    assert.equal(PB.nd.needs, 'the work item and its chat')
+    const out = JSON.parse(JSON.stringify(pbToFile('nd')))
+    assert.equal(out.needs, 'the work item and its chat')
+    assert.equal(toInternal(out, 'nd2').pb.needs, 'the work item and its chat')
+    assert.ok(!('needs' in toInternal(blankFile(), 'nb').pb))
+    delete PB.nd.needs
+    assert.ok(!('needs' in pbToFile('nd')))
+  } finally { delete PB.nd; delete TPL['nd/tell'] }
+  assert.deepEqual(checkPb({ ...blankFile(), needs: 5 }), ['needs must be words: the context its jobs need.'])
+})
+
+test("pbMsgs gives a playbook's planned messages by step id, as the backend keeps them", () => {
+  addPb({ ...blankFile(), key: 'mx' })
+  try { assert.deepEqual(pbMsgs('mx'), { 'mx/tell': [['chat', 'team chat', 'hi all,\n{key} is done.']] }) }
+  finally { delete PB.mx; delete TPL['mx/tell'] }
 })

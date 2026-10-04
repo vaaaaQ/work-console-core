@@ -1,4 +1,4 @@
-import type { Job, Playbook, RunRec } from '../../src/model/types.ts'
+import type { Job, Playbook, RunRec, Tpl } from '../../src/model/types.ts'
 
 /* The state store as the backend sees it. B will implement it; until then store/file.ts does. */
 
@@ -18,7 +18,10 @@ export interface Store {
   runs(): Promise<RunRec[]>
   putRun(r: RunRec): Promise<void>
   playbooks(): Promise<Record<string, Playbook>>
-  putPlaybook(id: string, pb: Playbook | null): Promise<void>
+  /** the stored playbooks' planned messages, by step id */
+  templates(): Promise<Record<string, Tpl[]>>
+  /** tpl = the playbook's planned messages by step id, kept with it; null deletes both */
+  putPlaybook(id: string, pb: Playbook | null, tpl?: Record<string, Tpl[]>): Promise<void>
   marks(): Promise<Record<string, Mark>>
   /** merges into the mark; null deletes it */
   putMark(id: string, m: Mark | null): Promise<void>

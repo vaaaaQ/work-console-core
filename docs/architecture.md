@@ -47,6 +47,11 @@ new round.*
 
 - Core playbooks live in `console/src/data/playbooks.ts`; a workspace's own in its `page.ts`. A playbook
   without `ws` is core and is offered in every workspace; one with `ws` belongs to that workspace.
+- A playbook added in the page, or made by the job builder, is stored with its planned messages, as
+  the state document `{pb, tpl}`. The backend's templates are the core's, the workspace page's and
+  every stored playbook's, so a planned message can be marked sent on any playbook.
+- `needs` says in plain words what context a playbook's jobs need. A playbook with `once: 1` holds
+  one job's own steps: no playbook list, the builder's catalog or `list_playbooks` shows it.
 - The transition rules (start, done, skip, return, block, rounds) are in `console/src/model/transitions.ts`.
   The page and the backend share them.
 - A workplace is described by a `Pack` in its workspace's `page.ts`: its tool names per concept,

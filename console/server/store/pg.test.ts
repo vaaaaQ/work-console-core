@@ -69,15 +69,17 @@ test('job ids count per workspace, padded to four digits', { skip }, async () =>
   })
 })
 
-test('playbooks: a tombstone hides a built-in, an added one shows, removing it hides it; marks merge, a false clears, null deletes', { skip }, async () => {
+test('playbooks: a tombstone hides a built-in, an added one shows with its messages, removing it hides both; marks merge, a false clears, null deletes', { skip }, async () => {
   await withSchema(1, async ([x]) => {
     const s = x.src.store({ prefix: 'AD', playbooks: PB })
     assert.deepEqual(Object.keys(await s.playbooks()), ['built'])
-    await s.putPlaybook('added', PB.built)
+    await s.putPlaybook('added', PB.built, { b1: [['chat', 'team', 'hi']] })
     await s.putPlaybook('built', null)
     assert.deepEqual(Object.keys(await s.playbooks()), ['added'])
+    assert.deepEqual(await s.templates(), { b1: [['chat', 'team', 'hi']] })
     await s.putPlaybook('added', null)
     assert.deepEqual(Object.keys(await s.playbooks()), [])
+    assert.deepEqual(await s.templates(), {})
     await s.putMark('m1', { done: true })
     await s.putMark('m1', { job: 'AD-0001', hidden: true })
     assert.deepEqual((await s.marks()).m1, { done: true, job: 'AD-0001', hidden: true })

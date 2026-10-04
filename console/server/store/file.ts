@@ -1,13 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { rename, writeFile } from 'node:fs/promises'
-import type { Job, Playbook, RunRec } from '../../src/model/types.ts'
+import type { Job, Playbook, RunRec, Tpl } from '../../src/model/types.ts'
 import { Conflict } from './port.ts'
 import type { Mark, Store } from './port.ts'
 
 /* The dev store: one JSON file, rewritten whole (tmp + rename) after every change. Writes are
    serialized, so two commands on one job see each other's version. Good for one PC, not more. */
 
-type Data = { jobs: Job[]; runs: RunRec[]; playbooks: Record<string, Playbook>; marks: Record<string, Mark>; seq: number }
+/** tpl = each stored playbook's planned messages, under its id */
+type Data = { jobs: Job[]; runs: RunRec[]; playbooks: Record<string, Playbook>; tpl?: Record<string, Record<string, Tpl[]>>; marks: Record<string, Mark>; seq: number }
 export type Seed = { jobs?: Job[]; playbooks?: Record<string, Playbook> }
 
 const copy = <T>(o: T): T => (o === undefined ? o : structuredClone(o))
@@ -56,7 +57,13 @@ export function fileStore(path: string, seed: () => Seed = () => ({}), prefix = 
       await flush()
     }),
     playbooks: () => serial(() => copy(d.playbooks)),
-    putPlaybook: (id, pb) => serial(async () => { if (pb) d.playbooks[id] = copy(pb); else delete d.playbooks[id]; await flush() }),
+    templates: () => serial(() => Object.assign({}, ...Object.values(copy(d.tpl || {})))),
+    putPlaybook: (id, pb, tpl) => serial(async () => {
+      const t = (d.tpl ||= {})
+      if (pb) d.playbooks[id] = copy(pb); else delete d.playbooks[id]
+      if (pb && tpl && Object.keys(tpl).length) t[id] = copy(tpl); else delete t[id]
+      await flush()
+    }),
     marks: () => serial(() => copy(d.marks)),
     putMark: (id, m) => serial(async () => { if (m) d.marks[id] = { ...d.marks[id], ...m }; else delete d.marks[id]; await flush() }),
     nextJobId: () => serial(async () => {

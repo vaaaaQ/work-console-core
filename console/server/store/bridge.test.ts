@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { PB0 } from '../../src/data/playbooks.ts'
-import type { Job, Playbook } from '../../src/model/types.ts'
+import type { Job, Playbook, Tpl } from '../../src/model/types.ts'
 import { BridgeClient } from '../bridge/client.ts'
 import { startFakeGateway } from '../bridge/fake.ts'
 import { GatewayError } from '../bridge/wire.ts'
@@ -117,6 +117,25 @@ test('a deleted built-in playbook stays deleted; an added one comes and goes', a
     await store.putPlaybook('mine', null)
     assert.equal('mine' in (await store.playbooks()), false)
     assert.equal(Object.keys(await store.playbooks()).length, Object.keys(PB0).length - 1)
+  } finally { await stop() }
+})
+
+test("an added playbook's planned messages are kept with it, read back by a new store, and go with it", async () => {
+  const { store, client, bus, stop } = await setup()
+  try {
+    const mine: Playbook = { ...structuredClone(PB0[Object.keys(PB0)[0]]), n: 'Mine', custom: 1 }
+    const tpl: Record<string, Tpl[]> = { 'mine/tell': [['chat', 'team chat', 'hi all, {key} is done.']] }
+    await store.putPlaybook('mine', mine, tpl)
+    assert.deepEqual(await store.templates(), tpl)
+    // the client's cache catches up by the delta, as with an edit from elsewhere
+    const anew = () => bridgeStore({ bridge: client, bus, playbooks: PB0, prefix: 'J' }).templates()
+    await until(async () => 'mine/tell' in (await anew()))
+    assert.deepEqual(await anew(), tpl, 'a store made anew reads them from B')
+    await store.putPlaybook('mine', mine)
+    assert.deepEqual(await store.templates(), {}, 'a save without them drops them')
+    await store.putPlaybook('mine', mine, tpl)
+    await store.putPlaybook('mine', null)
+    assert.deepEqual(await store.templates(), {})
   } finally { await stop() }
 })
 

@@ -30,7 +30,8 @@ export function resetWorld() {
 /* ===== workspace (pack) helpers ===== */
 export const W = () => PACKS[S.ws]
 export const wsJobs = () => JOBS.filter((j) => j.ws === S.ws)
-export const pbs = (ws = S.ws) => Object.keys(PB).filter((k) => !PB[k].ws || PB[k].ws === ws)
+/** the playbooks a workspace offers; a once playbook is one job's own steps, so none lists it */
+export const pbs = (ws = S.ws) => Object.keys(PB).filter((k) => !PB[k].once && (!PB[k].ws || PB[k].ws === ws))
 export const keyShort = (j: Job) => { const r = PACKS[j.ws].strip; return r ? j.key.replace(r, '') : j.key }
 
 /* ===== job helpers: the transitions module holds the rules; these bind it to this world ===== */
