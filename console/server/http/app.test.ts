@@ -18,6 +18,7 @@ import { Pairing } from '../pairing/pairing.ts'
 import { hub, makeSpace, Spaces } from '../spaces.ts'
 import type { Space } from '../spaces.ts'
 import { acme, acmeServer } from '../testkit.ts'
+import type { Voice } from '../voice/whisper.ts'
 import type { Plugin, WorkspaceServer, WsConfig } from '../workspace.ts'
 import { createApp } from './app.ts'
 
@@ -50,7 +51,7 @@ function expectErrors(t: TestContext, ...pats: RegExp[]) {
 type Fakes = Record<string, FakeGateway>
 /** acme and beta (or acme alone), each on its own fake gateway; `before` runs before the sources start.
     A setup that fails partway closes what it opened, so a red run fails instead of hanging. */
-async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[]; before?: (f: Fakes) => void } = {}) {
+async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[]; before?: (f: Fakes) => void; voice?: Voice } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'wc-http-')), web = join(dir, 'web')
   const list: Space[] = [], servers: Server[] = []
   let h: ReturnType<typeof createApp> | null = null, unhub = () => {}
@@ -74,7 +75,7 @@ async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[];
     const loop = createServer((q, s) => h!.loopback(q, s)), lanS = createServer((q, s) => h!.lan(q, s))
     servers.push(loop, lanS)
     const lp = await listen(loop), np = await listen(lanS)
-    h = createApp({ loopbackPort: lp, lanPort: 7411, pcName: 'pc', hub: bus, spaces, pairing, notify, staticDirs: [web], artifactsDir: join(dir, 'arts'), tz: 'Asia/Tokyo' })
+    h = createApp({ loopbackPort: lp, lanPort: 7411, pcName: 'pc', hub: bus, spaces, pairing, notify, staticDirs: [web], artifactsDir: join(dir, 'arts'), tz: 'Asia/Tokyo', voice: o.voice })
     o.before?.(fakes)
     for (const s of list) s.source.start()
     await until(() => list.every((s) => s.source.available()))
@@ -732,4 +733,41 @@ test('a workspace route answers only under /api/ws/<id>, and the state has no me
       assert.ok(st.home); assert.deepEqual(st.ws.acme.jobs.map((j: Job) => j.id), ['A-0001'])
     } finally { await stop() }
   }
+})
+
+test('transcribe: the audio reaches the voice, past the usual 2 MB; state says whether there is a key; a dropped request aborts', async () => {
+  const got: { audio: string; mime: string; signal?: AbortSignal }[] = []
+  let ready = false
+  const voice: Voice = { ready: () => ready, transcribe: async (audio, mime, signal) => { got.push({ audio, mime, signal }); return 'make a job' } }
+  const { lp, stop } = await setup({ one: true, voice })
+  try {
+    assert.equal((await call(lp, 'GET', '/api/state')).json.voice, false, 'no key yet')
+    ready = true
+    assert.equal((await call(lp, 'GET', '/api/state')).json.voice, true, 'a key placed later shows the mic')
+    const big = 'A'.repeat(3 << 20)
+    const r = await call(lp, 'POST', '/api/ws/acme/transcribe', { body: { audio: big, mime: 'audio/webm' } })
+    assert.equal(r.status, 200, r.text.slice(0, 200))
+    assert.deepEqual(r.json, { text: 'make a job' })
+    assert.equal(got[0].audio.length, big.length); assert.equal(got[0].mime, 'audio/webm')
+    assert.equal((await call(lp, 'POST', '/api/ws/acme/transcribe', { body: { mime: 'audio/webm' } })).status, 400, 'no audio')
+    assert.equal((await call(lp, 'POST', '/api/ws/nope/transcribe', { body: { audio: 'AA==', mime: 'audio/webm' } })).status, 404)
+    // past its limit the request is cut off, so the client may see a reset rather than the 413
+    const over = await call(lp, 'POST', '/api/ws/acme/act', { body: { pad: big } }).then((x) => x.status, (e: Error) => e.message)
+    assert.ok(over === 413 || /ECONNRESET|EPIPE/.test(String(over)), `other routes keep 2 MB: ${over}`)
+    // a page that gives up stops the call to OpenAI
+    let aborted: Promise<void> | null = null
+    voice.transcribe = (_a, _m, signal) => { aborted = new Promise((ok) => signal!.addEventListener('abort', () => ok())); return new Promise(() => {}) }
+    const q = request({ host: '127.0.0.1', port: lp, method: 'POST', path: '/api/ws/acme/transcribe', headers: { host: `127.0.0.1:${lp}`, 'content-type': 'application/json' } })
+    q.on('error', () => {})
+    q.end(JSON.stringify({ audio: 'AA==', mime: 'audio/webm' }))
+    await until(() => aborted !== null)
+    q.destroy()
+    await aborted
+  } finally { await stop() }
+  const none = await setup({ one: true })
+  try {
+    assert.equal((await call(none.lp, 'GET', '/api/state')).json.voice, false)
+    const r = await call(none.lp, 'POST', '/api/ws/acme/transcribe', { body: { audio: 'AA==', mime: 'audio/webm' } })
+    assert.equal(r.status, 503); assert.equal(r.json.error.code, 'no_key')
+  } finally { await none.stop() }
 })

@@ -28,6 +28,8 @@ export interface State {
   /** the PC's own zone and name */
   home: { tz: string; pc: string }
   side: 'loopback' | 'lan'; device: string | null; push: { key: string } | null
+  /** the PC has an OpenAI key, so the mic can be offered */
+  voice: boolean
   ws: Record<string, WsBlock>
 }
 /** every frame names the workspace it came from */
@@ -69,6 +71,8 @@ export const LIVE = {
   on: false, pc: false, paired: true,
   runs: {} as Record<string, RunRec>, feed: {} as Record<string, string[]>,
   push: null as string | null,
+  /** the backend can turn speech into text */
+  voice: false,
   /** one block per workspace the backend serves */
   ws: {} as Record<string, LiveWs>,
 }
@@ -179,6 +183,9 @@ export const deleteNote = (ws: string, id: string, v: number) => wsCall<object>(
 export const proposals = async (ws: string) => (await wsCall<{ proposals: Proposal[] }>(ws, 'GET', '/knowledge/proposals')).proposals
 export const decide = async (ws: string, id: string, accept: boolean, text?: string) =>
   (await wsCall<{ note: Note | null }>(ws, 'POST', `/knowledge/proposals/${enc(id)}/decide`, { accept, ...(text !== undefined ? { text } : {}) })).note
+/** the words in a recording; audio = base64, mime = the recorder's type */
+export const transcribe = async (ws: string, audio: string, mime: string) =>
+  (await wsCall<{ text: string }>(ws, 'POST', '/transcribe', { audio, mime }, 130000)).text
 export const pairNew = () => call<{ url: string; qr: string; expires: string }>('POST', '/api/pair/new')
 export const devices = () => call<{ devices: Device[] }>('GET', '/api/devices')
 export const revoke = (id: string) => call<object>('DELETE', `/api/devices/${enc(id)}`)

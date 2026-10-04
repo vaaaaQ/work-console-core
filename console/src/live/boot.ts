@@ -42,6 +42,7 @@ export const pbWs = (k: string): Ws => PB_WS[k] || PB[k]?.ws || S.ws
 export function applyState(st: State) {
   // the PC's zone is home; a zone this browser does not know leaves the device's
   try { setZone(st.home.tz) } catch { /* as said */ }
+  LIVE.voice = st.voice === true
   const blocks = Object.entries(st.ws)
   for (const k of Object.keys(PB)) delete PB[k]
   for (const k of Object.keys(PB_WS)) delete PB_WS[k]

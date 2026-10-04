@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -15,6 +15,7 @@ import { CHATS, JOBS, PB, S, TPL } from '../model/world.ts'
 import * as T from '../model/transitions.ts'
 import type { Playbook, Tpl } from '../model/types.ts'
 import * as api from './api.ts'
+import { LIVE } from './api.ts'
 import { setZone, zone } from '../lib/zone.ts'
 import { HID, hiddenOf, hideIn, loadHidden, unhideIn } from '../actions/hidden.ts'
 import { L, applyState, fromQuery, loadSources, onEvent, pbWs, srcState } from './boot.ts'
@@ -38,7 +39,7 @@ async function backend() {
   const m = await main({ cfg, sdk, workspaces: [acmeServer, betaW] })
   api.setBase(`http://127.0.0.1:${m.loopbackPort}`)
   await until(async () => { const { ws } = await api.state(); return ws.acme?.bridge.state === 'ok' && ws.beta?.bridge.state === 'ok' })
-  return m
+  return Object.assign(m, { home })
 }
 
 /** the console paths the page's client fetched while f ran; the backend's own calls to its gateways are left out */
@@ -313,4 +314,23 @@ test('fromQuery: a job opens in its workspace; ws= opens that workspace', async 
     assert.equal(fromQuery('?job=B-0001&ws=acme'), true)
     assert.equal(S.ws, 'acme', 'ws= wins over the job'); assert.equal(S.job, 'B-0001')
   } finally { S.ws = sel; await m.close() }
+})
+
+test('voice: the state says when the PC has a key; the page sends a recording and gets its words', async () => {
+  const m = await backend(), real = globalThis.fetch
+  try {
+    applyState(await api.state())
+    assert.equal(LIVE.voice, false, 'no key, no mic')
+    writeFileSync(join(m.home, 'openai.key'), 'sk-test-0000')
+    applyState(await api.state())
+    assert.equal(LIVE.voice, true, 'a key placed while the console runs turns the mic on')
+    let sent: FormData | null = null
+    // the backend runs in this process, so its call to OpenAI goes through this fetch too
+    globalThis.fetch = async (u, i) => {
+      if (String(u).startsWith('https://api.openai.com/')) { sent = i!.body as FormData; return Response.json({ text: ' armá un job ' }) }
+      return real(u, i)
+    }
+    assert.equal(await api.transcribe('acme', Buffer.from('opus').toString('base64'), 'audio/webm;codecs=opus'), 'armá un job')
+    assert.equal(sent!.get('model'), 'whisper-1')
+  } finally { globalThis.fetch = real; LIVE.voice = false; await m.close() }
 })

@@ -15,13 +15,15 @@ export interface Config {
   pcName: string
   /** dev only: serve a fake gateway per workspace, seeded with its demo data, instead of talking to A */
   fakeGateway: boolean
+  /** the OpenAI key the mic's speech-to-text uses, read on every call; no file = no mic */
+  openaiKeyPath: string
   /** config.json's workspaces.<id> sections, as written */
   workspaces: Record<string, Partial<WsConfig>>
   /** what every workspace starts from, with the env loadConfig was given (GATEWAY_URL, WORK_CONSOLE_CWD) */
   core: WsConfig
 }
 
-const PC_KEYS = new Set(['home', 'loopbackPort', 'lanPort', 'pcName', 'fakeGateway', 'workspaces'])
+const PC_KEYS = new Set(['home', 'loopbackPort', 'lanPort', 'pcName', 'fakeGateway', 'openaiKeyPath', 'workspaces'])
 
 /** the console's own folder: console/server → console */
 const CONSOLE = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -102,6 +104,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     lanPort: 7411,
     pcName: hostname().toLowerCase(),
     fakeGateway: env.WORK_CONSOLE_FAKE_GATEWAY === '1',
+    openaiKeyPath: join(home, 'openai.key'),
     ...pc,
     workspaces: ws && typeof ws === 'object' && !Array.isArray(ws) ? ws as Config['workspaces'] : {},
     core: coreDefaults(env),

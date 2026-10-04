@@ -135,10 +135,11 @@ Only `workspaces/page.ts` imports it.
   with the keys of `defaults`. A workspace key left at the top applies to the only workspace, with a
   startup line per key saying where to move it. With two or more workspaces startup refuses and names the key.
 - **Routes.** Everything bound to a workspace lives under `/api/ws/<id>/`: concept reads, acts, board,
-  playbooks, knowledge, chat and mail marks, and plugins. Job and run routes stay `/api/jobs/…` and
+  playbooks, knowledge, transcribe, chat and mail marks, and plugins. Job and run routes stay `/api/jobs/…` and
   `/api/runs/…`: a job id finds its workspace by its prefix, and an id nobody owns answers 404 naming it.
   Pairing, push, events and artifacts are shared.
-- **State.** `/api/state` returns `home` (the PC zone and name) and one block per workspace. A workspace
+- **State.** `/api/state` returns `home` (the PC zone and name), `voice` (whether the PC has an OpenAI
+  key) and one block per workspace. A workspace
   whose gateway is down says `unavailable` in its block, never no jobs, and the others carry on. Events
   carry `ws`.
 - **Job MCP.** One server for all workspaces. Job tools find the workspace by the job id's prefix;
@@ -233,6 +234,20 @@ Each workspace has a folder of Markdown notes: `knowledgeDir` in its config, def
   `knowledge_search`, `knowledge_read` and `knowledge_propose` as its own tools, for the other notes; its
   proposals are signed `run <job>/<step>`. A Claude Code session gets the same three on the
   console MCP, signed `session`. Neither goes through the gateway.
+
+## Voice
+
+The New job form takes speech. The page records with MediaRecorder, which needs a secure context
+(`http://127.0.0.1:7410` or the LAN's `https`), and sends the recording to
+`POST /api/ws/<id>/transcribe {audio, mime}`: base64 audio in a JSON body of up to 30 MB. The backend
+hands it to OpenAI's `whisper-1` (`console/server/voice/whisper.ts`) and answers `{text}`.
+
+- The key is the file `openai.key` in the console home, read on every call, so placing or rotating it
+  needs no restart. `openaiKeyPath` in `config.json` moves it.
+- `/api/state` says `voice: true` while the key is there. With none, the page hides the mic, typing
+  still works, and the route answers 503 `no_key`.
+- The key never reaches an answer or a log: OpenAI's messages, which can quote part of it, are scrubbed
+  first. A page that drops the request aborts the call.
 
 ## Claude Code access
 

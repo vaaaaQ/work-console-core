@@ -17,6 +17,7 @@ import type { Notify } from '../notify/notify.ts'
 import { qrSvg } from '../pairing/pairing.ts'
 import type { Pairing } from '../pairing/pairing.ts'
 import type { Space, Spaces } from '../spaces.ts'
+import type { Voice } from '../voice/whisper.ts'
 import type { PluginReq } from '../workspace.ts'
 
 /* Two listeners over one router. Loopback trusts the PC but checks Host and Origin, so a web page
@@ -44,10 +45,13 @@ export interface Deps {
   tz: string
   /** the job tools for Claude Code sessions, served on loopback only */
   mcp?: RequestListener
+  /** the mic's speech to text; none = no voice */
+  voice?: Voice
 }
 
 type Side = 'loopback' | 'lan'
-type Req = { side: Side; m: string; path: string; q: URLSearchParams; p: string[]; body: () => Promise<Record<string, unknown>>; device: string | null; req: IncomingMessage; res: ServerResponse }
+/** body(limit) = the JSON body, refused past limit bytes (default 2 MB) */
+type Req = { side: Side; m: string; path: string; q: URLSearchParams; p: string[]; body: (limit?: number) => Promise<Record<string, unknown>>; device: string | null; req: IncomingMessage; res: ServerResponse }
 type Route<A extends unknown[] = []> = readonly [method: string, path: RegExp, run: (r: Req, ...a: A) => Promise<unknown> | unknown]
 type Part = 'ok' | 'unavailable'
 
@@ -108,6 +112,12 @@ const str = (v: unknown, what: string) => {
   return v
 }
 const BAD_PATH = () => new HttpError(400, 'bad_path', 'bad path')
+/** aborted when the page drops the request before it is answered */
+function dropped(r: Req) {
+  const ac = new AbortController()
+  r.res.on('close', () => { if (!r.res.writableEnded) ac.abort() })
+  return ac.signal
+}
 /** a saved playbook as a body names it: a name, and phases whose steps have ids */
 function pbOf(v: unknown): Playbook | null {
   if (v == null) return null
@@ -187,6 +197,7 @@ export function createApp(d: Deps) {
     return {
       home: { tz: d.tz, pc: d.pcName },
       side: r.side, device: r.device, push: d.notify ? { key: d.notify.publicKey() } : null,
+      voice: d.voice?.ready() ?? false,
       ws: Object.fromEntries(list.map((s, i) => [s.id, blocks[i]])),
     }
   }
@@ -353,6 +364,12 @@ export function createApp(d: Deps) {
   /** one workspace's: matched against the path after /api/ws/<id> */
   const wsRoutes: Route<[Space]>[] = [
     ['POST', /^\/act$/, async (r, s) => act(s, await r.body())],
+    // the audio comes base64 in JSON: up to 30 MB, so whisper's 25 MB file limit is the one that bites
+    ['POST', /^\/transcribe$/, async (r) => {
+      const b = await r.body(30 << 20)
+      if (!d.voice) throw new HttpError(503, 'no_key', 'voice is off on this console')
+      return { text: await d.voice.transcribe(str(b.audio, 'audio'), str(b.mime, 'mime'), dropped(r)) }
+    }],
     ['POST', /^\/board\/([^/]+)\/start$/, async (r, s) => {
       const b = await r.body()
       return s.start(r.p[0], typeof b.pb === 'string' && b.pb ? b.pb : undefined, 'page')
@@ -474,7 +491,7 @@ export function createApp(d: Deps) {
       if (!path.startsWith('/api/')) return m === 'GET' || m === 'HEAD' ? file(res, path) : fail(res, 405, 'method', 'method not allowed')
       if (m !== 'GET' && m !== 'DELETE' && !/^application\/json\b/i.test(req.headers['content-type'] || ''))
         return fail(res, 415, 'json_only', 'send application/json')
-      const r = { side, m, path, q: u.searchParams, body: () => readBody(req), device: g.device, req, res }
+      const r = { side, m, path, q: u.searchParams, body: (limit?: number) => readBody(req, limit), device: g.device, req, res }
       Promise.resolve().then(() => route(r)).then((out) => { if (out !== undefined) send(res, 200, out) }, (e) => {
         if (e instanceof HttpError || e instanceof GatewayError) {
           const extra = (e as { job?: Job }).job
