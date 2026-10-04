@@ -5,6 +5,8 @@ import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
 import { KINDS, badItem, ctxLabel, ctxOf, okItem, parseWorkId, workId } from '../model/context.ts'
 import type { Resolved } from '../model/context.ts'
+import { md } from '../lib/md.ts'
+import { DESC_MAX } from '../model/transitions.ts'
 import { CHATS, MAIL, ctxName as label, isClosed } from '../model/world.ts'
 import type { CtxItem, CtxKind, Job, Mail } from '../model/types.ts'
 import { doCmd, failText } from '../actions/flow.tsx'
@@ -13,8 +15,34 @@ import { Ic } from '../ui/Icon.tsx'
 import { closeModal, modal } from '../ui/modal.tsx'
 import { pageOf } from '../workspace.ts'
 
-/* What the job's LLM runs are given. A row expands to the exact text a run would get: live through the
-   backend's renderer, in the demo from demo data through the same one. */
+/* What the job's LLM runs are given: its description, the user's part of every prompt, and its context.
+   A context row expands to the exact text a run would get: live through the backend's renderer, in the demo
+   from demo data through the same one. */
+
+export function DescPanel({ j }: { j: Job }) {
+  return (
+    <section className="panel"><header><Ic n="pen" /><h3>Description</h3><span className="src">your part of every LLM run</span></header>
+      <div className="pb">
+        {j.d ? <div className="md">{md(j.d)}</div> : <p className="why" style={{ margin: 0 }}>No description yet.</p>}
+        {isClosed(j) ? null : <button className="btn ghost sm cx-add" onClick={() => editDesc(j)}><Ic n="pen" sm />Edit…</button>}
+      </div>
+    </section>
+  )
+}
+
+export function editDesc(j0: Job) {
+  const id = j0.id
+  modal({
+    title: `Description · ${j0.t}`, form: 'jdesc',
+    body: <label className="field"><span>Markdown, in English: what the job is for. Every LLM run gets it after the generated part of its prompt.</span>
+      <textarea className="ta" name="d" rows={14} maxLength={DESC_MAX} defaultValue={j0.d ?? ''} data-autofocus /></label>,
+    foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="check" sm />Save</button></>,
+    onSubmit: (fd) => {
+      closeModal()
+      void doCmd(id, { op: 'describe', d: String(fd.get('d') ?? '') }, 'Description saved')
+    },
+  })
+}
 
 const mailName = (m: Mail) => `${m.subj} — ${m.from}`
 const notesOf = (j: Job) => LIVE.ws[j.ws]?.notes || []

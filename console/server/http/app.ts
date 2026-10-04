@@ -278,7 +278,7 @@ export function createApp(d: Deps) {
     ['POST', /^\/api\/jobs$/, async (r) => {
       const b = await r.body()
       // Date.parse would read a number as a year
-      for (const k of ['ev', 'due']) if (b[k] != null && typeof b[k] !== 'string') throw new HttpError(400, 'bad_args', `${k} is not a string`)
+      for (const k of ['ev', 'due', 'd']) if (b[k] != null && typeof b[k] !== 'string') throw new HttpError(400, 'bad_args', `${k} is not a string`)
       const s = d.spaces.pick(b.ws)
       return { job: await s.jobs.create({ ...b, ws: s.id } as unknown as T.NewJob) }
     }],

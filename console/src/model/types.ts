@@ -57,11 +57,12 @@ export interface CtxItem { k: CtxKind; id: string; n: number; name?: string }
 /** at = current step, upd = minutes ago; ev = the calendar event it came from;
  *  due = when it is due (ISO); it needs you from midnight `lead` days before due (default 0), and
  *  pushes `remind` minutes before due (default 60); every = a recurring job's due moves on by this per period;
- *  ctx = what every LLM run is given (absent = the defaults its key and chat imply) */
+ *  ctx = what every LLM run is given (absent = the defaults its key and chat imply);
+ *  d = the description, Markdown: the user's part of every LLM run's prompt */
 export interface JobSeed {
   id: string; ws: Ws; key: string; pb: string; prj: string; t: string; st: JobStatus
   at: string | null; upd: number; slug: string; chat?: string; mail?: string; vars?: Record<string, string>
-  ev?: string; due?: string; lead?: number; remind?: number; every?: 'month'; ctx?: CtxItem[]
+  ev?: string; due?: string; lead?: number; remind?: number; every?: 'month'; ctx?: CtxItem[]; d?: string
 }
 /** a finished pass through the flow, kept read-only: n = its number (1 = the first pass), from = the step it began at,
  *  at = when it ended, by + why = who returned the job and why, st = the job's status then, flow = its steps from `from` on */
@@ -89,9 +90,10 @@ export type Cmd =
   | { op: 'schedule'; due: string | null; lead?: number; remind?: number; every?: 'month' | null }
   | { op: 'ctxAdd'; k: CtxKind; id: string; n?: number; name?: string }
   | { op: 'ctxSet'; k: CtxKind; id: string; n: number } | { op: 'ctxDel'; k: CtxKind; id: string }
+  | { op: 'describe'; d: string }
 /** ops the page may send; the rest belong to the LLM runner */
 export const PAGE_OPS = ['start', 'close', 'reopen', 'stepDone', 'stepSkip', 'stepResume', 'stepReopen', 'rejectDraft', 'stepWait',
-  'acceptDraft', 'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'nudged', 'replied', 'schedule', 'ctxAdd', 'ctxSet', 'ctxDel'] as const
+  'acceptDraft', 'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'nudged', 'replied', 'schedule', 'ctxAdd', 'ctxSet', 'ctxDel', 'describe'] as const
 /** ops a Claude Code session may send through the console's MCP: the page's, plus returning to a passed step */
 export const SESSION_OPS = [...PAGE_OPS, 'returnTo'] as const
 

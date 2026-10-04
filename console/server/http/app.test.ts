@@ -461,6 +461,19 @@ test('a job made from a meeting carries the event and is due when it starts', as
   } finally { await stop() }
 })
 
+test('a new job takes a description and its context as given; a bad one is refused', async () => {
+  const { lp, stop } = await setup()
+  try {
+    const base = { t: 'Described', key: 'NEW', pb: 'action', prj: 'platform', ws: 'acme' }
+    const r = await call(lp, 'POST', '/api/jobs', { body: { ...base, d: 'Why it **matters**.', ctx: [{ k: 'chat', id: 'c4', n: 5 }] } })
+    assert.equal(r.status, 200, r.text)
+    assert.equal(r.json.job.d, 'Why it **matters**.'); assert.deepEqual(r.json.job.ctx, [{ k: 'chat', id: 'c4', n: 5 }])
+    assert.equal((await call(lp, 'POST', '/api/jobs', { body: { ...base, d: 5 } })).status, 400)
+    assert.equal((await call(lp, 'POST', '/api/jobs', { body: { ...base, ctx: 'c4' } })).json.error.code, 'bad_args')
+    assert.equal((await call(lp, 'POST', '/api/jobs', { body: { ...base, ctx: [{ k: 'chat', id: 'c4', n: 99 }] } })).status, 400)
+  } finally { await stop() }
+})
+
 test("board Start: the workspace's own Start moves a free item on its own gateway; a taken item is refused", async () => {
   const { lp, fakes, spaces, stop } = await setup()
   try {

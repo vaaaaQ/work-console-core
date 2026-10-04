@@ -4,9 +4,10 @@ import assert from 'node:assert/strict'
 import { PB0 } from '../data/playbooks.ts'
 import { JOBS0, JR, OVR, TPL0 } from '../data/demo.ts'
 import { clone } from '../lib/util.ts'
+import { KINDS } from './context.ts'
 import type { Job } from './types.ts'
-import { CmdError, apply, atOf, freshJob, isClosed, isLive, needsYou, nextMonth, seedFlow, steps } from './transitions.ts'
-import type { Ctx } from './transitions.ts'
+import { CmdError, DESC_MAX, apply, atOf, freshJob, isClosed, isLive, needsYou, nextMonth, seedFlow, steps } from './transitions.ts'
+import type { Ctx, NewJob } from './transitions.ts'
 
 const T0 = new Date('2026-09-30T12:00:00Z')
 const X: Ctx = { PB: PB0, TPL: TPL0, now: () => T0 }
@@ -153,6 +154,37 @@ test('freshJob builds a ready job at the first step; unknown playbooks are refus
   const started = apply(X, j, { op: 'start' })
   assert.equal(started.job.st === 'active' || started.job.st === 'waiting-user', true)
   code(() => apply(X, started.job, { op: 'start' }), 'bad_state')
+})
+
+test('freshJob keeps a given description and context list instead of the defaults', () => {
+  const base: NewJob = { t: 'New thing', key: 'ACME-1', pb: 'action', prj: 'platform', ws: 'acme', chat: 'c4' }
+  assert.ok(freshJob(X, 'J-9000', base).ctx!.length > 0, 'the key and the chat give defaults')
+  const j = freshJob(X, 'J-9001', { ...base, d: ' Why: the **quota**. ',
+    ctx: [{ k: 'note', id: 'tracker-rest', n: 1, name: 'Tracker REST' }, { k: 'chat', id: 'c9' }, { k: 'chat', id: 'c9', n: 3 }] as never })
+  assert.equal(j.d, 'Why: the **quota**.')
+  assert.deepEqual(j.ctx, [{ k: 'note', id: 'tracker-rest', n: 1, name: 'Tracker REST' }, { k: 'chat', id: 'c9', n: KINDS.chat.def }])
+  assert.deepEqual(freshJob(X, 'J-9002', { ...base, ctx: [] }).ctx, [], 'an empty list is kept: no defaults')
+  assert.equal(freshJob(X, 'J-9003', { ...base, d: '  ' }).d, undefined)
+  code(() => freshJob(X, 'J-9004', { ...base, ctx: 'c4' as never }), 'bad_args')
+  code(() => freshJob(X, 'J-9005', { ...base, ctx: [{ k: 'file', id: 'x' }] as never }), 'bad_args')
+  code(() => freshJob(X, 'J-9006', { ...base, ctx: [{ k: 'mail', id: 'm-1', n: 4 }] }), 'bad_args')
+  code(() => freshJob(X, 'J-9007', { ...base, ctx: [{ k: 'work', id: 'not a key', n: 1 }] }), 'bad_args')
+  code(() => freshJob(X, 'J-9008', { ...base, ctx: [null] as never }), 'bad_args')
+  code(() => freshJob(X, 'J-9009', { ...base, d: 'x'.repeat(DESC_MAX + 1) }), 'bad_args')
+})
+
+test('describe sets, changes and clears the description; the same text changes nothing', () => {
+  const j = open()
+  const a = apply(X, j, { op: 'describe', d: '  Fix the **quota** check.\n' }).job
+  assert.equal(a.d, 'Fix the **quota** check.')
+  assert.deepEqual([a.jr[0].o, a.jr[0].c, a.jr[0].l], ['Changed the description.', 'the next LLM runs get the new text.', 'ok'])
+  assert.equal(apply(X, a, { op: 'describe', d: 'Fix the **quota** check.' }).job.jr.length, a.jr.length)
+  const b = apply(X, a, { op: 'describe', d: ' ' }).job
+  assert.equal(b.d, undefined); assert.equal('d' in b, false)
+  assert.equal(b.jr[0].o, 'Removed the description.')
+  code(() => apply(X, j, { op: 'describe', d: 'x'.repeat(DESC_MAX + 1) }), 'bad_args')
+  code(() => apply(X, j, { op: 'describe', d: 5 as never }), 'bad_args')
+  code(() => apply(X, find((j) => j.st === 'done'), { op: 'describe', d: 'late' }), 'bad_state')
 })
 
 test('returnTo keeps the pass as a round and starts the steps from the target again', () => {

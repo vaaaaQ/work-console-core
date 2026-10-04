@@ -54,7 +54,7 @@ export function brief(x: T.Ctx, j: Job, ws: string) {
 export function detail(x: T.Ctx, j: Job, ws: string) {
   const at = T.atOf(x, j)
   return {
-    ...brief(x, j, ws), v: j.v, current: at, roundFrom: j.rf ?? null, chat: j.chat, mail: j.mail,
+    ...brief(x, j, ws), v: j.v, current: at, roundFrom: j.rf ?? null, chat: j.chat, mail: j.mail, description: j.d,
     context: ctxOf(j).map((c) => ({ kind: c.k, item: c.id, count: c.n, name: c.name })),
     phases: (x.PB[j.pb]?.ph || []).map((p) => ({
       phase: `${p.c} ${p.n}`,
@@ -139,13 +139,15 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
         + 'Args per op: start; close {st: done|cancelled, note?}; reopen; stepDone|stepSkip|stepResume|stepReopen|rejectDraft {step}; stepWait {step, m: what it waits for}; '
         + 'acceptDraft {step, text?: edited text}; noteAdd {step, k: q question|c contradiction|d design note|p problem, t}; noteAnswer {step, i, r}; noteReopen {step, i}; '
         + 'sent {step, i: planned message index, t: the text you sent, to: channel} (record only, send it yourself first); vote {step, n: reviewer, v}; '
-        + 'nudged {to}; replied {subj}; returnTo {step, why}. A step is its id or exact title.',
+        + 'nudged {to}; replied {subj}; returnTo {step, why}; describe {d: the description, Markdown in English, the user\'s part of every LLM run; empty removes it}. '
+        + 'A step is its id or exact title.',
       inputSchema: {
         type: 'object', required: ['id', 'op'],
         properties: {
           id: { type: 'string' }, op: { type: 'string', enum: SESSION_OPS.filter((o) => !o.startsWith('ctx')) }, step: { type: 'string' }, why: { type: 'string' }, m: { type: 'string' },
           text: { type: 'string' }, k: { type: 'string', enum: ['q', 'c', 'd', 'p'] }, t: { type: 'string' }, i: { type: 'integer' }, r: { type: 'string' },
           n: { type: 'string' }, v: { type: 'integer' }, st: { type: 'string', enum: ['done', 'cancelled'] }, note: { type: 'string' }, to: { type: 'string' }, subj: { type: 'string' },
+          d: { type: 'string' },
         },
       },
       async run(a, s) { const { id, ...c } = a; return command(s, id, c) },
@@ -187,6 +189,7 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
           key: { type: 'string', description: 'work item or ticket key, e.g. ACME-512' },
           project: { type: 'string', description: `project name; default: that workspace's first project (${perWs((sp) => sp.page.pack.prj[0])})` },
           chat: { type: 'string', description: 'chat id to link' }, mail: { type: 'string', description: 'mail id to link' },
+          description: { type: 'string', description: "Markdown, in English: what the job is for; every LLM run gets it as the user's part of its prompt. Change it later with job_command op describe" },
         },
       },
       async run(a, s) {
@@ -195,6 +198,7 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
           t: str(a.title, 'title'), pb: str(a.playbook, 'playbook'), key: typeof a.key === 'string' && a.key.trim() ? a.key.trim() : 'NEW',
           prj: typeof a.project === 'string' && a.project ? a.project : sp.page.pack.prj[0], ws: sp.id,
           ...(typeof a.chat === 'string' ? { chat: a.chat } : {}), ...(typeof a.mail === 'string' ? { mail: a.mail } : {}),
+          ...(typeof a.description === 'string' ? { d: a.description } : {}),
         }, 'session')
         s.undo.push({ id: j.id, created: true })
         return brief(sp.ctx(), j, sp.id)

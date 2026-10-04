@@ -135,6 +135,18 @@ test('create_job makes a ready job; undo cancels it', async (t) => {
   assert.equal((await s.jobs.get(id))!.st, 'cancelled')
 })
 
+test('create_job takes a description; get_job shows it; job_command describe changes it', async (t) => {
+  const s = await setup(t), pb = Object.keys(demoCtx().PB)[0]
+  const r = await s.call('create_job', { title: 'Described', playbook: pb, key: 'ACME-1', description: 'Check the **quota**.' })
+  assert.equal(r.err, false, r.text)
+  const id = r.json().id
+  assert.equal((await s.call('get_job', { id })).json().description, 'Check the **quota**.')
+  const c = await s.call('job_command', { id, op: 'describe', d: 'Now the limit.' })
+  assert.equal(c.err, false, c.text)
+  assert.equal((await s.jobs.get(id))!.d, 'Now the limit.')
+  assert.equal((await s.jobs.get(id))!.jr[0].o, 'Changed the description.')
+})
+
 test('start_item starts the tracker item and its job; an open job is reused; undo cancels only a created one', async (t) => {
   const s = await setup(t)
   const r = await s.call('start_item', { key: 'ACME-603' })

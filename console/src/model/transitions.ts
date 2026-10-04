@@ -3,6 +3,7 @@ import { PACKS } from '../data/packs.ts'
 import { clone, slugify, tfmt } from '../lib/util.ts'
 import { fromWall, midnight, offsetAt } from '../lib/zone.ts'
 import { KINDS, ctxDefaults, ctxLabel, ctxOf, ctxUnit, parseWorkId } from './context.ts'
+import type { Kind } from './context.ts'
 import type {
   BadgeKind, Cmd, CtxItem, CtxKind, Flow, Job, JobStatus, JournalEntry, Lamp, NodeState, Playbook, Round, Step, StepOverride, Tpl, Ws,
 } from './types.ts'
@@ -92,8 +93,20 @@ export function seedFlow(x: Ctx, j: Job, ovr: Record<string, StepOverride> = {},
     n: j.st === 'draft' ? 'start it when ready.' : `work on “${first.t}”.`,
   }])
 }
-/** chatName = the chat's name, for its row in the job's context */
-export interface NewJob { t: string; key: string; pb: string; prj: string; ws: Ws; src?: string; chat?: string; chatName?: string; mail?: string; ev?: string; due?: string }
+/** chatName = the chat's name, for its row in the job's context; d = the description;
+    ctx = the context as given, kept instead of what the key and chat imply */
+export interface NewJob {
+  t: string; key: string; pb: string; prj: string; ws: Ws; src?: string; chat?: string; chatName?: string; mail?: string; ev?: string; due?: string
+  d?: string; ctx?: CtxItem[]
+}
+export const DESC_MAX = 20000
+/** the description as stored: trimmed, none when blank */
+function descOf(v: unknown): string | undefined {
+  if (typeof v !== 'string') throw new CmdError('bad_args', 'the description is not text')
+  const d = v.trim()
+  if (d.length > DESC_MAX) throw new CmdError('bad_args', `the description is longer than ${DESC_MAX} characters`)
+  return d || undefined
+}
 export function freshJob(x: Ctx, id: string, o: NewJob): Job {
   if (!x.PB[o.pb] || !steps(x, o.pb).length) throw new CmdError('bad_args', `unknown playbook ${o.pb}`)
   if (!o.t.trim()) throw new CmdError('bad_args', 'a job needs a title')
@@ -108,31 +121,52 @@ export function freshJob(x: Ctx, id: string, o: NewJob): Job {
   if (o.mail) j.mail = o.mail
   if (o.ev) j.ev = o.ev
   if (o.due) { if (!Number.isFinite(Date.parse(o.due))) throw new CmdError('bad_args', 'due is not a date'); j.due = new Date(o.due).toISOString() }
+  const d = o.d === undefined ? undefined : descOf(o.d)
+  if (d) j.d = d
+  if (o.ctx !== undefined) {
+    if (!Array.isArray(o.ctx)) throw new CmdError('bad_args', 'ctx is not a list')
+    const list: CtxItem[] = []
+    for (const c of o.ctx) { const it = ctxItem(j.ws, c ?? {}); if (!list.some((y) => y.k === it.k && y.id === it.id)) list.push(it) }
+    j.ctx = list
+    return j
+  }
   const ctx = ctxDefaults(j.ws, j.key, j.chat, typeof o.chatName === 'string' ? o.chatName.trim().slice(0, 120) || undefined : undefined)
   if (ctx.length) j.ctx = ctx
   return j
 }
 
+const kindOf = (k: unknown) => {
+  if (typeof k !== 'string' || !Object.hasOwn(KINDS, k)) throw new CmdError('bad_args', `unknown context kind ${String(k)}`)
+  return KINDS[k as CtxKind]
+}
+function ctxId(ws: Ws, k: CtxKind, v: unknown) {
+  const id = typeof v === 'string' ? v.trim() : ''
+  if (!id || id.length > 1000) throw new CmdError('bad_args', 'a context item needs an id')
+  if (k === 'work' && parseWorkId(ws, id) !== id) throw new CmdError('bad_args', `${id} is not a work item id`)
+  return id
+}
+function ctxCount(K: Kind, v: unknown) {
+  if (K.whole) { if (v !== 1) throw new CmdError('bad_args', `a ${K.l.toLowerCase()} gives ${K.whole}; it has no count`); return 1 }
+  if (!Number.isInteger(v) || (v as number) < 1 || (v as number) > K.max) throw new CmdError('bad_args', `the ${K.unit} count is 1–${K.max}`)
+  return v as number
+}
+/** one context item as a command or a new job gives it, checked */
+function ctxItem(ws: Ws, c: { k?: unknown; id?: unknown; n?: unknown; name?: unknown }): CtxItem {
+  const K = kindOf(c.k), k = c.k as CtxKind
+  const it: CtxItem = { k, id: ctxId(ws, k, c.id), n: c.n === undefined ? K.def : ctxCount(K, c.n) }
+  const name = typeof c.name === 'string' ? c.name.trim().slice(0, 120) : ''
+  if (name) it.name = name
+  return it
+}
+
 /** adds, recounts or removes one context item; a job without a list starts from its defaults */
 function ctxEdit(x: Ctx, j: Job, c: Extract<Cmd, { op: 'ctxAdd' | 'ctxSet' | 'ctxDel' }>) {
-  const K = Object.hasOwn(KINDS, c.k) ? KINDS[c.k as CtxKind] : undefined
-  if (!K) throw new CmdError('bad_args', `unknown context kind ${c.k}`)
-  const id = typeof c.id === 'string' ? c.id.trim() : ''
-  if (!id || id.length > 1000) throw new CmdError('bad_args', 'a context item needs an id')
-  if (c.k === 'work' && parseWorkId(j.ws, id) !== id) throw new CmdError('bad_args', `${id} is not a work item id`)
-  const what = K.l.toLowerCase()
-  const count = (v: unknown) => {
-    if (K.whole) { if (v !== 1) throw new CmdError('bad_args', `a ${what} gives ${K.whole}; it has no count`); return 1 }
-    if (!Number.isInteger(v) || (v as number) < 1 || (v as number) > K.max) throw new CmdError('bad_args', `the ${K.unit} count is 1–${K.max}`)
-    return v as number
-  }
+  const K = kindOf(c.k), id = ctxId(j.ws, c.k, c.id), what = K.l.toLowerCase()
   const list = ctxOf(j).map((it) => ({ ...it })), i = list.findIndex((it) => it.k === c.k && it.id === id)
   const next = nextTxt(x, j, atOf(x, j))
   if (c.op === 'ctxAdd') {
     if (i >= 0) throw new CmdError('bad_args', `${what} ${ctxLabel(j.ws, list[i])} is already in the context`)
-    const it: CtxItem = { k: c.k, id, n: c.n === undefined ? K.def : count(c.n) }
-    const name = typeof c.name === 'string' ? c.name.trim().slice(0, 120) : ''
-    if (name) it.name = name
+    const it = ctxItem(j.ws, c)
     list.push(it)
     jr(x, j, `Added ${what} ${ctxLabel(j.ws, it)} to the context.`, `LLM runs get ${K.whole ?? `its ${ctxUnit(it)}`}.`, next, by(x), 'ok')
   } else {
@@ -140,7 +174,7 @@ function ctxEdit(x: Ctx, j: Job, c: Extract<Cmd, { op: 'ctxAdd' | 'ctxSet' | 'ct
     const it = list[i]
     if (c.op === 'ctxSet') {
       if (K.whole) throw new CmdError('bad_args', `${what} ${ctxLabel(j.ws, it)} gives ${K.whole}; it has no count`)
-      it.n = count(c.n)
+      it.n = ctxCount(K, c.n)
       jr(x, j, `${K.l} ${ctxLabel(j.ws, it)} now gives the ${ctxUnit(it)}.`, 'context changed for the next LLM runs.', next, by(x), 'ok')
     } else {
       list.splice(i, 1)
@@ -286,6 +320,15 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       needOpen()
       ctxEdit(x, j, cmd)
       break
+    case 'describe': {
+      needOpen()
+      const d = descOf(cmd.d)
+      if (d === j.d) break
+      if (d) j.d = d; else delete j.d
+      jr(x, j, d ? 'Changed the description.' : 'Removed the description.', d ? 'the next LLM runs get the new text.' : 'the next LLM runs get none.',
+        nextTxt(x, j, atOf(x, j)), by(x), 'ok')
+      break
+    }
     case 'stepDone': {
       const had = !!F.dr
       nx = advance(x, j, sid, 'done')
