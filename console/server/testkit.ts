@@ -29,7 +29,7 @@ export class FakeSession {
     this.prompt = o.prompt; this.images = o.images; this.resume = o.resume; this.cwd = o.cwd; this.tools = o.tools; this.abort = o.abort
   }
   push(e: SdkEvent | null) { this.q.push(e); this.wake?.() }
-  end(ok = true, error?: string) { this.push({ k: 'result', ok, error }); this.push(null) }
+  end(ok = true, error?: string, t?: string) { this.push({ k: 'result', ok, error, ...(t ? { t } : {}) }); this.push(null) }
   async *events(): AsyncIterable<SdkEvent> {
     for (;;) {
       if (this.abort.signal.aborted) throw new Error('aborted')

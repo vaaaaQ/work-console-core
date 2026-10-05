@@ -301,3 +301,61 @@ test('a job made from a calendar event keeps the event and its start as due', ()
   assert.equal(j.ev, 'ev1'); assert.equal(j.due, '2026-10-02T13:00:00.000Z')
   assert.throws(() => freshJob(X, 'J-9002', { t: 'x', key: 'NEW', pb: Object.keys(PB0)[0], prj: 'platform', ws: 'acme', due: 'later' }))
 })
+
+/** an open job whose current step holds a draft from run r1 */
+function drafted() {
+  const j0 = open(), at = atOf(X, j0)!
+  let j = apply(X, j0, { op: 'runStart', step: at, q: 'go', id: 'r1' }).job
+  j = apply(X, j, { op: 'runDraft', step: at, t: 'v1' }).job
+  return { j, at }
+}
+
+test('runReply keeps the draft while it runs; runDraft on it revises the draft', () => {
+  const { j, at } = drafted()
+  const r = apply(X, j, { op: 'runReply', step: at, q: 'shorter', id: 'r2', intent: 'revise' }).job
+  assert.equal(r.flow[at].dr!.t, 'v1')
+  assert.deepEqual(r.flow[at].run, { q: 'shorter', at: T0.getTime(), id: 'r2', reply: 1 })
+  assert.equal(r.st, 'active')
+  assert.match(r.jr[0].o, /^Replied to the LLM draft for “.+”: shorter$/)
+  const d = apply(X, r, { op: 'runDraft', step: at, t: 'v2' }).job
+  assert.equal(d.flow[at].dr!.t, 'v2'); assert.equal(d.flow[at].run, null); assert.equal(d.flow[at].s, 'wait')
+  assert.match(d.jr[0].o, /revised/)
+  const back = apply(X, j, { op: 'runReply', step: at, q: 'shorter', id: 'r2', intent: 'revise', resumed: true }).job
+  assert.match(back.jr[0].o, /^Resumed the reply/)
+})
+
+test('runReply needs a draft and no run', () => {
+  const { j, at } = drafted()
+  const r = apply(X, j, { op: 'runReply', step: at, q: 'q', id: 'r2', intent: 'ask' }).job
+  code(() => apply(X, r, { op: 'runReply', step: at, q: 'q', id: 'r3', intent: 'ask' }), 'bad_state')
+  const none = apply(X, j, { op: 'rejectDraft', step: at }).job
+  code(() => apply(X, none, { op: 'runReply', step: at, q: 'q', id: 'r3', intent: 'ask' }), 'bad_state')
+})
+
+test('runAnswer and runEnd on a reply clear the run and keep the draft waiting', () => {
+  const { j, at } = drafted()
+  const r = apply(X, j, { op: 'runReply', step: at, q: 'why?', id: 'r2', intent: 'ask' }).job
+  const a = apply(X, r, { op: 'runAnswer', step: at, a: 'Because of X.' }).job
+  assert.equal(a.flow[at].run, null); assert.equal(a.flow[at].dr!.t, 'v1'); assert.equal(a.flow[at].s, 'wait')
+  assert.equal(a.st, 'waiting-user'); assert.equal(a.jr[0].a, 'LLM'); assert.match(a.jr[0].c, /Because of X/)
+  const f = apply(X, r, { op: 'runEnd', step: at, why: 'failed', detail: 'boom' }).job
+  assert.equal(f.flow[at].dr!.t, 'v1'); assert.equal(f.flow[at].s, 'wait'); assert.match(f.jr[0].c, /draft is unchanged/)
+  assert.equal(f.st, 'waiting-user')
+})
+
+test('accept, edit and reject are refused while a reply runs', () => {
+  const { j, at } = drafted()
+  const r = apply(X, j, { op: 'runReply', step: at, q: 'q', id: 'r2', intent: 'revise' }).job
+  code(() => apply(X, r, { op: 'acceptDraft', step: at }), 'bad_state')
+  code(() => apply(X, r, { op: 'acceptDraft', step: at, text: 'x' }), 'bad_state')
+  code(() => apply(X, r, { op: 'rejectDraft', step: at }), 'bad_state')
+})
+
+test('rejectDraft with why journals the reason; acceptDraft said journals the word', () => {
+  const { j, at } = drafted()
+  const r = apply(X, j, { op: 'rejectDraft', step: at, why: ' wrong scope ' }).job
+  assert.equal(r.flow[at].dr, null); assert.match(r.jr[0].o, /^Rejected the LLM draft for “.+”: wrong scope\.$/)
+  assert.match(r.jr[0].n, /new draft/)
+  const a = apply({ ...X, by: 'Claude Code' }, j, { op: 'acceptDraft', step: at, said: true }).job
+  assert.match(a.jr[0].o, /as said in the reply/); assert.equal(a.jr[0].a, 'Claude Code')
+})

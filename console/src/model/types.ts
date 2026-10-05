@@ -40,8 +40,8 @@ export interface Badge extends New { k: BadgeKind; t: string; r?: string; o?: 1 
 export interface Vote extends New { n: string; v: number }
 export interface Review { v: Vote[]; need: number }
 export interface Draft extends New { t: string; at: string; q?: string }
-/** id = the backend's run record; absent in the demo */
-export interface Run { q: string; at: number; id?: string }
+/** id = the backend's run record; absent in the demo; reply = it continues the draft's session, so the draft stays */
+export interface Run { q: string; at: number; id?: string; reply?: 1 }
 export interface Sent { at: string; t: string }
 export interface Flow extends New {
   s: NodeState; m: string; arts: Art[]; b: Badge[]; rv: Review | null; dr: Draft | null
@@ -75,16 +75,23 @@ export interface Job extends JobSeed { flow: Record<string, Flow>; ts: number; j
 /** a job change; the backend-only ops come from the LLM runner */
 export type Cmd =
   | { op: 'start' } | { op: 'close'; st: 'done' | 'cancelled'; note?: string } | { op: 'reopen' }
-  | { op: 'stepDone' | 'stepSkip' | 'stepResume' | 'stepReopen' | 'rejectDraft'; step: string }
+  | { op: 'stepDone' | 'stepSkip' | 'stepResume' | 'stepReopen'; step: string }
+  /** why = the reason; with one the backend redoes the step in a fresh session */
+  | { op: 'rejectDraft'; step: string; why?: string }
   | { op: 'stepWait'; step: string; m: string }
-  | { op: 'acceptDraft'; step: string; text?: string }
+  /** said = accepted on the replier's word, by an accept reply */
+  | { op: 'acceptDraft'; step: string; text?: string; said?: boolean }
   | { op: 'noteAdd'; step: string; k: BadgeKind; t: string }
   | { op: 'noteAnswer'; step: string; i: number; r: string } | { op: 'noteReopen'; step: string; i: number }
   | { op: 'sent'; step: string; i: number; t: string; to: string }
   | { op: 'vote'; step: string; n: string; v: number } | { op: 'nudged'; to: string } | { op: 'replied'; subj: string }
   /** auto = the console started it by itself */
   | { op: 'runStart'; step: string; q: string; id: string; resumed?: boolean; auto?: boolean }
+  /** a reply to the draft in its own session; the draft stays until it is revised */
+  | { op: 'runReply'; step: string; q: string; id: string; intent: RunIntent; resumed?: boolean }
   | { op: 'runDraft'; step: string; t: string }
+  /** an ask reply's answer: the run ends, the draft stays */
+  | { op: 'runAnswer'; step: string; a: string }
   /** due = an interrupted run that resumes by itself */
   | { op: 'runEnd'; step: string; why: 'cancelled' | 'failed' | 'interrupted'; detail?: string; due?: boolean }
   | { op: 'artifact'; step: string; n: string; link?: string; ok?: false }
@@ -100,12 +107,17 @@ export const PAGE_OPS = ['start', 'close', 'reopen', 'stepDone', 'stepSkip', 'st
 /** ops a Claude Code session may send through the console's MCP: the page's, plus returning to a passed step */
 export const SESSION_OPS = [...PAGE_OPS, 'returnTo'] as const
 
-export type RunState = 'queued' | 'running' | 'draft' | 'failed' | 'cancelled' | 'interrupted'
+/** what a reply to a draft asks for: change it, change it and accept it, or only answer */
+export type RunIntent = 'revise' | 'accept' | 'ask'
+export const INTENTS: readonly RunIntent[] = ['revise', 'accept', 'ask']
+export type RunState = 'queued' | 'running' | 'draft' | 'answered' | 'failed' | 'cancelled' | 'interrupted'
 /** one LLM ask; session = the Claude Code session id, for Resume and hand-over;
-    ar = auto-resume: due = it resumes by itself after the next comeback, used = it did once or no longer can */
+    ar = auto-resume: due = it resumes by itself after the next comeback, used = it did once or no longer can;
+    parent = the run this replies to, intent = what the reply asks for, a = an ask reply's answer,
+    via = who replied when it was not the user */
 export interface RunRec {
   id: string; job: string; step: string; q: string; state: RunState; session?: string; reason?: string; at: string; ended?: string
-  ar?: 'due' | 'used'
+  ar?: 'due' | 'used'; parent?: string; intent?: RunIntent; a?: string; via?: 'session'
 }
 
 /** at = time of day; ts = the journal entry's ISO time, which Home orders logs that span days by (the demo's seeded rows have none) */

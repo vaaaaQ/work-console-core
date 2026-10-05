@@ -12,7 +12,7 @@ import { toast } from './toasts.tsx'
    command that continues the same session in a terminal. */
 
 const ST: Record<RunState, [string, string]> = {
-  queued: ['wait', 'Queued'], running: ['cur pulse', 'Working on it…'], draft: ['ok', 'Draft ready'],
+  queued: ['wait', 'Queued'], running: ['cur pulse', 'Working on it…'], draft: ['ok', 'Draft ready'], answered: ['ok', 'Answered'],
   failed: ['bad', 'Failed'], cancelled: ['', 'Cancelled'], interrupted: ['wait', 'Interrupted'],
 }
 

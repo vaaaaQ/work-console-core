@@ -33,7 +33,8 @@ export interface RunTools {
   knowledgePropose?(p: KnowledgeIn): Promise<string>
 }
 export type KnowledgeIn = Omit<ProposalIn, 'by'>
-export type SdkEvent = { k: 'session'; id: string } | { k: 'text'; t: string } | { k: 'tool'; name: string; input: string } | { k: 'result'; ok: boolean; error?: string }
+/** a result's t = the session's final text */
+export type SdkEvent = { k: 'session'; id: string } | { k: 'text'; t: string } | { k: 'tool'; name: string; input: string } | { k: 'result'; ok: boolean; error?: string; t?: string }
 /** a tool of a one-shot answer, which only reads: its input as zod fields, its answer as text */
 export interface AskTool { name: string; description: string; input: z.ZodRawShape; run(a: Record<string, unknown>): Promise<string> }
 /** tool = a call of one of the ask's own tools, by its bare name; result = the answer in the schema's shape */
@@ -179,7 +180,7 @@ export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runToo
             else if (b.type === 'tool_use') yield { k: 'tool', name: b.name, input: JSON.stringify(b.input).slice(0, 300) }
           }
         } else if (m.type === 'result') {
-          if (m.subtype === 'success' && !m.is_error) yield { k: 'result', ok: true }
+          if (m.subtype === 'success' && !m.is_error) yield { k: 'result', ok: true, ...(typeof m.result === 'string' && m.result.trim() ? { t: m.result } : {}) }
           else yield { k: 'result', ok: false, error: resultError(m) }
         }
       }

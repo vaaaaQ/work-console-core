@@ -61,6 +61,8 @@ export function rvState(j: Job, f: Flow) {
 }
 /** the instruction an ask starts from: the step in its own words */
 export const askText = (s: Step) => `Do: ${s.t}.\nDone when: ${s.x}.${s.a ? `\nProduce: ${s.a.join(', ')}.` : ''}`
+/** free text on one journal line */
+const line = (t: string, n = 160) => { const s = t.replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s }
 export const nextTxt = (x: Ctx, j: Job, nx: string | null) => {
   const s = nx ? stepOf(x, j, nx) : undefined
   return s ? `${s.m === 'llm' ? 'ask the LLM for' : 'work on'} “${s.t}”.` : j.st === 'recurring' ? 'wait for the next period.' : 'close the job.'
@@ -239,7 +241,7 @@ function returnTo(x: Ctx, j: Job, sid: string, why: string) {
 }
 
 const STEP_OPS = new Set(['returnTo', 'stepDone', 'stepSkip', 'stepWait', 'stepResume', 'stepReopen', 'acceptDraft', 'rejectDraft',
-  'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'runStart', 'runDraft', 'runEnd', 'artifact'])
+  'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'runStart', 'runReply', 'runDraft', 'runAnswer', 'runEnd', 'artifact'])
 
 /** runs one command on a copy of the job; nx is the step to show next, when the command moved on */
 export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null } {
@@ -251,10 +253,11 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     sid = (cmd as { step: string }).step
     s = stepOf(x, j, sid); f = j.flow[sid]
     if (!s || !f) throw new CmdError('bad_step', `${j.id} has no step ${sid}`)
-    if (cmd.op !== 'runEnd' && cmd.op !== 'artifact' && cmd.op !== 'returnTo') needOpen()
+    if (cmd.op !== 'runEnd' && cmd.op !== 'runAnswer' && cmd.op !== 'artifact' && cmd.op !== 'returnTo') needOpen()
   }
   const S = s!, F = f!
   const needDraft = () => { if (!F.dr) throw new CmdError('bad_state', `“${S.t}” has no draft`) }
+  const noRun = () => { if (F.run) throw new CmdError('bad_state', `“${S.t}” has an LLM run; wait for it or cancel it`) }
   const badge = (i: number) => { const b = F.b[i]; if (!b) throw new CmdError('bad_args', `no note ${i} on “${S.t}”`); return b }
 
   switch (cmd.op) {
@@ -358,18 +361,21 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       jr(x, j, `Resumed “${S.t}”.`, 'step back in progress.', `finish “${S.t}”.`, by(x), 'cur'); syncStatus(x, j)
       break
     case 'acceptDraft': {
-      needDraft()
+      needDraft(); noRun()
       const dr = F.dr!, edited = cmd.text != null && cmd.text !== dr.t
       F.out = edited ? cmd.text! : dr.t; F.m = edited ? 'accepted with your edits' : 'draft accepted'
       nx = advance(x, j, sid, 'done')
-      jr(x, j, `Accepted the LLM draft for “${S.t}”${edited ? ' with edits' : ''}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')
+      jr(x, j, `Accepted the LLM draft for “${S.t}”${edited ? ' with edits' : ''}${cmd.said ? ' as said in the reply' : ''}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')
       break
     }
-    case 'rejectDraft':
-      needDraft()
+    case 'rejectDraft': {
+      needDraft(); noRun()
+      const w = line(cmd.why || '', 300)
       F.dr = null; F.s = 'cur'; F.m = 'draft rejected'
-      jr(x, j, `Rejected the LLM draft for “${S.t}”.`, 'step back in progress.', 'do it yourself, or ask again with a sharper instruction.', by(x), 'bad'); syncStatus(x, j)
+      jr(x, j, `Rejected the LLM draft for “${S.t}”${w ? `: ${w}` : ''}.`, 'step back in progress.',
+        w ? 'review the new draft when it is ready.' : 'do it yourself, or ask again with a sharper instruction.', by(x), 'bad'); syncStatus(x, j)
       break
+    }
     case 'noteAdd': {
       const t = (cmd.t || '').trim()
       if (!t || !BK[cmd.k as BadgeKind]) throw new CmdError('bad_args', 'a note needs a kind and text')
@@ -426,18 +432,38 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       syncStatus(x, j)
       break
     }
-    case 'runDraft':
+    case 'runReply': {
+      if (F.run) throw new CmdError('bad_state', `“${S.t}” already has an LLM run`)
+      needDraft()
+      F.run = { q: cmd.q, at: nowOf(x).getTime(), id: cmd.id, reply: 1 }; F.s = 'cur'; F.nw = 1
+      const what = cmd.intent === 'ask' ? 'answers' : cmd.intent === 'accept' ? 'revises the draft, then it is accepted' : 'revises the draft'
+      if (cmd.resumed) jr(x, j, `Resumed the reply to the LLM draft for “${S.t}”.`, `LLM ${what}.`, 'wait for it.', by(x), 'cur')
+      else jr(x, j, `Replied to the LLM draft for “${S.t}”: ${line(cmd.q)}`, `LLM ${what}.`, 'wait for it.', by(x), 'cur')
+      syncStatus(x, j)
+      break
+    }
+    case 'runDraft': {
       if (!F.run) throw new CmdError('bad_state', `“${S.t}” has no LLM run`)
-      F.run = null; F.dr = { t: cmd.t, at: nowOf(x).toISOString(), nw: 1 }; F.s = 'wait'; F.m = 'LLM draft ready'; F.nw = 1
-      jr(x, j, `Draft for “${S.t}” is ready.`, 'waiting for your review.', 'accept, edit or reject it.', 'LLM', 'wait'); syncStatus(x, j)
+      const re = !!F.run.reply
+      F.run = null; F.dr = { t: cmd.t, at: nowOf(x).toISOString(), nw: 1 }; F.s = 'wait'; F.m = re ? 'LLM draft revised' : 'LLM draft ready'; F.nw = 1
+      jr(x, j, re ? `Draft for “${S.t}” revised.` : `Draft for “${S.t}” is ready.`, 'waiting for your review.', 'accept, edit or reject it.', 'LLM', 'wait'); syncStatus(x, j)
+      break
+    }
+    case 'runAnswer':
+      if (!F.run) break
+      F.run = null; F.s = F.dr ? 'wait' : 'cur'; F.m = 'LLM answered'; F.nw = 1
+      jr(x, j, `The LLM answered on “${S.t}”.`, `answered: ${line(cmd.a)}`, 'read it; accept, reply to or reject the draft.', 'LLM', 'wait'); syncStatus(x, j)
       break
     case 'runEnd': {
       if (!F.run) break
-      F.run = null; F.s = 'cur'
-      const d = cmd.detail ? `: ${cmd.detail}` : ''
-      if (cmd.why === 'cancelled') jr(x, j, `Cancelled the LLM run for “${S.t}”.`, 'no draft kept.', 'do it yourself, or ask again.', by(x), 'off')
-      else if (cmd.why === 'failed') jr(x, j, `The LLM run for “${S.t}” failed${d}.`, 'no draft kept.', 'resume it, do it yourself, or ask again.', 'LLM', 'bad')
-      else jr(x, j, `The LLM run for “${S.t}” was interrupted${d}.`, 'no draft kept.',
+      // a reply's draft outlives the reply
+      const re = !!F.run.reply && !!F.dr
+      F.run = null; F.s = re ? 'wait' : 'cur'
+      const d = cmd.detail ? `: ${cmd.detail}` : '', kept = re ? 'the draft is unchanged.' : 'no draft kept.'
+      if (cmd.why === 'cancelled') jr(x, j, `Cancelled the LLM run for “${S.t}”.`, kept, re ? 'accept, reply to or reject the draft.' : 'do it yourself, or ask again.', by(x), 'off')
+      else if (cmd.why === 'failed') jr(x, j, `The LLM run for “${S.t}” failed${d}.`, kept,
+        re ? 'resume it, reply again, or accept or reject the draft.' : 'resume it, do it yourself, or ask again.', 'LLM', 'bad')
+      else jr(x, j, `The LLM run for “${S.t}” was interrupted${d}.`, kept,
         cmd.due ? 'nothing; it resumes by itself when the console is back.' : 'resume it when the console is back.', 'LLM', 'wait')
       syncStatus(x, j)
       break

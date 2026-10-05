@@ -47,7 +47,8 @@ export class Jobs {
     return saved
   }
 
-  async cmd(id: string, c: Cmd, expectV?: number, who: Who = 'page'): Promise<{ job: Job; prev: Job; nx: string | null }> {
+  /** as = whose word it is when the runner acts for someone (an accept reply): it signs the journal */
+  async cmd(id: string, c: Cmd, expectV?: number, who: Who = 'page', as?: Who): Promise<{ job: Job; prev: Job; nx: string | null }> {
     const ok = ALLOWED[who]
     if (ok) {
       if (!c || !ok.has(c.op)) throw new HttpError(400, 'bad_args', `the ${who} cannot send ${c?.op}`)
@@ -58,7 +59,7 @@ export class Jobs {
       if (!cur) throw new HttpError(404, 'not_found', `no job ${id}`)
       if (who !== 'runner' && expectV != null && cur.v !== expectV) throw new HttpError(409, 'conflict', 'the job changed elsewhere')
       let r: { job: Job; nx: string | null }
-      try { r = T.apply({ ...this.ctx(), by: BY[who] }, cur, c) } catch (e) {
+      try { r = T.apply({ ...this.ctx(), by: BY[as ?? who] }, cur, c) } catch (e) {
         if (e instanceof T.CmdError) throw new HttpError(400, e.code, e.message)
         throw e
       }

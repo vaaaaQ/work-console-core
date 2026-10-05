@@ -3,14 +3,16 @@ import { copyFile, mkdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as T from '../../src/model/transitions.ts'
-import type { Job, RunRec, Ws } from '../../src/model/types.ts'
+import { thread } from '../../src/model/thread.ts'
+import { INTENTS } from '../../src/model/types.ts'
+import type { Cmd, Job, RunIntent, RunRec, Ws } from '../../src/model/types.ts'
 import { HttpError } from '../events.ts'
 import type { Bus } from '../events.ts'
 import type { Jobs } from '../jobs/jobs.ts'
 import type { Notes } from '../knowledge/notes.ts'
 import type { Store } from '../store/port.ts'
 import type { PromptImage, RunContext } from './context.ts'
-import { buildPrompt, contextText, RESUME_PROMPT } from './prompt.ts'
+import { buildPrompt, contextText, redoText, replyPrompt, RESUME_ASK_PROMPT, RESUME_PROMPT } from './prompt.ts'
 import type { PromptIn } from './prompt.ts'
 import type { KnowledgeIn, Sdk } from './sdk.ts'
 import { checkUrl } from './shot.ts'
@@ -25,6 +27,8 @@ const FEED_MAX = 200
 const FILE_MAX = 20 << 20
 /** the most jobs one run may create */
 const JOBS_MAX = 5
+/** the most of an ask reply's answer a record keeps */
+const ANSWER_MAX = 4000
 /** started: the record says running; until then cancel and interruptAll leave settling to run() */
 type Live = { ac: AbortController; why: 'cancelled' | 'interrupted' | null; reason?: string; drafted: boolean; started: boolean }
 
@@ -47,7 +51,8 @@ export class Runner {
   private jobTools?: JobTools
   private notes?: Notes
   private autoResume: boolean
-  private queue: { id: string; resume?: string }[] = []
+  /** reply = the reply's text has not reached its session yet */
+  private queue: { id: string; resume?: string; reply?: boolean }[] = []
   private live = new Map<string, Live>()
   private feeds = new Map<string, string[]>()
   private settled: ((r: RunRec) => void)[] = []
@@ -72,7 +77,7 @@ export class Runner {
     this.autoResume = !!o.autoResume
   }
 
-  /** draft ready, failed or interrupted: the moments worth a push */
+  /** draft ready, answered, failed or interrupted: the moments worth a push */
   onSettled(f: (r: RunRec) => void) { this.settled.push(f) }
   feed(id: string) { return [...(this.feeds.get(id) || [])] }
   all() { return this.store.runs() }
@@ -81,11 +86,12 @@ export class Runner {
   private async save(r: RunRec, notify = true) {
     await this.store.putRun(r)
     this.bus.emit({ kind: 'run', run: { ...r } })
-    if (notify && (r.state === 'draft' || r.state === 'failed' || r.state === 'interrupted')) for (const f of this.settled) { try { f({ ...r }) } catch { /* a notifier never breaks a run */ } }
+    if (notify && (r.state === 'draft' || r.state === 'answered' || r.state === 'failed' || r.state === 'interrupted')) for (const f of this.settled) { try { f({ ...r }) } catch { /* a notifier never breaks a run */ } }
   }
 
-  private async jobCmd(r: RunRec, c: Parameters<Jobs['cmd']>[1]) {
-    try { await this.jobs.cmd(r.job, c, undefined, 'runner') } catch (e) { console.error(`run ${r.id}: ${c.op} on ${r.job} failed`, (e as Error).message) }
+  /** as = whose word it is (an accept reply's); false when it was not saved */
+  private async jobCmd(r: RunRec, c: Cmd, as?: 'page' | 'session') {
+    try { await this.jobs.cmd(r.job, c, undefined, 'runner', as); return true } catch (e) { console.error(`run ${r.id}: ${c.op} on ${r.job} failed`, (e as Error).message); return false }
   }
 
   private async hasRun(job: string, step: string): Promise<Job> {
@@ -96,35 +102,90 @@ export class Runner {
     return j
   }
 
-  /** auto = the console asks by itself, and the journal says so */
-  async ask(job: string, step: string, q: string, o: { auto?: boolean } = {}): Promise<RunRec> {
+  /** auto = the console asks by itself, and the journal says so; via = who asked when not the user */
+  async ask(job: string, step: string, q: string, o: { auto?: boolean; via?: 'session' } = {}): Promise<RunRec> {
     if (!this.gate()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; no run was started')
     if (!q || !q.trim()) throw new HttpError(400, 'bad_args', 'the instruction is empty')
     await this.hasRun(job, step)
-    const r: RunRec = { id: `r-${randomBytes(6).toString('hex')}`, job, step, q: q.trim(), state: 'queued', at: new Date().toISOString() }
-    await this.jobs.cmd(job, { op: 'runStart', step, q: r.q, id: r.id, ...(o.auto ? { auto: true } : {}) }, undefined, 'runner')
+    const r: RunRec = { id: `r-${randomBytes(6).toString('hex')}`, job, step, q: q.trim(), state: 'queued', at: new Date().toISOString(), ...(o.via ? { via: o.via } : {}) }
+    await this.jobs.cmd(job, { op: 'runStart', step, q: r.q, id: r.id, ...(o.auto ? { auto: true } : {}) }, undefined, 'runner', o.via)
     await this.save(r)
     this.queue.push({ id: r.id })
     this.pump()
     return r
   }
 
+  /** the step's thread: its newest run, and the newest session in it, which a reply continues */
+  private async chain(job: string, step: string) {
+    const t = thread(await this.store.runs(), job, step)
+    return { head: t.at(-1), session: t.findLast((r) => r.session)?.session }
+  }
+
+  /** a reply to the step's draft in its own session; via = who replied when not the user */
+  async reply(job: string, step: string, t: string, intent: RunIntent, o: { via?: 'session' } = {}): Promise<RunRec> {
+    if (!this.gate()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; the reply was not sent')
+    if (!t || !t.trim()) throw new HttpError(400, 'bad_args', 'the reply is empty')
+    if (!INTENTS.includes(intent)) throw new HttpError(400, 'bad_args', `intent is one of ${INTENTS.join(', ')}`)
+    const j = await this.jobs.get(job)
+    if (!j) throw new HttpError(404, 'not_found', `no job ${job}`)
+    const f = j.flow[step]
+    if (!f) throw new HttpError(400, 'bad_step', `${job} has no step ${step}`)
+    if (T.isClosed(j)) throw new HttpError(409, 'bad_state', `${job} is closed`)
+    if (f.run) throw new HttpError(409, 'busy', 'this step already has an LLM run')
+    if (!f.dr) throw new HttpError(409, 'no_draft', 'this step has no draft to reply to')
+    const c = await this.chain(job, step)
+    if (!c.head || !c.session) throw new HttpError(409, 'no_session', 'this draft has no LLM session to continue; ask again instead')
+    const r: RunRec = { id: `r-${randomBytes(6).toString('hex')}`, job, step, q: t.trim(), state: 'queued', at: new Date().toISOString(), parent: c.head.id, intent, ...(o.via ? { via: o.via } : {}) }
+    await this.jobs.cmd(job, { op: 'runReply', step, q: r.q, id: r.id, intent }, undefined, 'runner', o.via)
+    await this.save(r)
+    this.queue.push({ id: r.id, resume: c.session, reply: true })
+    this.pump()
+    return r
+  }
+
+  /** after a rejectDraft with a reason: the step again in a fresh session, told the draft and why. Never throws:
+      the draft is rejected either way, and redo says why no run started */
+  async redoRejected(prev: Job, c: Cmd, via?: 'session'): Promise<{ run?: RunRec; redo?: string }> {
+    if (c.op !== 'rejectDraft' || !c.why?.trim()) return {}
+    const dr = prev.flow[c.step]?.dr, s = T.stepOf(this.ctx(), prev, c.step)
+    if (!dr || !s) return {}
+    try { return { run: await this.ask(prev.id, c.step, redoText(T.askText(s), dr.t, c.why), { via }) } } catch (e) { return { redo: (e as Error).message } }
+  }
+
+  /** the run once it has ended, or as it is after ms */
+  async settle(id: string, ms: number): Promise<RunRec> {
+    const t0 = Date.now()
+    for (;;) {
+      const r = await this.get(id)
+      if (!r) throw new HttpError(404, 'not_found', `no run ${id}`)
+      const left = ms - (Date.now() - t0)
+      if (r.ended || left <= 0) return r
+      await new Promise((res) => setTimeout(res, Math.min(250, left)))
+    }
+  }
+
   async resume(id: string): Promise<RunRec> {
     const r = await this.get(id)
     if (!r) throw new HttpError(404, 'not_found', `no run ${id}`)
     if (r.state !== 'interrupted' && r.state !== 'failed') throw new HttpError(409, 'bad_state', `a ${r.state} run cannot be resumed`)
-    if (!r.session) throw new HttpError(409, 'no_session', 'this run never started a session; ask again instead')
+    if (!r.session && !r.parent) throw new HttpError(409, 'no_session', 'this run never started a session; ask again instead')
     return this.requeue(r, false)
   }
 
-  /** the same record queued again: its session continues, or without one it starts afresh on the same instruction */
+  /** the same record queued again: its session continues, or without one it starts afresh on the same instruction;
+      a reply that never reached its session goes again in the session it replies to */
   private async requeue(r: RunRec, auto: boolean): Promise<RunRec> {
     if (!this.gate()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; the run was not resumed')
     await this.hasRun(r.job, r.step)
-    await this.jobs.cmd(r.job, { op: 'runStart', step: r.step, q: r.q, id: r.id, ...(r.session ? { resumed: true } : {}), ...(auto ? { auto: true } : {}) }, undefined, 'runner')
+    const fresh = !!r.parent && !r.session, resume = fresh ? (await this.chain(r.job, r.step)).session : r.session
+    if (r.parent && !resume) throw new HttpError(409, 'no_session', 'the draft this replies to has no session any more')
+    const as = auto ? 'console' : r.via
+    await this.jobs.cmd(r.job, r.parent
+      ? { op: 'runReply', step: r.step, q: r.q, id: r.id, intent: r.intent ?? 'revise', ...(fresh ? {} : { resumed: true }) }
+      : { op: 'runStart', step: r.step, q: r.q, id: r.id, ...(r.session ? { resumed: true } : {}), ...(auto ? { auto: true } : {}) }, undefined, 'runner', as)
     const next: RunRec = { ...r, state: 'queued', reason: undefined, ended: undefined }
     await this.save(next)
-    this.queue.push({ id: r.id, ...(r.session ? { resume: r.session } : {}) })
+    this.queue.push({ id: r.id, ...(resume ? { resume } : {}), ...(fresh ? { reply: true } : {}) })
     this.pump()
     return next
   }
@@ -139,7 +200,9 @@ export class Runner {
         const used: RunRec = { ...r, ar: 'used' }
         await this.save(used, false)
         const j = await this.jobs.get(r.job), f = j?.flow[r.step]
-        if (!j || T.isClosed(j) || !f || f.s !== 'cur' || f.run || f.dr) continue
+        // a reply goes on over its draft; an ask only on a step still without one
+        const idle = r.parent ? !!f?.dr && !f.run : !!f && f.s === 'cur' && !f.run && !f.dr
+        if (!j || T.isClosed(j) || !f || !idle) continue
         if (all.some((x) => x.job === r.job && x.step === r.step && x.at > r.at)) continue
         await this.requeue(used, true)
       } catch (e) { console.error(`run ${r.id} did not resume by itself:`, (e as Error).message) }
@@ -204,7 +267,7 @@ export class Runner {
       this.live.set(x.id, l)
       this.feeds.set(x.id, [])
       // a store write can fail while the workplace is away; the run is swept by recover() later
-      void this.run(x.id, x.resume, l).catch((e) => console.error(`run ${x.id} did not settle:`, (e as Error).message))
+      void this.run(x.id, x.resume, l, !!x.reply).catch((e) => console.error(`run ${x.id} did not settle:`, (e as Error).message))
         // a resume can start the same id again before this one settles; that slot is not ours to free
         .finally(() => { if (this.live.get(x.id) === l) { this.live.delete(x.id); this.feeds.delete(x.id) } this.pump() })
     }
@@ -218,7 +281,8 @@ export class Runner {
     this.bus.emit({ kind: 'feed', run: id, t, tool })
   }
 
-  private async run(id: string, resume: string | undefined, l: Live) {
+  /** reply = the session gets the reply's text; else a resumed session is told to go on */
+  private async run(id: string, resume: string | undefined, l: Live, reply = false) {
     let r = await this.get(id)
     if (!r) return
     if (l.why) { await this.end(r, l.why, l.reason || l.why); return }
@@ -263,7 +327,8 @@ export class Runner {
         await this.jobs.cmd(rec.job, { op: 'runDraft', step: rec.step, t }, undefined, 'runner')
         l.drafted = true
         r = { ...r!, state: 'draft' }
-        await this.save(r)
+        // an accept turn pushes only if its accept fails
+        await this.save(r, rec.intent !== 'accept')
       },
       addArtifact: (n: string, content: string) => keep(safeName(n), (f) => writeFile(f, content, 'utf8')),
       addArtifactFile: async (p: string, n?: string) => {
@@ -307,23 +372,40 @@ export class Runner {
         knowledgePropose: async (p: KnowledgeIn) => (await kn.propose({ ...p, by: `run ${rec.job}/${rec.step}` })).id,
       } : {}),
     }
-    let error: string | undefined
+    let error: string | undefined, said = ''
     try {
       // a resumed session already has its context
       const first = resume ? null : await input(job)
-      const prompt = first ? buildPrompt(this.ctx(), job, rec.step, rec.q, first.o) : RESUME_PROMPT
+      const prompt = first ? buildPrompt(this.ctx(), job, rec.step, rec.q, first.o)
+        : reply ? replyPrompt(rec.q, rec.intent ?? 'revise', this.me)
+        : rec.intent === 'ask' ? RESUME_ASK_PROMPT : RESUME_PROMPT
       for await (const e of this.sdk.start({ prompt, ...(first?.images.length ? { images: first.images } : {}), resume, cwd, tools, abort: l.ac })) {
         if (l.why) break
         if (e.k === 'session') { if (r!.session !== e.id) { r = { ...r!, session: e.id }; await this.save(r) } }
-        else if (e.k === 'text') this.line(id, e.t)
+        else if (e.k === 'text') { this.line(id, e.t); said = e.t }
         else if (e.k === 'tool') this.line(id, e.input, e.name)
-        else if (e.k === 'result' && !e.ok) error = e.error || 'the session failed'
+        else if (e.k === 'result') { if (!e.ok) error = e.error || 'the session failed'; else if (e.t) said = e.t }
       }
     } catch (e) {
       if (!l.why) error = (e as Error).message || String(e)
     }
     if (l.why) return // cancel / interruptAll already settled the record
-    if (l.drafted) { await this.save({ ...r!, state: 'draft', ended: new Date().toISOString() }, false); return }
+    const now = () => new Date().toISOString()
+    if (l.drafted) {
+      // a failed accept leaves the revised draft waiting, with a push
+      const kept = rec.intent !== 'accept' || await this.jobCmd(rec, { op: 'acceptDraft', step: rec.step, said: true }, rec.via ?? 'page')
+      await this.save({ ...r!, state: 'draft', ended: now() }, !kept)
+      return
+    }
+    if (rec.intent === 'ask' && !error) {
+      const a = said.trim().slice(0, ANSWER_MAX)
+      if (a) {
+        await this.jobCmd(rec, { op: 'runAnswer', step: rec.step, a })
+        await this.save({ ...r!, state: 'answered', a, ended: now() })
+        return
+      }
+      error = 'the session ended without an answer'
+    }
     await this.end(r!, 'failed', error || 'the session ended without a draft')
   }
 }

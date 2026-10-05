@@ -18,7 +18,7 @@ import { buildPrompt } from './prompt.ts'
 import { Runner, safeName } from './runner.ts'
 
 const tick = () => new Promise((r) => setTimeout(r, 20))
-async function until(f: () => boolean) { const t0 = Date.now(); while (!f()) { if (Date.now() - t0 > 2000) throw new Error('timed out'); await tick() } }
+async function until(f: () => boolean | Promise<boolean>) { const t0 = Date.now(); while (!(await f())) { if (Date.now() - t0 > 2000) throw new Error('timed out'); await tick() } }
 
 function setup(open = { v: true }, extra: Partial<ConstructorParameters<typeof Runner>[0]> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'wc-run-'))
@@ -610,4 +610,136 @@ test('job tools create jobs in the run\'s workspace and start them; at most 5 a 
   await until(() => plain.sessions.length === 1)
   assert.equal(plain.sessions[0].tools.createJob, undefined)
   assert.equal(plain.sessions[0].tools.startJob, undefined)
+})
+
+/** a started job whose first step holds a draft from a run with session S1 */
+async function withDraft(s: ReturnType<typeof setup>) {
+  const j = await started(s.jobs), step = T.atOf(demoCtx(), j)!
+  const r = await s.runner.ask(j.id, step, 'go')
+  await until(() => s.sessions.length === 1)
+  s.sessions[0].push({ k: 'session', id: 'S1' })
+  await s.sessions[0].tools.submitDraft('v1'); s.sessions[0].end()
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  return { job: j.id, step, r }
+}
+
+test('a revise reply resumes the session with the reply prompt and replaces the draft', async () => {
+  const s = setup(), d = await withDraft(s)
+  const r = await s.runner.reply(d.job, d.step, 'shorter', 'revise')
+  assert.equal(r.parent, d.r.id); assert.equal(r.intent, 'revise')
+  await until(() => s.sessions.length === 2)
+  assert.equal(s.sessions[1].resume, 'S1'); assert.match(s.sessions[1].prompt, /replied to your draft:\n\nshorter/)
+  assert.equal((await s.jobs.get(d.job))!.flow[d.step].dr!.t, 'v1', 'the draft stays while it runs')
+  await s.sessions[1].tools.submitDraft('v2'); s.sessions[1].end()
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  const f = (await s.jobs.get(d.job))!.flow[d.step]
+  assert.equal(f.dr!.t, 'v2'); assert.equal(f.s, 'wait'); assert.equal(await state(s.runner, r.id), 'draft')
+})
+
+test('an ask reply keeps the answer, ends answered and leaves the draft', async () => {
+  const s = setup(), d = await withDraft(s), seen: string[] = []
+  s.runner.onSettled((x) => seen.push(x.state))
+  const r = await s.runner.reply(d.job, d.step, 'why X?', 'ask')
+  await until(() => s.sessions.length === 2)
+  s.sessions[1].push({ k: 'text', t: 'thinking' }); s.sessions[1].end(true, undefined, 'Because of Y.')
+  await until(() => seen.includes('answered'))
+  const rec = (await s.runner.get(r.id))!
+  assert.equal(rec.a, 'Because of Y.'); assert.ok(rec.ended)
+  const j = (await s.jobs.get(d.job))!, f = j.flow[d.step]
+  assert.equal(f.dr!.t, 'v1'); assert.equal(f.run, null); assert.equal(f.s, 'wait')
+  assert.ok(j.jr.some((e) => /answered: Because of Y\./.test(e.c) && e.a === 'LLM'))
+})
+
+test('an ask reply with no text fails; a draft in an ask turn counts as revise', async () => {
+  const s = setup(), d = await withDraft(s)
+  const r = await s.runner.reply(d.job, d.step, 'hm', 'ask')
+  await until(() => s.sessions.length === 2); s.sessions[1].end()
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  const rec = (await s.runner.get(r.id))!
+  assert.equal(rec.state, 'failed'); assert.match(rec.reason!, /without an answer/)
+  assert.equal((await s.jobs.get(d.job))!.flow[d.step].dr!.t, 'v1', 'a failed reply keeps the draft')
+  const r2 = await s.runner.reply(d.job, d.step, 'and?', 'ask')
+  await until(() => s.sessions.length === 3)
+  assert.equal(s.sessions[2].resume, 'S1', 'a failed reply without a session does not break the chain')
+  await s.sessions[2].tools.submitDraft('v3'); s.sessions[2].end()
+  await until(async () => (await s.runner.get(r2.id))?.ended != null)
+  assert.equal(await state(s.runner, r2.id), 'draft'); assert.equal((await s.jobs.get(d.job))!.flow[d.step].dr!.t, 'v3')
+})
+
+test("an accept reply revises, then accepts on the replier's word", async () => {
+  const s = setup(), d = await withDraft(s)
+  const r = await s.runner.reply(d.job, d.step, 'fine, fix the typo', 'accept', { via: 'session' })
+  await until(() => s.sessions.length === 2)
+  await s.sessions[1].tools.submitDraft('v2'); s.sessions[1].end()
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  const j = (await s.jobs.get(d.job))!
+  assert.equal(j.flow[d.step].out, 'v2'); assert.equal(j.flow[d.step].s, 'done')
+  const e = j.jr.find((x) => /as said in the reply/.test(x.o))!
+  assert.equal(e.a, 'Claude Code')
+  assert.ok(j.jr.some((x) => /Replied to the LLM draft/.test(x.o) && x.a === 'Claude Code'))
+})
+
+test('an accept that cannot be saved leaves the revised draft waiting and pushes it', async () => {
+  const s = setup(), d = await withDraft(s), seen: string[] = []
+  s.runner.onSettled((x) => seen.push(x.state))
+  await s.runner.reply(d.job, d.step, 'ok', 'accept')
+  await until(() => s.sessions.length === 2)
+  await s.sessions[1].tools.submitDraft('v2')
+  assert.equal(seen.length, 0, 'an accept turn does not push its draft before the accept')
+  await s.jobs.cmd(d.job, { op: 'close', st: 'done' })
+  s.sessions[1].end()
+  await until(() => seen.includes('draft'))
+  assert.equal((await s.jobs.get(d.job))!.flow[d.step].dr!.t, 'v2')
+})
+
+test('a reply is refused without a draft, while a run is on, or without a session', async () => {
+  const s = setup(), d = await withDraft(s)
+  await s.runner.reply(d.job, d.step, 'a', 'revise')
+  await assert.rejects(s.runner.reply(d.job, d.step, 'b', 'revise'), code(409, 'busy'))
+  const t = setup(), j = await started(t.jobs), step = T.atOf(demoCtx(), j)!
+  await assert.rejects(t.runner.reply(j.id, step, 'x', 'revise'), code(409, 'no_draft'))
+  const r = await t.runner.ask(j.id, step, 'go'); await until(() => t.sessions.length === 1)
+  await t.sessions[0].tools.submitDraft('v1'); t.sessions[0].end()
+  await until(async () => (await t.runner.get(r.id))?.ended != null)
+  await assert.rejects(t.runner.reply(j.id, step, 'x', 'revise'), code(409, 'no_session'))
+  await assert.rejects(t.runner.reply(j.id, step, ' ', 'revise'), code(400, 'bad_args'))
+  await assert.rejects(t.runner.reply(j.id, step, 'x', 'nope' as never), code(400, 'bad_args'))
+  t.open.v = false
+  await assert.rejects(t.runner.reply(j.id, step, 'x', 'revise'), code(503))
+})
+
+test('a reply interrupted before it started resumes with the reply, not the generic prompt', async () => {
+  const s = setup({ v: true }, { max: 1 }), d = await withDraft(s)
+  const other = (await targets(s.jobs, 4)).find((x) => x.job !== d.job)!
+  await s.runner.ask(other.job, other.step, 'busy'); await until(() => s.sessions.length === 2)
+  const r = await s.runner.reply(d.job, d.step, 'shorter', 'revise')
+  await s.runner.interruptAll('A went away')
+  assert.equal(await state(s.runner, r.id), 'interrupted')
+  assert.equal((await s.jobs.get(d.job))!.flow[d.step].dr!.t, 'v1')
+  await s.runner.resume(r.id)
+  await until(() => s.sessions.length === 3)
+  assert.equal(s.sessions[2].resume, 'S1'); assert.match(s.sessions[2].prompt, /replied to your draft:\n\nshorter/)
+})
+
+test('reject with a reason redoes the step in a fresh session with the draft and why', async () => {
+  const s = setup(), d = await withDraft(s)
+  const res = await s.jobs.cmd(d.job, { op: 'rejectDraft', step: d.step, why: 'wrong scope' })
+  const out = await s.runner.redoRejected(res.prev, { op: 'rejectDraft', step: d.step, why: 'wrong scope' })
+  assert.ok(out.run); await until(() => s.sessions.length === 2)
+  assert.equal(s.sessions[1].resume, undefined)
+  assert.match(s.sessions[1].prompt, /## Rejected draft\nv1\n\n## Why\nwrong scope/)
+  assert.deepEqual(await s.runner.redoRejected(res.prev, { op: 'rejectDraft', step: d.step }), {})
+  s.open.v = false
+  const no = await s.runner.redoRejected(res.prev, { op: 'rejectDraft', step: d.step, why: 'again' })
+  assert.match(no.redo!, /bridge is unavailable/)
+})
+
+test('settle waits for the end, or returns the record as it is at the timeout', async () => {
+  const s = setup(), d = await withDraft(s)
+  const r = await s.runner.reply(d.job, d.step, 'why?', 'ask')
+  assert.equal((await s.runner.settle(r.id, 50)).ended, undefined)
+  await until(() => s.sessions.length === 2)
+  const p = s.runner.settle(r.id, 2000)
+  s.sessions[1].end(true, undefined, 'Y.')
+  assert.equal((await p).state, 'answered')
 })

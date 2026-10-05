@@ -1,7 +1,7 @@
 import { contextSection, ctxLabel, renderNote } from '../../src/model/context.ts'
 import type { Resolved } from '../../src/model/context.ts'
 import * as T from '../../src/model/transitions.ts'
-import type { Job } from '../../src/model/types.ts'
+import type { Job, RunIntent } from '../../src/model/types.ts'
 import type { Note } from '../knowledge/notes.ts'
 
 /* What a run is told, read at its start so it can begin working instead of reading. The generated part
@@ -84,3 +84,18 @@ export function contextText(x: T.Ctx, j: Job, step: string, q: string, o: Prompt
 }
 
 export const RESUME_PROMPT = 'The Work Console resumed this run. Continue the same step from where you stopped; finish with submit_draft(text). context() returns the job as it is now.'
+export const RESUME_ASK_PROMPT = 'The Work Console resumed this run. Finish answering the last message in text; do not call submit_draft.'
+
+const REPLY_TAIL: Record<RunIntent, string> = {
+  revise: 'Change the draft as asked and call submit_draft with the whole new text.',
+  accept: 'Change the draft as asked, if anything, and call submit_draft with the whole new text; it is accepted as it is then.',
+  ask: 'Answer in text. Do not call submit_draft: the draft stays as it is.',
+}
+/** a reply to the run's own draft, in its session */
+export const replyPrompt = (q: string, intent: RunIntent, me?: string) => `${me || 'the user'} replied to your draft:\n\n${q}\n\n${REPLY_TAIL[intent]}`
+
+/** the most of a rejected draft a redo carries */
+const REDO_DRAFT_MAX = 6000
+/** a fresh run's instruction after a rejected draft: the step's ask, the draft and why */
+export const redoText = (ask: string, draft: string, why: string) =>
+  `${ask}\n\n## Rejected draft\n${draft.length > REDO_DRAFT_MAX ? draft.slice(0, REDO_DRAFT_MAX) + '…' : draft}\n\n## Why\n${why.trim()}`
