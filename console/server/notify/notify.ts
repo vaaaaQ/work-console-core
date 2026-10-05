@@ -92,8 +92,9 @@ export class Notify {
   private stepName(j: Job | undefined, step: string) { return (j && T.stepOf(this.ctx(), j, step)?.t) || step }
 
   async run(r: RunRec, j?: Job) {
-    const what = r.state === 'draft' ? 'draft ready' : r.state === 'failed' ? 'run failed' : r.ar === 'due' ? 'run interrupted, resumes by itself' : 'run interrupted'
-    await this.push(`${r.job} · ${this.stepName(j, r.step)}: ${what}`, r.reason || j?.t || '', withWs(`/?job=${encodeURIComponent(r.job)}&step=${encodeURIComponent(r.step)}`, j?.ws))
+    const what = r.state === 'draft' ? (r.parent ? 'draft revised' : 'draft ready') : r.state === 'answered' ? 'LLM answered'
+      : r.state === 'failed' ? 'run failed' : r.ar === 'due' ? 'run interrupted, resumes by itself' : 'run interrupted'
+    await this.push(`${r.job} · ${this.stepName(j, r.step)}: ${what}`, r.a?.slice(0, 200) || r.reason || j?.t || '', withWs(`/?job=${encodeURIComponent(r.job)}&step=${encodeURIComponent(r.step)}`, j?.ws))
   }
 
   async needsYou(j: Job) {

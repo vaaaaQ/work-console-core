@@ -145,3 +145,12 @@ test('a new knowledge proposal pushes once, to Approvals', async () => {
   await flush()
   assert.deepEqual(sent.map((s) => [s.title, s.body, s.url]), [['Knowledge: Sleeping tabs', 'llm: seen twice', '/?view=approvals']])
 })
+
+test('a reply pushes its answer, or says the draft was revised', async () => {
+  const { sent, settled } = setup()
+  const r: RunRec = { id: 'r2', job: 'J-0419', step: 'tr', q: 'why?', state: 'answered', a: 'Because.', at: '', parent: 'r1', intent: 'ask' }
+  settled(r); settled({ ...r, state: 'draft', a: undefined, intent: 'revise' })
+  await flush()
+  assert.deepEqual(sent.map((s) => [s.title, s.body]), [
+    ['J-0419 · Understand the request: LLM answered', 'Because.'], ['J-0419 · Understand the request: draft revised', sent[1].body]])
+})
