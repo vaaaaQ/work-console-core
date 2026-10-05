@@ -118,7 +118,7 @@ Only `workspaces/page.ts` imports it.
 | Field | What |
 |---|---|
 | `page`, `jobPrefix` | the page half; job ids are `<prefix>-NNNN`, with a prefix matching `^[A-Z][A-Z0-9]{0,7}$`, unique. The default store renames the gateway's `J-NNNN` to `<prefix>-NNNN` |
-| `defaults` | config defaults: `gatewayUrl`, `consoleTokenPath`, `llmTokenPath`, `workDir`, `runTools`, `teamTz`, `maxSessions`, `knowledgeDir`, and the workspace's own keys. The core's `workDir` is the repo around the console: the nearest folder with a `.git`, else the console's parent |
+| `defaults` | config defaults: `gatewayUrl`, `consoleTokenPath`, `llmTokenPath`, `workDir`, `runTools`, `teamTz`, `maxSessions`, `knowledgeDir`, `autoAsk` (default false, see Auto-ask), and the workspace's own keys. The core's `workDir` is the repo around the console: the nearest folder with a `.git`, else the console's parent |
 | `source(cfg, { bus })` | a `Bridge`; the default is the HTTP gateway client |
 | `store(source, cfg, { bus, home })` | the default is B through the source |
 | `llm` | the default `runTools` and the MCP servers for its LLM runs; `llm.mcp` may not name `bridge` or `run` |
@@ -214,6 +214,20 @@ What a run's prompt holds, in this order (`console/server/llm/prompt.ts`):
 
 - The run tool `context` returns the same parts but How to work, pictures included, read anew, for a long run whose first prompt is far behind it.
 - A resumed run keeps its session and gets one line; it reads nothing until it calls `context`.
+
+### Auto-ask
+
+With `autoAsk: true` in its config a workspace runs its LLM steps by itself (`console/server/llm/autoAsk.ts`).
+A person still accepts, edits or rejects every draft.
+
+| When | What |
+|---|---|
+| A step becomes current | on Start, on accept, Mark done or Skip of the step before, and on Return to. 6 s later, if the step is still current with no run and no draft, it is asked with the Ask modal's default text, signed `console` |
+| Not a trigger | Reject, Cancel, Reopen step, Resume of a waiting step, a recurring job's new period, a step that was already current, and anything a run does |
+| A run is interrupted | it resumes once by itself when the bridge or the console comes back: its session if it has one, else afresh. Not if its job closed, its step moved on or a newer run took its place. A second interruption, and every failed run, waits for a person |
+
+- The 6 s wait outlasts the page's Undo, so an undone step asks nothing.
+- Sessions stay capped at `maxSessions`; the rest queue. The push for an interrupted run says it resumes by itself.
 
 ## Knowledge
 

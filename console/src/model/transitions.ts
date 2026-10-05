@@ -59,6 +59,8 @@ export function rvState(j: Job, f: Flow) {
   const w = PACKS[j.ws], r = f.rv || { v: [], need: 2 }
   return { r, ok: r.v.filter((v) => v.v >= w.ok).length, veto: r.v.some((v) => v.v <= w.veto) }
 }
+/** the instruction an ask starts from: the step in its own words */
+export const askText = (s: Step) => `Do: ${s.t}.\nDone when: ${s.x}.${s.a ? `\nProduce: ${s.a.join(', ')}.` : ''}`
 export const nextTxt = (x: Ctx, j: Job, nx: string | null) => {
   const s = nx ? stepOf(x, j, nx) : undefined
   return s ? `${s.m === 'llm' ? 'ask the LLM for' : 'work on'} “${s.t}”.` : j.st === 'recurring' ? 'wait for the next period.' : 'close the job.'
@@ -414,14 +416,16 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     case 'replied':
       jr(x, j, `Replied to “${cmd.subj}”.`, 'reply recorded on the mail.', 'carry on with the job.', by(x), 'ok')
       break
-    case 'runStart':
+    case 'runStart': {
       if (F.run) throw new CmdError('bad_state', `“${S.t}” already has an LLM run`)
       F.run = { q: cmd.q, at: nowOf(x).getTime(), id: cmd.id }; F.dr = null; F.s = 'cur'; F.nw = 1
       if (j.st === 'draft' || j.st === 'ready') j.st = 'active'
-      if (cmd.resumed) jr(x, j, `Resumed the LLM run for “${S.t}”.`, 'LLM run continues its session.', 'review the draft when it is ready.', by(x), 'cur')
-      else jr(x, j, `Asked the LLM for “${S.t}”.`, 'LLM run started.', 'review the draft when it is ready.', by(x), 'cur')
+      const a = cmd.auto ? 'console' : by(x), self = cmd.auto ? ' by itself' : ''
+      if (cmd.resumed) jr(x, j, `Resumed the LLM run for “${S.t}”.`, `LLM run continues its session${self}.`, 'review the draft when it is ready.', a, 'cur')
+      else jr(x, j, `Asked the LLM for “${S.t}”.`, `LLM run started${self}.`, 'review the draft when it is ready.', a, 'cur')
       syncStatus(x, j)
       break
+    }
     case 'runDraft':
       if (!F.run) throw new CmdError('bad_state', `“${S.t}” has no LLM run`)
       F.run = null; F.dr = { t: cmd.t, at: nowOf(x).toISOString(), nw: 1 }; F.s = 'wait'; F.m = 'LLM draft ready'; F.nw = 1
@@ -433,7 +437,8 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       const d = cmd.detail ? `: ${cmd.detail}` : ''
       if (cmd.why === 'cancelled') jr(x, j, `Cancelled the LLM run for “${S.t}”.`, 'no draft kept.', 'do it yourself, or ask again.', by(x), 'off')
       else if (cmd.why === 'failed') jr(x, j, `The LLM run for “${S.t}” failed${d}.`, 'no draft kept.', 'resume it, do it yourself, or ask again.', 'LLM', 'bad')
-      else jr(x, j, `The LLM run for “${S.t}” was interrupted${d}.`, 'no draft kept.', 'resume it when the console is back.', 'LLM', 'wait')
+      else jr(x, j, `The LLM run for “${S.t}” was interrupted${d}.`, 'no draft kept.',
+        cmd.due ? 'nothing; it resumes by itself when the console is back.' : 'resume it when the console is back.', 'LLM', 'wait')
       syncStatus(x, j)
       break
     }

@@ -108,6 +108,20 @@ test('a job that starts needing you fires once; create marks its mail', async ()
   assert.deepEqual(seen, [j.id])
 })
 
+test('onCmd hears each saved command once with who, the command, prev and the saved job; a refused one is not heard', async (t) => {
+  t.mock.method(console, 'error', () => {})
+  const { jobs } = setup(), j = await openJob(jobs), at = T.atOf(demoCtx(), j)!
+  const heard: { who: string; op: string; pv?: number; v?: number }[] = []
+  jobs.onCmd(() => { throw new Error('a listener that throws') })
+  const off = jobs.onCmd((e) => heard.push({ who: e.who, op: e.cmd.op, pv: e.prev.v, v: e.job.v }))
+  const r = await jobs.cmd(j.id, { op: 'stepDone', step: at }, j.v)
+  await assert.rejects(jobs.cmd(j.id, { op: 'stepDone', step: 'nope' }, r.job.v), code(400))
+  await jobs.cmd(j.id, { op: 'journal', o: 'x', c: '-', n: '-' }, undefined, 'runner')
+  off()
+  await jobs.cmd(j.id, { op: 'journal', o: 'y', c: '-', n: '-' }, undefined, 'runner')
+  assert.deepEqual(heard, [{ who: 'page', op: 'stepDone', pv: j.v, v: j.v! + 1 }, { who: 'runner', op: 'journal', pv: j.v! + 1, v: j.v! + 2 }])
+})
+
 test('a run may create a job, signed LLM, and start one; nothing else', async () => {
   const { jobs } = setup()
   const j = await jobs.create({ t: 'Found along the way', key: '', pb: 'action', prj: 'p', ws: 'acme', src: 'J-0001' }, 'run')

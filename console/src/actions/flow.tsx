@@ -9,6 +9,7 @@ import {
   S, TPL, allSent, applyLocal, byId, chName, clearNew, ctxRows, isLive, keyShort, llmText, plainT, postToChat, putJob,
   restore, rvState, snap, stepOf, steps,
 } from '../model/world.ts'
+import { askText } from '../model/transitions.ts'
 import type { BadgeKind, Cmd, Job, JobStatus } from '../model/types.ts'
 import { commit } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
@@ -139,7 +140,7 @@ export function askLlm(j: Job, sid: string) {
       <div className="field"><span className="lbl">Context it gets</span><div className="ctx">{ctx.map(([i, n], k) => <span key={k} className="art"><Ic n={i} sm />{n}</span>)}</div>
         <span className="hint">Read when the run starts; change it in the job's Context panel.</span></div>
       <label className="field"><span>Instruction</span><textarea className="ta" name="q" rows={5} data-autofocus
-        defaultValue={`Do: ${s.t}.\nDone when: ${s.x}.${s.a ? `\nProduce: ${s.a.join(', ')}.` : ''}`} /></label>
+        defaultValue={askText(s)} /></label>
       <p className="why" style={{ margin: 0 }}>You get a draft back. Nothing is sent or kept until you accept it. <span className="hint">Ctrl+Enter runs it.</span></p>
     </>,
     foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="bot" sm />Run</button></>,

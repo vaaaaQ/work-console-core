@@ -254,6 +254,44 @@ test("a job's work dir: runs get it, closing the job cleans it once, a load clea
   } finally { await fakeSpace.close() }
 })
 
+test('with autoAsk a space asks the llm step a job moves onto and resumes a due run when its bridge is back; without it, neither', async (t) => {
+  expectErrors(t, /run\(s\) not marked interrupted/, /runEnd on .* failed/, /loading the state from the bridge failed/)
+  install([{ page: acme }])
+  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-'))
+  const make = async (autoAsk: boolean) => {
+    const f = fakeSdk(), space = await makeSpace(acmeServer, { cfg: { ...wsCfg(dir), autoAsk }, home: dir, artifactsDir: join(dir, 'arts'), sdk: f.sdk, fake: true, push: async () => {}, askDelay: 0 })
+    space.source.start()
+    await until(() => space.source.available())
+    const j = await space.jobs.create({ t: 'Auto', key: 'NEW', pb: 'action', prj: acme.pack.prj[0], ws: space.id })
+    await space.jobs.cmd(j.id, { op: 'start' })
+    const run = async () => (await space.runner.all()).find((r) => r.job === j.id)
+    return { space, sessions: f.sessions, j, run }
+  }
+  const on = await make(true), off = await make(false)
+  try {
+    await until(() => on.sessions.length === 1)
+    assert.equal((await on.run())!.step, 'tr')
+    on.sessions[0].push({ k: 'session', id: 'sess-1' })
+    await off.space.runner.ask(off.j.id, 'tr', 'by hand')
+    await until(() => off.sessions.length === 1)
+    off.sessions[0].push({ k: 'session', id: 'sess-2' })
+    await until(async () => (await on.run())?.session === 'sess-1' && (await off.run())?.session === 'sess-2')
+    for (const s of [on, off]) s.space.fake!.setDown(true)
+    await until(() => on.sessions[0].abort.signal.aborted && off.sessions[0].abort.signal.aborted)
+    for (const s of [on, off]) s.space.fake!.setDown(false)
+    await until(() => on.sessions.length === 2)
+    assert.equal(on.sessions[1].resume, 'sess-1')
+    assert.equal((await on.run())!.ar, 'used')
+    await until(async () => (await off.run())?.state === 'interrupted')
+    await new Promise((r) => setTimeout(r, 50))
+    assert.deepEqual([off.sessions.length, (await off.run())!.ar], [1, undefined], 'without autoAsk the run waits for the user')
+  } finally {
+    for (const s of [...on.sessions, ...off.sessions]) s.end()
+    await until(async () => (await on.space.runner.all()).every((r) => r.state !== 'running' && r.state !== 'queued'))
+    await on.space.close(); await off.space.close()
+  }
+})
+
 test("a stored playbook's planned messages outlive a restart: sent works on the space made anew over the same B", async () => {
   install([{ page: acme }])
   const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-'))

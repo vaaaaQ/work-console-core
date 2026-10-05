@@ -11,12 +11,15 @@ import type { Store } from '../store/port.ts'
    page's commands plus returnTo and signs the journal; the console signs what it decides itself. */
 
 export type Who = 'page' | 'runner' | 'session' | 'console' | 'run'
+/** a saved command: who sent it, the job before it and the job as saved */
+export type CmdEv = { who: Who; cmd: Cmd; prev: Job; job: Job }
 const ALLOWED: Partial<Record<Who, Set<string>>> = { page: new Set(PAGE_OPS), session: new Set(SESSION_OPS), console: new Set(['noteAdd', 'reopen', 'stepDone', 'artifact', 'journal']), run: new Set(['start']) }
 const BY: Partial<Record<Who, string>> = { session: 'Claude Code', console: 'console', run: 'LLM' }
 
 export class Jobs {
   private store: Store; private bus: Bus; private ctx: () => T.Ctx; private gate: () => boolean
   private nyf: ((j: Job) => void)[] = []
+  private cmdf: ((e: CmdEv) => void)[] = []
 
   constructor(o: { store: Store; bus: Bus; ctx: () => T.Ctx; gate: () => boolean }) {
     this.store = o.store; this.bus = o.bus; this.ctx = o.ctx; this.gate = o.gate
@@ -24,6 +27,11 @@ export class Jobs {
 
   /** fires when a job starts needing you (it did not a moment ago) */
   onNeedsYou(f: (j: Job) => void) { this.nyf.push(f) }
+  /** fires once per saved command; returns the unsubscribe */
+  onCmd(f: (e: CmdEv) => void) {
+    this.cmdf.push(f)
+    return () => { this.cmdf = this.cmdf.filter((g) => g !== f) }
+  }
 
   private open() { if (!this.gate()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; nothing was changed') }
 
@@ -56,6 +64,7 @@ export class Jobs {
       }
       try {
         const job = await this.put(cur, r.job, cur.v ?? null)
+        for (const f of this.cmdf) { try { f({ who, cmd: c, prev: cur, job }) } catch (e) { console.error(`a listener of ${c.op} on ${id} failed:`, (e as Error).message) } }
         return { job, prev: cur, nx: r.nx }
       } catch (e) {
         if ((who === 'runner' || who === 'console') && e instanceof HttpError && e.status === 409 && n < 5) continue

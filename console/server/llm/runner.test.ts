@@ -20,15 +20,20 @@ import { Runner, safeName } from './runner.ts'
 const tick = () => new Promise((r) => setTimeout(r, 20))
 async function until(f: () => boolean) { const t0 = Date.now(); while (!f()) { if (Date.now() - t0 > 2000) throw new Error('timed out'); await tick() } }
 
-function setup(open = { v: true }) {
+function setup(open = { v: true }, extra: Partial<ConstructorParameters<typeof Runner>[0]> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'wc-run-'))
   const store = fileStore(join(dir, 's.json'), demoSeed)
   const bus = new Bus(), evs: Ev[] = []
   bus.on((e) => evs.push(e))
   const jobs = new Jobs({ store, bus, ctx: demoCtx, gate: () => open.v })
   const { sdk, sessions } = fakeSdk()
-  const mk = () => new Runner({ store, jobs, bus, sdk, cwd: dir, gate: () => open.v, artifactsDir: join(dir, 'arts'), ctx: demoCtx })
+  const mk = () => new Runner({ store, jobs, bus, sdk, cwd: dir, gate: () => open.v, artifactsDir: join(dir, 'arts'), ctx: demoCtx, ...extra })
   return { store, jobs, bus, evs, sessions, runner: mk(), mk, open, dir }
+}
+/** a fresh action job, started: its first step tr is current */
+async function started(jobs: Jobs) {
+  const j = await jobs.create({ t: 'Auto', key: 'K-1', pb: 'action', prj: 'p', ws: 'acme' })
+  return (await jobs.cmd(j.id, { op: 'start' }, j.v)).job
 }
 /** four open steps without a run, on different jobs where possible */
 async function targets(jobs: Jobs, n: number) {
@@ -139,6 +144,77 @@ test('resume continues the stored session; without a session it is 409', async (
   await until(() => evs.some((e) => e.kind === 'run' && e.run.id === r2.id && e.run.state === 'failed'))
   assert.equal(await state(runner, r2.id), 'failed')
   await assert.rejects(runner.resume(r2.id), code(409, 'no_session'))
+})
+
+test('with autoResume an interrupted run is due once: resumeDue continues its session signed console, a second interruption waits', async () => {
+  const s = setup(undefined, { autoResume: true }), j = await started(s.jobs)
+  const r = await s.runner.ask(j.id, 'tr', 'q', { auto: true })
+  assert.equal((await s.jobs.get(j.id))!.jr[0].a, 'console')
+  await until(() => s.sessions.length === 1)
+  s.sessions[0].push({ k: 'session', id: 'sess-1' })
+  await tick()
+  await s.runner.interruptAll('the bridge went away')
+  assert.deepEqual([await state(s.runner, r.id), (await s.runner.get(r.id))!.ar], ['interrupted', 'due'])
+  assert.equal((await s.jobs.get(j.id))!.jr[0].n, 'nothing; it resumes by itself when the console is back.')
+  await s.runner.resumeDue()
+  await until(() => s.sessions.length === 2)
+  assert.equal(s.sessions[1].resume, 'sess-1')
+  assert.equal((await s.runner.get(r.id))!.ar, 'used')
+  const line = (await s.jobs.get(j.id))!.jr[0]
+  assert.deepEqual([line.a, line.o, line.c], ['console', 'Resumed the LLM run for “Understand the request”.', 'LLM run continues its session by itself.'])
+  await s.runner.interruptAll('the bridge went away again')
+  assert.deepEqual([await state(s.runner, r.id), (await s.runner.get(r.id))!.ar], ['interrupted', 'used'])
+  assert.equal((await s.jobs.get(j.id))!.jr[0].n, 'resume it when the console is back.')
+  await s.runner.resumeDue(); await tick()
+  assert.equal(s.sessions.length, 2, 'it waits for the user')
+})
+
+test('a due run that never started a session starts afresh with the same instruction; a queued one waits its turn', async () => {
+  const s = setup(undefined, { autoResume: true, max: 1 }), a = await started(s.jobs), b = await started(s.jobs)
+  const ra = await s.runner.ask(a.id, 'tr', 'first'), rb = await s.runner.ask(b.id, 'tr', 'second')
+  await until(() => s.sessions.length === 1)
+  await s.runner.interruptAll('the bridge went away')
+  assert.deepEqual([(await s.runner.get(ra.id))!.ar, (await s.runner.get(rb.id))!.ar], ['due', 'due'])
+  await s.runner.resumeDue()
+  await until(() => s.sessions.length === 2)
+  assert.equal(s.sessions[1].resume, undefined)
+  assert.match(s.sessions[1].prompt, /first/)
+  assert.equal(await state(s.runner, rb.id), 'queued')
+  const line = (await s.jobs.get(a.id))!.jr[0]
+  assert.deepEqual([line.a, line.o, line.c], ['console', 'Asked the LLM for “Understand the request”.', 'LLM run started by itself.'])
+})
+
+test('resumeDue uses up and skips a due run whose job closed, whose step moved on, or that has a newer run', async () => {
+  const s = setup(undefined, { autoResume: true }), js = [await started(s.jobs), await started(s.jobs), await started(s.jobs), await started(s.jobs)]
+  const rs = []
+  for (const j of js) rs.push(await s.runner.ask(j.id, 'tr', 'q'))
+  await until(() => s.sessions.length === 3)
+  await s.runner.interruptAll('the bridge went away')
+  const [a, b, c] = js
+  await s.jobs.cmd(a.id, { op: 'close', st: 'cancelled' }, (await s.jobs.get(a.id))!.v)
+  await s.jobs.cmd(b.id, { op: 'stepDone', step: 'tr' }, (await s.jobs.get(b.id))!.v)
+  const newer = await s.runner.ask(c.id, 'tr', 'again')
+  await until(() => s.sessions.length === 4)
+  await s.runner.cancel(newer.id)
+  await s.runner.resumeDue()
+  await until(() => s.sessions.length === 5)
+  await tick()
+  assert.equal(s.sessions.length, 5, 'only the fourth resumes')
+  assert.deepEqual(await Promise.all(rs.map(async (r) => [await state(s.runner, r.id), (await s.runner.get(r.id))!.ar])),
+    [['interrupted', 'used'], ['interrupted', 'used'], ['interrupted', 'used'], ['running', 'used']])
+})
+
+test('without autoResume nothing is due and resumeDue does nothing', async () => {
+  const s = setup(), j = await started(s.jobs)
+  const r = await s.runner.ask(j.id, 'tr', 'q')
+  await until(() => s.sessions.length === 1)
+  s.sessions[0].push({ k: 'session', id: 'sess-1' })
+  await tick()
+  await s.runner.interruptAll('the bridge went away')
+  assert.equal((await s.runner.get(r.id))!.ar, undefined)
+  assert.equal((await s.jobs.get(j.id))!.jr[0].n, 'resume it when the console is back.')
+  await s.runner.resumeDue(); await tick()
+  assert.equal(s.sessions.length, 1)
 })
 
 test('a second ask on the same step is 409; with the bridge down an ask is 503', async () => {

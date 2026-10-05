@@ -22,6 +22,8 @@ export interface WsConfig {
   browserPath?: string | null
   /** the workspace's knowledge notes; null = <home>/knowledge/<id> */
   knowledgeDir?: string | null
+  /** true = an llm step starts its run when the job moves onto it, and an interrupted run resumes once by itself */
+  autoAsk?: boolean
   [own: string]: unknown
 }
 export type PluginReq = { q: URLSearchParams; p: string[]; body(): Promise<Record<string, unknown>> }

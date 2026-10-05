@@ -6,7 +6,7 @@ import { JOBS0, JR, OVR, TPL0 } from '../data/demo.ts'
 import { clone } from '../lib/util.ts'
 import { KINDS } from './context.ts'
 import type { Job } from './types.ts'
-import { CmdError, DESC_MAX, apply, atOf, freshJob, isClosed, isLive, needsYou, nextMonth, seedFlow, steps } from './transitions.ts'
+import { CmdError, DESC_MAX, apply, askText, atOf, freshJob, isClosed, isLive, needsYou, nextMonth, seedFlow, steps } from './transitions.ts'
 import type { Ctx, NewJob } from './transitions.ts'
 
 const T0 = new Date('2026-09-30T12:00:00Z')
@@ -79,6 +79,24 @@ test('runEnd puts the step back and journals why; without a run it changes nothi
     assert.equal(e.jr[0].l, why === 'cancelled' ? 'off' : why === 'failed' ? 'bad' : 'wait')
   }
   assert.equal(apply(X, j, { op: 'runEnd', step: at, why: 'failed' }).job.jr.length, j.jr.length)
+})
+
+test('askText is the step in its own words: what to do, when it is done, what it produces', () => {
+  const s = { id: 'a', t: 'Read the issue', m: 'llm' as const, x: 'Criteria clear' }
+  assert.equal(askText(s), 'Do: Read the issue.\nDone when: Criteria clear.')
+  assert.equal(askText({ ...s, a: ['analysis.md', 'notes.md'] }), 'Do: Read the issue.\nDone when: Criteria clear.\nProduce: analysis.md, notes.md.')
+})
+
+test('a run the console starts or resumes by itself is signed console; an interrupted run that will resume says so', () => {
+  const j = open(), at = atOf(X, j)!
+  const mine = apply(X, j, { op: 'runStart', step: at, q: 'q', id: 'r1' }).job.jr[0]
+  assert.equal(mine.a, 'you'); assert.equal(mine.c, 'LLM run started.')
+  const auto = apply(X, j, { op: 'runStart', step: at, q: 'q', id: 'r1', auto: true }).job
+  assert.equal(auto.jr[0].a, 'console'); assert.match(auto.jr[0].o, /^Asked the LLM for “/); assert.equal(auto.jr[0].c, 'LLM run started by itself.')
+  const back = apply(X, j, { op: 'runStart', step: at, q: 'q', id: 'r1', resumed: true, auto: true }).job.jr[0]
+  assert.equal(back.a, 'console'); assert.match(back.o, /^Resumed the LLM run for “/); assert.equal(back.c, 'LLM run continues its session by itself.')
+  assert.equal(apply(X, auto, { op: 'runEnd', step: at, why: 'interrupted', due: true }).job.jr[0].n, 'nothing; it resumes by itself when the console is back.')
+  assert.equal(apply(X, auto, { op: 'runEnd', step: at, why: 'interrupted' }).job.jr[0].n, 'resume it when the console is back.')
 })
 
 test('runEnd and artifact still apply on a closed job (a run can end after close)', () => {

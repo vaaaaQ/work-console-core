@@ -150,6 +150,14 @@ test('a workspace config: core defaults, then its llm runTools, its defaults, le
   assert.deepEqual([c.runTools, c.teamTz, c.maxSessions, c.billingRepo], [['Grep'], 'Asia/Tokyo', 5, 'x'], 'the section beats a legacy key')
 })
 
+test('autoAsk is off unless a workspace turns it on; its config section turns it off again', () => {
+  const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: mkdtempSync(join(tmpdir(), 'wc-cfg-')) }), workspaces: {} }
+  const quiet = () => undefined, on = { ...acmeServer, defaults: { autoAsk: true } }
+  assert.equal(wsConfig(cfg, acmeServer, {}, quiet).autoAsk, false)
+  assert.equal(wsConfig(cfg, on, {}, quiet).autoAsk, true)
+  assert.equal(wsConfig({ ...cfg, workspaces: { acme: { autoAsk: false } } }, on, {}, quiet).autoAsk, false)
+})
+
 test("the env given to loadConfig sets every workspace's gateway and work dir", () => {
   const cfg = loadConfig({ WORK_CONSOLE_HOME: mkdtempSync(join(tmpdir(), 'wc-cfg-')), GATEWAY_URL: 'http://127.0.0.1:47999', WORK_CONSOLE_CWD: 'C:/work' })
   const c = wsConfig(cfg, acmeServer, {}, () => undefined)

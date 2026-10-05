@@ -41,6 +41,13 @@ test('runs: draft ready, failed and interrupted each push with the step name', a
   assert.equal(sent[0].url, '/?job=J-0419&step=tr&ws=acme', "the url opens the job's workspace")
 })
 
+test('an interrupted run that resumes by itself says so', async () => {
+  const { sent, settled } = setup()
+  settled({ id: 'r1', job: 'J-0419', step: 'tr', q: 'q', state: 'interrupted', reason: 'the console restarted', at: '', ar: 'due' })
+  await flush()
+  assert.equal(sent[0].title, 'J-0419 · Understand the request: run interrupted, resumes by itself')
+})
+
 test('a job that starts needing you pushes', async () => {
   const { sent, needs } = setup()
   needs(JOBS.find((j) => j.id === 'J-0419')!)

@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { copyFile, mkdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type * as T from '../../src/model/transitions.ts'
+import * as T from '../../src/model/transitions.ts'
 import type { Job, RunRec, Ws } from '../../src/model/types.ts'
 import { HttpError } from '../events.ts'
 import type { Bus } from '../events.ts'
@@ -46,6 +46,7 @@ export class Runner {
   private screenshot?: (o: Shot & { out: string; fileRoot?: string }) => Promise<unknown>
   private jobTools?: JobTools
   private notes?: Notes
+  private autoResume: boolean
   private queue: { id: string; resume?: string }[] = []
   private live = new Map<string, Live>()
   private feeds = new Map<string, string[]>()
@@ -63,9 +64,12 @@ export class Runner {
     jobTools?: JobTools
     /** the workspace's knowledge notes; none = no knowledge tools */
     notes?: Notes
+    /** an interrupted run resumes by itself once, at resumeDue() after the comeback */
+    autoResume?: boolean
   }) {
     this.store = o.store; this.jobs = o.jobs; this.bus = o.bus; this.sdk = o.sdk; this.cwd = o.cwd
     this.max = o.max ?? 3; this.gate = o.gate; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => ({ ctx: [], images: [] })); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot; this.jobTools = o.jobTools; this.notes = o.notes
+    this.autoResume = !!o.autoResume
   }
 
   /** draft ready, failed or interrupted: the moments worth a push */
@@ -92,12 +96,13 @@ export class Runner {
     return j
   }
 
-  async ask(job: string, step: string, q: string): Promise<RunRec> {
+  /** auto = the console asks by itself, and the journal says so */
+  async ask(job: string, step: string, q: string, o: { auto?: boolean } = {}): Promise<RunRec> {
     if (!this.gate()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; no run was started')
     if (!q || !q.trim()) throw new HttpError(400, 'bad_args', 'the instruction is empty')
     await this.hasRun(job, step)
     const r: RunRec = { id: `r-${randomBytes(6).toString('hex')}`, job, step, q: q.trim(), state: 'queued', at: new Date().toISOString() }
-    await this.jobs.cmd(job, { op: 'runStart', step, q: r.q, id: r.id }, undefined, 'runner')
+    await this.jobs.cmd(job, { op: 'runStart', step, q: r.q, id: r.id, ...(o.auto ? { auto: true } : {}) }, undefined, 'runner')
     await this.save(r)
     this.queue.push({ id: r.id })
     this.pump()
@@ -109,14 +114,36 @@ export class Runner {
     if (!r) throw new HttpError(404, 'not_found', `no run ${id}`)
     if (r.state !== 'interrupted' && r.state !== 'failed') throw new HttpError(409, 'bad_state', `a ${r.state} run cannot be resumed`)
     if (!r.session) throw new HttpError(409, 'no_session', 'this run never started a session; ask again instead')
+    return this.requeue(r, false)
+  }
+
+  /** the same record queued again: its session continues, or without one it starts afresh on the same instruction */
+  private async requeue(r: RunRec, auto: boolean): Promise<RunRec> {
     if (!this.gate()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; the run was not resumed')
     await this.hasRun(r.job, r.step)
-    await this.jobs.cmd(r.job, { op: 'runStart', step: r.step, q: r.q, id: r.id, resumed: true }, undefined, 'runner')
+    await this.jobs.cmd(r.job, { op: 'runStart', step: r.step, q: r.q, id: r.id, ...(r.session ? { resumed: true } : {}), ...(auto ? { auto: true } : {}) }, undefined, 'runner')
     const next: RunRec = { ...r, state: 'queued', reason: undefined, ended: undefined }
     await this.save(next)
-    this.queue.push({ id: r.id, resume: r.session })
+    this.queue.push({ id: r.id, ...(r.session ? { resume: r.session } : {}) })
     this.pump()
     return next
+  }
+
+  /** after a comeback each due run goes again, once; one whose step moved on, or got a newer run, is only used up */
+  async resumeDue() {
+    if (!this.autoResume || !this.gate()) return
+    const all = await this.store.runs()
+    for (const r of all) {
+      if (r.state !== 'interrupted' || r.ar !== 'due') continue
+      try {
+        const used: RunRec = { ...r, ar: 'used' }
+        await this.save(used, false)
+        const j = await this.jobs.get(r.job), f = j?.flow[r.step]
+        if (!j || T.isClosed(j) || !f || f.s !== 'cur' || f.run || f.dr) continue
+        if (all.some((x) => x.job === r.job && x.step === r.step && x.at > r.at)) continue
+        await this.requeue(used, true)
+      } catch (e) { console.error(`run ${r.id} did not resume by itself:`, (e as Error).message) }
+    }
   }
 
   async cancel(id: string): Promise<RunRec> {
@@ -142,8 +169,8 @@ export class Runner {
       if ((r.state === 'running' || r.state === 'queued') && !this.live.has(r.id) && !this.queue.some((x) => x.id === r.id)) await this.end(r, 'interrupted', reason)
   }
 
-  /** A went away: stop every session and the queue; they resume only by hand. The sessions are
-      aborted first, whatever the store does; a write that fails is left for recover() */
+  /** A went away: stop every session and the queue; they resume by hand, or with autoResume once by
+      themselves. The sessions are aborted first, whatever the store does; a write that fails is left for recover() */
   async interruptAll(reason: string) {
     const q = this.queue.splice(0), started: string[] = []
     for (const [id, l] of this.live) {
@@ -162,8 +189,10 @@ export class Runner {
   }
 
   private async end(r: RunRec, state: 'cancelled' | 'failed' | 'interrupted', reason: string): Promise<RunRec> {
-    const next: RunRec = { ...r, state, reason, ended: new Date().toISOString() }
-    await this.jobCmd(r, { op: 'runEnd', step: r.step, why: state, detail: state === 'cancelled' ? undefined : reason })
+    // a run that already resumed by itself once waits for the user
+    const due = state === 'interrupted' && this.autoResume && r.ar !== 'used'
+    const next: RunRec = { ...r, state, reason, ended: new Date().toISOString(), ...(due ? { ar: 'due' as const } : {}) }
+    await this.jobCmd(r, { op: 'runEnd', step: r.step, why: state, detail: state === 'cancelled' ? undefined : reason, ...(due ? { due: true } : {}) })
     await this.save(next)
     return next
   }
@@ -176,7 +205,8 @@ export class Runner {
       this.feeds.set(x.id, [])
       // a store write can fail while the workplace is away; the run is swept by recover() later
       void this.run(x.id, x.resume, l).catch((e) => console.error(`run ${x.id} did not settle:`, (e as Error).message))
-        .finally(() => { this.live.delete(x.id); this.feeds.delete(x.id); this.pump() })
+        // a resume can start the same id again before this one settles; that slot is not ours to free
+        .finally(() => { if (this.live.get(x.id) === l) { this.live.delete(x.id); this.feeds.delete(x.id) } this.pump() })
     }
   }
 

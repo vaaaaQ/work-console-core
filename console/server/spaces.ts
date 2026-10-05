@@ -16,6 +16,7 @@ import { Bus, HttpError } from './events.ts'
 import { Jobs } from './jobs/jobs.ts'
 import { notesStore } from './knowledge/notes.ts'
 import type { Notes } from './knowledge/notes.ts'
+import { autoAsk } from './llm/autoAsk.ts'
 import { resolveContext } from './llm/context.ts'
 import { Runner } from './llm/runner.ts'
 import { agentSdk } from './llm/sdk.ts'
@@ -106,8 +107,9 @@ export function onBridgeBack(bus: Bus, load: () => Promise<void>, backoff = [200
   return () => { off(); gen++; clearTimeout(timer) }
 }
 
-/** a workspace's instance; its source is not started, so the caller can wire what listens first */
-type SpaceOpts = { cfg: WsConfig; home: string; artifactsDir: string; sdk?: Sdk; fake: boolean; push: Push }
+/** a workspace's instance; its source is not started, so the caller can wire what listens first;
+    askDelay = how long auto-ask waits before it asks, tests shorten it */
+type SpaceOpts = { cfg: WsConfig; home: string; artifactsDir: string; sdk?: Sdk; fake: boolean; push: Push; askDelay?: number }
 
 export async function makeSpace(w: WorkspaceServer, o: SpaceOpts): Promise<Space> {
   const fake = o.fake ? await startFakeGateway({ seed: fakeSeed(w), me: w.page.me, board: w.page.board }) : null
@@ -148,7 +150,9 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     context: (j) => resolveContext(source, j, w.page.me, notes), me: w.page.me, bridge: w.llm?.bridge, workDir,
     screenshot: w.llm?.screenshot ? (s) => shoot({ ...s, browserPath: cfg.browserPath }) : undefined,
     jobTools: w.llm?.jobTools ? { ws: id, pb: w.page.board.start, prj: w.page.pack.prj, prefix: w.jobPrefix } : undefined, notes,
+    autoResume: cfg.autoAsk === true,
   })
+  const offAuto = cfg.autoAsk === true ? autoAsk({ jobs, runner, ctx, delay: o.askDelay }) : () => {}
   // a workspace without a gateway gives the builder no sources to read
   const build = builder({ ws: id, page: w.page, sdk, notes, source: w.llm?.bridge === false ? null : source, ctx, bus })
   const offInterrupt = bus.on((e) => {
@@ -188,6 +192,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     for (const j of all) if (T.isClosed(j)) clean(j)
     await runner.recover(recovered ? 'the bridge went away' : 'the console restarted')
     recovered = true
+    await runner.resumeDue()
   })
 
   return {
@@ -198,6 +203,6 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     // a QA return pushes its own message; the reopen and note it makes would push a second one
     onNeedsYou: (f) => jobs.onNeedsYou((j) => { if (!returns.handling(j.id)) f(j) }),
     // the source going away on close is no reason to interrupt the runs
-    async close() { stopLoading(); offInterrupt(); source.stop(); await fake?.close() },
+    async close() { stopLoading(); offInterrupt(); offAuto(); source.stop(); await fake?.close() },
   }
 }

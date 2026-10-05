@@ -82,9 +82,11 @@ export type Cmd =
   | { op: 'noteAnswer'; step: string; i: number; r: string } | { op: 'noteReopen'; step: string; i: number }
   | { op: 'sent'; step: string; i: number; t: string; to: string }
   | { op: 'vote'; step: string; n: string; v: number } | { op: 'nudged'; to: string } | { op: 'replied'; subj: string }
-  | { op: 'runStart'; step: string; q: string; id: string; resumed?: boolean }
+  /** auto = the console started it by itself */
+  | { op: 'runStart'; step: string; q: string; id: string; resumed?: boolean; auto?: boolean }
   | { op: 'runDraft'; step: string; t: string }
-  | { op: 'runEnd'; step: string; why: 'cancelled' | 'failed' | 'interrupted'; detail?: string }
+  /** due = an interrupted run that resumes by itself */
+  | { op: 'runEnd'; step: string; why: 'cancelled' | 'failed' | 'interrupted'; detail?: string; due?: boolean }
   | { op: 'artifact'; step: string; n: string; link?: string; ok?: false }
   | { op: 'journal'; o: string; c: string; n: string; a?: string }
   | { op: 'returnTo'; step: string; why: string }
@@ -99,9 +101,11 @@ export const PAGE_OPS = ['start', 'close', 'reopen', 'stepDone', 'stepSkip', 'st
 export const SESSION_OPS = [...PAGE_OPS, 'returnTo'] as const
 
 export type RunState = 'queued' | 'running' | 'draft' | 'failed' | 'cancelled' | 'interrupted'
-/** one LLM ask; session = the Claude Code session id, for Resume and hand-over */
+/** one LLM ask; session = the Claude Code session id, for Resume and hand-over;
+    ar = auto-resume: due = it resumes by itself after the next comeback, used = it did once or no longer can */
 export interface RunRec {
   id: string; job: string; step: string; q: string; state: RunState; session?: string; reason?: string; at: string; ended?: string
+  ar?: 'due' | 'used'
 }
 
 /** at = time of day; ts = the journal entry's ISO time, which Home orders logs that span days by (the demo's seeded rows have none) */

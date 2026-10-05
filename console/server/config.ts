@@ -67,6 +67,9 @@ export function coreDefaults(env: NodeJS.ProcessEnv = process.env): WsConfig {
     browserPath: null,
     /** the workspace's knowledge notes, Markdown files; null = <home>/knowledge/<id> */
     knowledgeDir: null,
+    /** true = an llm step starts its run when the job moves onto it, and an interrupted run resumes
+        once by itself; only true turns it on */
+    autoAsk: false,
   }
 }
 
