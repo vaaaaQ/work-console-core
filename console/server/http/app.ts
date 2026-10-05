@@ -4,7 +4,7 @@ import { extname, join, resolve, sep } from 'node:path'
 import { adapt } from '../../src/live/adapt.ts'
 import { ctxOf } from '../../src/model/context.ts'
 import type * as T from '../../src/model/transitions.ts'
-import type { Cmd, Job, Playbook, RunRec, Tpl } from '../../src/model/types.ts'
+import type { Cmd, Job, Playbook, RunIntent, RunRec, Tpl } from '../../src/model/types.ts'
 import { resolveAct } from '../bridge/actions.ts'
 import { GatewayError, READY } from '../bridge/wire.ts'
 import type { ActRes, ConceptReply } from '../bridge/wire.ts'
@@ -293,12 +293,15 @@ export function createApp(d: Deps) {
     createReadStream(f).pipe(r.res)
   }
 
+  /** a reject with a reason answers the redo run too, or why none started */
   async function cmd(id: string, b: Record<string, unknown>) {
-    const { jobs } = d.spaces.byJob(id)
-    try { return await jobs.cmd(id, b.cmd as Cmd, typeof b.v === 'number' ? b.v : undefined) } catch (e) {
-      if (e instanceof HttpError && e.status === 409) throw Object.assign(e, { job: await jobs.get(id) })
+    const s = d.spaces.byJob(id)
+    let res: Awaited<ReturnType<Space['jobs']['cmd']>>
+    try { res = await s.jobs.cmd(id, b.cmd as Cmd, typeof b.v === 'number' ? b.v : undefined) } catch (e) {
+      if (e instanceof HttpError && e.status === 409) throw Object.assign(e, { job: await s.jobs.get(id) })
       throw e
     }
+    return { ...res, ...(await s.runner.redoRejected(res.prev, b.cmd as Cmd)) }
   }
   async function jobOf(id: string) {
     const s = d.spaces.byJob(id), job = await s.jobs.get(id)
@@ -341,6 +344,11 @@ export function createApp(d: Deps) {
     }],
     ['POST', /^\/api\/runs\/([^/]+)\/cancel$/, async (r) => ({ run: await (await runOf(r.p[0]))[0].runner.cancel(r.p[0]) })],
     ['POST', /^\/api\/runs\/([^/]+)\/resume$/, async (r) => ({ run: await (await runOf(r.p[0]))[0].runner.resume(r.p[0]) })],
+    // a reply to the draft of the run's step, in the step's newest session
+    ['POST', /^\/api\/runs\/([^/]+)\/reply$/, async (r) => {
+      const [s, run] = await runOf(r.p[0]), b = await r.body()
+      return { run: await s.runner.reply(run.job, run.step, String(b.t ?? ''), b.intent as RunIntent) }
+    }],
     ['GET', /^\/api\/artifacts\/([^/]+)\/([^/]+)$/, (r) => artifact(r, r.p[0], r.p[1])],
     ['POST', /^\/api\/push\/subscribe$/, async (r) => {
       if (!d.notify) throw new HttpError(404, 'not_found', 'push is off')

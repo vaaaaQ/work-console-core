@@ -28,8 +28,10 @@ import { createApp } from './app.ts'
    another id, prefix B, no playbooks of its own and no team zone. */
 
 const STEPS = { once: false, key: 'weekly-report', name: 'Weekly report', description: '', phases: [{ code: 'W', name: 'Write', steps: [{ id: 'w1', title: 'Write it', who: 'llm', doneWhen: 'written' }] }] }
+/** every run's prompt, in the order the runs started */
+const prompts: string[] = []
 const sdk: Sdk = {
-  async *start({ tools }) { yield { k: 'session', id: 'sess-1' }; await tools.submitDraft('a draft'); yield { k: 'result', ok: true } },
+  async *start({ tools, prompt }) { prompts.push(prompt); yield { k: 'session', id: 'sess-1' }; await tools.submitDraft('a draft'); yield { k: 'result', ok: true } },
   // a say that starts with "steps:" gets new steps
   async *ask({ prompt }) {
     const say = /^1\. (.*)$/m.exec(prompt)?.[1] ?? ''
@@ -834,4 +836,28 @@ test('format: the text, ctx and target reach the formatter; a bad target is 400;
     const r = await call(none.lp, 'POST', '/api/ws/acme/format', { body: { text: 'hi', target: 'llm' } })
     assert.equal(r.status, 503); assert.equal(r.json.error.code, 'no_key')
   } finally { await none.stop() }
+})
+
+test("a reply goes to the run's step in its session; reject with a reason answers the redo run", async () => {
+  const { lp, stop } = await setup({ one: true })
+  try {
+    const { job, step } = await openStep(lp)
+    const a = await call(lp, 'POST', '/api/runs', { body: { job: job.id, step, instruction: 'draft it' } })
+    const id = a.json.run.id as string
+    await until(async () => (await call(lp, 'GET', `/api/runs/${id}`)).json.run?.state === 'draft')
+    const n = prompts.length
+    const rep = await call(lp, 'POST', `/api/runs/${id}/reply`, { body: { t: 'shorter', intent: 'revise' } })
+    assert.equal(rep.status, 200, rep.text); assert.equal(rep.json.run.parent, id); assert.equal(rep.json.run.intent, 'revise')
+    await until(async () => (await call(lp, 'GET', `/api/runs/${rep.json.run.id}`)).json.run?.state === 'draft')
+    assert.match(prompts[n], /replied to your draft:\n\nshorter/)
+    const bad = await call(lp, 'POST', `/api/runs/${id}/reply`, { body: { t: 'x', intent: 'ship' } })
+    assert.equal(bad.status, 400); assert.equal(bad.json.error.code, 'bad_args')
+    assert.equal((await call(lp, 'POST', '/api/runs/nope/reply', { body: { t: 'x', intent: 'revise' } })).status, 404)
+    const rj = await call(lp, 'POST', `/api/jobs/${job.id}/cmd`, { body: { cmd: { op: 'rejectDraft', step, why: 'wrong scope' } } })
+    assert.equal(rj.status, 200, rj.text); assert.ok(rj.json.run?.id); assert.equal(rj.json.job.flow[step].dr, null)
+    await until(() => prompts.length === n + 2)
+    assert.match(prompts[n + 1], /## Why\nwrong scope/)
+    const plain = await call(lp, 'POST', `/api/jobs/${job.id}/cmd`, { body: { cmd: { op: 'noteAdd', step, k: 'q', t: 'x' } } })
+    assert.equal(plain.status, 200); assert.equal('run' in plain.json, false)
+  } finally { await stop() }
 })
