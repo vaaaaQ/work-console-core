@@ -151,7 +151,7 @@ export const keySrc = (j: Job): Src => { const s = PACKS[j.ws].src, ks = PB[j.pb
 export function llmText(j: Job, s: Step) {
   const k = LLMS[j.id + '/' + s.id]; if (k) return k
   const ks = keySrc(j)
-  return `${s.t}: draft for ${j.key}\n\n• Based on the ${ks.n} ${ks.item}, the journal and the earlier steps.\n• ${s.a ? 'Proposed ' + s.a.join(', ') + '.' : 'Proposed result, ready for your edits.'}\n• Check before you accept: ${s.x}.`
+  return `${s.t}: draft for ${j.key}\n\n• Based on the ${ks.n} ${ks.item}, the journal and the earlier steps.\n• ${s.a ? 'Proposed ' + s.a.join(', ') + '.' : 'Proposed result, ready for your edits.'}\n• Check before you accept: ${T.sentence(s.x)}`
 }
 
 /* ===== messages and review ===== */

@@ -87,6 +87,12 @@ test('askText is the step in its own words: what to do, when it is done, what it
   assert.equal(askText({ ...s, a: ['analysis.md', 'notes.md'] }), 'Do: Read the issue.\nDone when: Criteria clear.\nProduce: analysis.md, notes.md.')
 })
 
+test("askText ends each line once, whatever the step's own words end with", () => {
+  const s = { id: 'a', t: 'Read the issue.', m: 'llm' as const, x: 'Criteria are clear!' }
+  assert.equal(askText(s), 'Do: Read the issue.\nDone when: Criteria are clear!')
+  assert.equal(askText({ ...s, x: 'A note, submitted with submit_draft. Use no other tools.' }), 'Do: Read the issue.\nDone when: A note, submitted with submit_draft. Use no other tools.')
+})
+
 test('a run the console starts or resumes by itself is signed console; an interrupted run that will resume says so', () => {
   const j = open(), at = atOf(X, j)!
   const mine = apply(X, j, { op: 'runStart', step: at, q: 'q', id: 'r1' }).job.jr[0]

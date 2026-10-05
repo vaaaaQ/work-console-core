@@ -59,8 +59,10 @@ export function rvState(j: Job, f: Flow) {
   const w = PACKS[j.ws], r = f.rv || { v: [], need: 2 }
   return { r, ok: r.v.filter((v) => v.v >= w.ok).length, veto: r.v.some((v) => v.v <= w.veto) }
 }
+/** t with a closing period, unless it already ends a sentence */
+export const sentence = (t: string) => t.replace(/(?<![.!?…])$/, '.')
 /** the instruction an ask starts from: the step in its own words */
-export const askText = (s: Step) => `Do: ${s.t}.\nDone when: ${s.x}.${s.a ? `\nProduce: ${s.a.join(', ')}.` : ''}`
+export const askText = (s: Step) => `Do: ${sentence(s.t)}\nDone when: ${sentence(s.x)}${s.a ? `\nProduce: ${s.a.join(', ')}.` : ''}`
 /** free text on one journal line */
 const line = (t: string, n = 160) => { const s = t.replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s }
 export const nextTxt = (x: Ctx, j: Job, nx: string | null) => {
@@ -372,7 +374,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       needDraft(); noRun()
       const w = line(cmd.why || '', 300)
       F.dr = null; F.s = 'cur'; F.m = 'draft rejected'
-      jr(x, j, `Rejected the LLM draft for “${S.t}”${w ? `: ${w}` : ''}`.replace(/(?<![.!?…])$/, '.'), 'step back in progress.',
+      jr(x, j, sentence(`Rejected the LLM draft for “${S.t}”${w ? `: ${w}` : ''}`), 'step back in progress.',
         w ? 'review the new draft when it is ready.' : 'do it yourself, or ask again with a sharper instruction.', by(x), 'bad'); syncStatus(x, j)
       break
     }
