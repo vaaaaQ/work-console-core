@@ -372,7 +372,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       needDraft(); noRun()
       const w = line(cmd.why || '', 300)
       F.dr = null; F.s = 'cur'; F.m = 'draft rejected'
-      jr(x, j, `Rejected the LLM draft for “${S.t}”${w ? `: ${w}` : ''}.`, 'step back in progress.',
+      jr(x, j, `Rejected the LLM draft for “${S.t}”${w ? `: ${w}` : ''}`.replace(/(?<![.!?…])$/, '.'), 'step back in progress.',
         w ? 'review the new draft when it is ready.' : 'do it yourself, or ask again with a sharper instruction.', by(x), 'bad'); syncStatus(x, j)
       break
     }

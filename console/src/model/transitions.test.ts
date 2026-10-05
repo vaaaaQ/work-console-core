@@ -356,6 +356,7 @@ test('rejectDraft with why journals the reason; acceptDraft said journals the wo
   const r = apply(X, j, { op: 'rejectDraft', step: at, why: ' wrong scope ' }).job
   assert.equal(r.flow[at].dr, null); assert.match(r.jr[0].o, /^Rejected the LLM draft for “.+”: wrong scope\.$/)
   assert.match(r.jr[0].n, /new draft/)
+  assert.match(apply(X, j, { op: 'rejectDraft', step: at, why: 'Too dry.' }).job.jr[0].o, /: Too dry\.$/)
   const a = apply({ ...X, by: 'Claude Code' }, j, { op: 'acceptDraft', step: at, said: true }).job
   assert.match(a.jr[0].o, /as said in the reply/); assert.equal(a.jr[0].a, 'Claude Code')
 })
