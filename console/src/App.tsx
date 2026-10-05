@@ -5,6 +5,7 @@ import { MAIL, S, W, byId } from './model/world.ts'
 import type { View } from './model/types.ts'
 import { repaint, useAfterRender, useWorld } from './store.ts'
 import { VIEWS, closeDrawer, demoInfo, dismiss, go, isDark, isView, readHash, toggleTheme } from './actions/nav.tsx'
+import { escNarrow } from './actions/wide.ts'
 import { curChat } from './actions/sources.tsx'
 import { LIVE, missingParts, pushSupported, subscribePush } from './live/api.ts'
 import { L } from './live/boot.ts'
@@ -65,7 +66,7 @@ function listen() {
     const k = e.key, mod = e.ctrlKey || e.metaKey, open = isModalOpen(), t = e.target as HTMLElement
     if (mod && (k === 'k' || k === 'K')) { e.preventDefault(); if (open) dismiss(); else openPalette(); return }
     if (k === 'Escape') {
-      if (open) { e.preventDefault(); dismiss() } else if (document.getElementById('drawer')?.hidden === false) closeDrawer()
+      if (open) { e.preventDefault(); dismiss() } else if (document.getElementById('drawer')?.hidden === false && !escNarrow()) closeDrawer()
       return
     }
     if (mod && k === 'Enter') { const f = t.closest?.('form[data-form]') as HTMLFormElement | null; if (f) { e.preventDefault(); f.requestSubmit() } return }

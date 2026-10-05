@@ -7,6 +7,7 @@ import { S, TPL, byId, chName, isClosed, isLive, phaseOf, rvState, stepOf } from
 import { actOf } from '../model/home.ts'
 import type { Flow, Job, Step } from '../model/types.ts'
 import { closeDrawer } from '../actions/nav.tsx'
+import { isWide, toggleWide } from '../actions/wide.ts'
 import {
   acceptDraft, askLlm, bAdd, bAnswer, bReopen, editDraft, llmCancel, nudge, rejectDraft, rvOpen, rvVote, stepDoneHere, stepReopen,
   stepResume, stepSkip, stepWait, tplSend,
@@ -123,11 +124,19 @@ function StepActs({ j, s, f }: P) {
   </>
 }
 
+function WideBtn({ sid }: { sid: string }) {
+  const wide = isWide()
+  // leaving the step, or closing the inspector, forgets the widening
+  React.useEffect(() => () => { if (S.wide === sid) S.wide = null }, [sid])
+  return <button className="iconbtn dr-wide" aria-label={wide ? 'Narrow the inspector' : 'Widen the inspector'} title={wide ? 'Narrow (Esc)' : 'Widen'}
+    aria-pressed={wide} onClick={toggleWide}><Ic n={wide ? 'shrink' : 'expand'} /></button>
+}
+
 function DrawerBody({ j, sid }: { j: Job; sid: string }) {
   const s = stepOf(j, sid)!, f = j.flow[sid], ph = phaseOf(j, sid)!, p = { j, s, f }
   return <>
     <div className="dr-h"><div style={{ minWidth: 0 }}><div className="eyebrow">{ph.c} · {ph.n} · {j.key}</div><h2>{s.t}</h2><div className="row" style={{ marginTop: 6 }}><NodePill s={f.s} /></div></div>
-      <button className="iconbtn" aria-label="Close inspector" style={{ marginLeft: 'auto' }} onClick={closeDrawer}><Ic n="x" /></button></div>
+      <div className="dr-acts"><WideBtn sid={sid} /><button className="iconbtn" aria-label="Close inspector" onClick={closeDrawer}><Ic n="x" /></button></div></div>
     <div className="dr-b">
       <dl className="kv"><dt>Who does it</dt><dd><Ic n={MODES[s.m].i} sm /> {MODES[s.m].l}<div className="why">{EXEC[s.m]}</div></dd>
         <dt>Done when</dt><dd>{s.x}</dd>{s.a ? <><dt>Produces</dt><dd>{s.a.join(', ')}</dd></> : null}{f.m ? <><dt>Note</dt><dd>{f.m}</dd></> : null}</dl>
@@ -141,5 +150,5 @@ function DrawerBody({ j, sid }: { j: Job; sid: string }) {
 export function Drawer() {
   const j = S.view === 'job' && S.job ? byId(S.job) : undefined
   const sid = j && S.sel && j.flow[S.sel] ? S.sel : null
-  return <aside className="drawer" id="drawer" hidden={!sid} aria-label="Step inspector">{j && sid ? <DrawerBody j={j} sid={sid} /> : null}</aside>
+  return <aside className={'drawer' + (sid && isWide() ? ' wide' : '')} id="drawer" hidden={!sid} aria-label="Step inspector">{j && sid ? <DrawerBody j={j} sid={sid} /> : null}</aside>
 }

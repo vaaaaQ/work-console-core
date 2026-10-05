@@ -17,7 +17,7 @@ export const MAIL: Partial<Record<Ws, Mail[]>> = {}
 const ui = (): Ui => ({
   ws: DEFAULT_WS, view: 'jobs', job: null, sel: null, f: 'all', prj: 'all', q: '', flash: null,
   chat: { [DEFAULT_WS]: 'c1' }, mail: 'm1', mcat: 'reply', pbv: null, sum: {}, focusB: null, cd: {},
-  pbRet: null,
+  pbRet: null, wide: null,
 })
 export const S: Ui = ui()
 /** the world as the installed workspaces seed it, rebuilt in place so every module keeps its reference */

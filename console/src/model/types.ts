@@ -132,6 +132,8 @@ export interface Ui {
   ws: Ws; view: View; job: string | null; sel: string | null; f: string; prj: string; q: string; flash: string | null
   chat: Record<Ws, string>; mail: string | null; mcat: MailCat; pbv: string | null; sum: Record<string, 'run' | 'ok'>
   focusB: number | null; cd: Record<string, string>
+  /** the step whose inspector is widened (actions/wide.ts) */
+  wide: string | null
   /** a dialog opened over New job: Cancel there goes back to it */
   pbRet: 'newjob' | null
 }
