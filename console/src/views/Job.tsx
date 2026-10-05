@@ -28,7 +28,7 @@ function Node({ j, s, prior }: { j: Job; s: Step; prior: boolean }) {
   const f = j.flow[s.id], st = f.s, g = st === 'cur' ? MODES[s.m].i : G[st]
   const ref = useReplay<HTMLDivElement>(f.nw)
   return (
-    <div ref={ref} className={`node n-${st}${S.sel === s.id ? ' sel' : ''}${f.nw ? ' new' : ''}${prior ? ' prior' : ''}`}>
+    <div ref={ref} className={`node n-${st}${S.sel === s.id ? ' on' : ''}${f.nw ? ' new' : ''}${prior ? ' prior' : ''}`}>
       <button className="hit" id={'h-' + s.id} aria-label={`${s.t}: ${NODE[st][1]}`} onClick={() => selStep(s.id)} />
       <span className="g">{g ? <Ic n={g} /> : null}</span><span className="n-t">{s.t}</span>
       <span className="n-m"><Ic n={MODES[s.m].i} sm />{f.m || MODES[s.m].l}{s.msg ? <> <span className="msgs"><Ic n="message" sm />{s.msg}</span></> : null}</span>

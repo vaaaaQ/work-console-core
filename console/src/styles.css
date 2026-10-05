@@ -155,7 +155,7 @@ kbd{font:500 11px/1 var(--mono);padding:3px 5px;border:1px solid var(--line);bor
 .node{position:relative;display:block;background:var(--raised);border:1px solid var(--line);border-radius:var(--r);padding:9px 11px 10px 38px;color:var(--fg);transition:border-color .15s,box-shadow .15s}
 .node:hover{border-color:var(--faint)}
 .node .hit{position:absolute;inset:0;z-index:1;border:0;border-radius:inherit;background:none;cursor:pointer}
-.node.sel{box-shadow:0 0 0 2px var(--ink)}
+.node.on{box-shadow:0 0 0 2px var(--ink)}
 .node .g{position:absolute;left:10px;top:9px;width:19px;height:19px;border-radius:50%;display:grid;place-items:center;color:var(--ink-fg);background:var(--off)}
 .node .g .i{width:11px;height:11px;stroke-width:2.6}
 .n-t{display:block;font-weight:500;line-height:1.3}
