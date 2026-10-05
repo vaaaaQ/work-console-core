@@ -19,6 +19,7 @@ import { CancelBtn, ExportBtn, FlowLegend, FlowMap } from '../ui/bits.tsx'
 import { closeModal, modal, modalForm } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
 import { canRecord, micError, Recorder } from '../ui/voice.ts'
+import { VoiceField } from '../ui/VoiceField.tsx'
 import { go, setHash } from './nav.tsx'
 import { pbAdd } from './playbooks.tsx'
 
@@ -350,7 +351,7 @@ function NewJobBody() {
     </div>
     <div className="prev">{on ? <StepsPrev f={f} /> : PB[f.pb] ? <NjPrev pb={f.pb} /> : <p className="why" style={{ margin: 0 }}>Pick a playbook.</p>}</div>
     <label className="field"><span>Description · Markdown, in English: your part of every LLM run</span>
-      <textarea className="ta" rows={5} maxLength={T.DESC_MAX} value={f.d} onChange={(e) => set({ d: e.currentTarget.value })} placeholder="What the job is for, and what done looks like" /></label>
+      <VoiceField target="people" rows={5} maxLength={T.DESC_MAX} value={f.d} onChange={(d) => set({ d })} ctx={f.t} placeholder="What the job is for, and what done looks like" /></label>
     <CtxList f={f} />
     <label className="field nj-due"><span>Due · {zoneName()} time</span>
       <input className="inp" type="datetime-local" value={dueWall(f.due)} onChange={(e) => set({ due: wallDue(e.currentTarget.value) })} /></label>

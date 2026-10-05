@@ -14,6 +14,7 @@ import {
 } from '../actions/flow.tsx'
 import { LIVE } from '../live/api.ts'
 import { FillT, NodePill } from '../ui/bits.tsx'
+import { DraftTalk } from '../ui/DraftTalk.tsx'
 import { RunFeed, lastRun } from '../ui/RunFeed.tsx'
 import { Ic } from '../ui/Icon.tsx'
 import { OutSeg, OutText } from '../ui/outText.ts'
@@ -22,10 +23,11 @@ type P = { j: Job; s: Step; f: Flow }
 
 function LlmSec({ j, s, f }: P) {
   const run = LIVE.on ? lastRun(j.id, s.id) : undefined
-  // live: the run record, not the job, knows whether it is queued, working, stopped or can resume
-  if (run && (f.run || ((run.state === 'interrupted' || run.state === 'failed') && !f.dr)))
+  // live: the run record, not the job, knows whether it is queued, working, stopped or can resume;
+  // a reply to a draft shows under the draft, in its conversation
+  if (run && ((f.run && !f.run.reply) || ((run.state === 'interrupted' || run.state === 'failed') && !f.dr)))
     return <section className="sec"><div className="eyebrow">LLM</div><RunFeed run={run} /></section>
-  if (f.run) return (
+  if (f.run && !f.run.reply) return (
     <section className="sec"><div className="eyebrow">LLM</div><div className="llmr run">
       <div className="hd"><span className="spin" /><b>Working on it…</b><span>asked {hm(new Date(f.run.at))}</span></div>
       <div className="why" style={{ whiteSpace: 'pre-wrap' }}>{f.run.q}</div></div></section>
@@ -33,9 +35,10 @@ function LlmSec({ j, s, f }: P) {
   if (f.dr) return (
     <section className="sec"><div className="eyebrow">LLM draft</div><div className="llmr pending">
       <div className="hd"><Ic n="bot" sm /><b>Waiting for your review</b><span>· {tfmt(f.dr.at)}</span><OutSeg /></div><OutText t={f.dr.t} />
-      <div className="row"><button className="btn sm pri" onClick={() => acceptDraft(j.id, s.id)}><Ic n="check" sm />Accept</button>
-        <button className="btn sm" onClick={() => editDraft(j.id, s.id)}><Ic n="pen" sm />Edit…</button>
-        <button className="btn sm" onClick={() => rejectDraft(j.id, s.id)}><Ic n="x" sm />Reject</button></div></div></section>
+      <div className="row"><button className="btn sm pri" disabled={!!f.run} onClick={() => acceptDraft(j.id, s.id)}><Ic n="check" sm />Accept</button>
+        <button className="btn sm" disabled={!!f.run} onClick={() => editDraft(j.id, s.id)}><Ic n="pen" sm />Edit…</button>
+        <button className="btn sm" disabled={!!f.run} onClick={() => rejectDraft(j.id, s.id)}><Ic n="x" sm />Reject…</button></div>
+      <DraftTalk job={j} step={s.id} /></div></section>
   )
   if (f.out) return <section className="sec"><div className="row"><div className="eyebrow">Accepted output</div><span className="fsp" /><OutSeg /></div><OutText t={f.out} /></section>
   return null

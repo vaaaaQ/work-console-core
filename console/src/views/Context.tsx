@@ -13,6 +13,7 @@ import { doCmd, failText } from '../actions/flow.tsx'
 import { CancelBtn } from '../ui/bits.tsx'
 import { Ic } from '../ui/Icon.tsx'
 import { closeModal, modal } from '../ui/modal.tsx'
+import { VoiceField } from '../ui/VoiceField.tsx'
 import { pageOf } from '../workspace.ts'
 
 /* What the job's LLM runs are given: its description, the user's part of every prompt, and its context.
@@ -35,7 +36,7 @@ export function editDesc(j0: Job) {
   modal({
     title: `Description · ${j0.t}`, form: 'jdesc',
     body: <label className="field"><span>Markdown, in English: what the job is for. Every LLM run gets it after the generated part of its prompt.</span>
-      <textarea className="ta" name="d" rows={14} maxLength={DESC_MAX} defaultValue={j0.d ?? ''} data-autofocus /></label>,
+      <VoiceField name="d" target="people" rows={14} maxLength={DESC_MAX} defaultValue={j0.d ?? ''} autoFocus ctx={j0.t} /></label>,
     foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="check" sm />Save</button></>,
     onSubmit: (fd) => {
       closeModal()

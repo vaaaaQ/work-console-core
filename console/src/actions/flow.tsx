@@ -10,12 +10,13 @@ import {
   restore, rvState, snap, stepOf, steps,
 } from '../model/world.ts'
 import { askText } from '../model/transitions.ts'
-import type { BadgeKind, Cmd, Job, JobStatus } from '../model/types.ts'
+import type { BadgeKind, Cmd, Job, JobStatus, RunRec } from '../model/types.ts'
 import { commit } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
 import { CancelBtn } from '../ui/bits.tsx'
 import { closeModal, modal } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
+import { VoiceField } from '../ui/VoiceField.tsx'
 import { go } from './nav.tsx'
 
 /* Step and job actions. Every change to a job is a command (model/transitions.ts): the demo applies it
@@ -44,7 +45,8 @@ function fail(id: string, e: unknown) {
   if (e instanceof api.ApiError && e.status === 409) void reloadJob(id)
 }
 
-type Done = { job: Job; nx: string | null; undo: () => void }
+/** run = the LLM run a reject with a reason started; redo = why it did not start */
+type Done = { job: Job; nx: string | null; undo: () => void; run?: RunRec; redo?: string }
 /** runs a command; msg = a toast with Undo, null = the caller toasts; moveSel = show the next step */
 export async function doCmd(id: string, c: Cmd, msg: string | null, o: { moveSel?: boolean } = {}): Promise<Done | null> {
   const sel = (nx: string | null) => { if (o.moveSel && nx) { S.sel = nx; S.focusB = null } }
@@ -57,9 +59,9 @@ export async function doCmd(id: string, c: Cmd, msg: string | null, o: { moveSel
   } else {
     try {
       const res = await api.cmd(id, c, byId(id)?.v)
-      commit(() => { putJob(res.job); sel(res.nx) })
+      commit(() => { putJob(res.job); sel(res.nx); if (res.run) LIVE.runs[res.run.id] = res.run })
       r = {
-        job: res.job, nx: res.nx,
+        job: res.job, nx: res.nx, run: res.run, redo: res.redo,
         undo: () => {
           api.undo(id, res.job.v!, res.prev)
             .then((u) => { commit(() => { putJob(u.job); clearNew() }); toast('Undone') })
@@ -118,7 +120,8 @@ export function stepWait() {
   modal({
     title: 'Waiting on others', form: 'wait',
     body: <>
-      <label className="field"><span>What are you waiting for?</span><input className="inp" name="m" placeholder="e.g. pipeline queued, an answer from the PO" data-autofocus /></label>
+      <label className="field"><span>What are you waiting for?</span><VoiceField name="m" target="llm" ctx={stepOf(j, sid)!.t} rows={2} autoFocus
+        placeholder="e.g. pipeline queued, an answer from the PO" /></label>
       <p className="why" style={{ margin: 0 }}>The step turns yellow and the job shows as waiting until you resume it.</p>
     </>,
     foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="hourglass" sm />Set waiting</button></>,
@@ -139,8 +142,7 @@ export function askLlm(j: Job, sid: string) {
     body: <>
       <div className="field"><span className="lbl">Context it gets</span><div className="ctx">{ctx.map(([i, n], k) => <span key={k} className="art"><Ic n={i} sm />{n}</span>)}</div>
         <span className="hint">Read when the run starts; change it in the job's Context panel.</span></div>
-      <label className="field"><span>Instruction</span><textarea className="ta" name="q" rows={5} data-autofocus
-        defaultValue={askText(s)} /></label>
+      <label className="field"><span>Instruction</span><VoiceField name="q" target="llm" rows={5} autoFocus defaultValue={askText(s)} ctx={askText(s)} /></label>
       <p className="why" style={{ margin: 0 }}>You get a draft back. Nothing is sent or kept until you accept it. <span className="hint">Ctrl+Enter runs it.</span></p>
     </>,
     foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="bot" sm />Run</button></>,
@@ -190,10 +192,27 @@ export function acceptDraft(id: string, sid: string, text?: string) {
   void doCmd(id, { op: 'acceptDraft', step: sid, ...(text != null ? { text } : {}) }, `Accepted · ${stepOf(j, sid)!.t}`, { moveSel: true })
 }
 
+/** with a reason, live, the LLM redoes the step in a new session */
 export function rejectDraft(id: string, sid: string) {
-  const j = byId(id), f = j?.flow[sid]
-  if (!j || !f || !f.dr) return
-  void doCmd(id, { op: 'rejectDraft', step: sid }, `Rejected · ${stepOf(j, sid)!.t}`)
+  const j = byId(id), dr = j?.flow[sid].dr
+  if (!j || !dr) return
+  const t = stepOf(j, sid)!.t
+  const reject = async (why: string) => {
+    closeModal()
+    const r = await doCmd(id, { op: 'rejectDraft', step: sid, ...(why ? { why } : {}) }, null)
+    if (!r) return
+    toast(r.redo ? `Rejected; the redo did not start: ${r.redo}` : r.run ? `Rejected; the LLM redoes it · ${t}` : `Rejected · ${t}`, 'Undo', r.undo)
+  }
+  modal({
+    title: `Reject the draft · ${t}`, form: 'reject',
+    body: <>
+      <label className="field"><span>Why?</span><VoiceField name="why" target="llm" ctx={dr.t} rows={3} autoFocus placeholder="What is wrong with it" /></label>
+      <p className="why" style={{ margin: 0 }}>{LIVE.on ? 'With a reason the LLM redoes the step in a new session; without one the step just goes back.' : 'The reason goes into the journal.'}</p>
+    </>,
+    foot: <><CancelBtn /><button type="button" className="btn" onClick={() => void reject('')}>Just reject</button>
+      <button className="btn pri" type="submit"><Ic n="x" sm />{LIVE.on ? 'Reject and redo' : 'Reject'}</button></>,
+    onSubmit: (fd) => { void reject(String(fd.get('why') || '').trim()) },
+  })
 }
 
 export function editDraft(id: string, sid: string) {
@@ -201,7 +220,7 @@ export function editDraft(id: string, sid: string) {
   if (!j || !dr) return
   modal({
     title: `Edit draft · ${stepOf(j, sid)!.t}`, form: 'edit',
-    body: <label className="field"><span>Draft</span><textarea className="ta" name="t" rows={10} data-autofocus defaultValue={dr.t} /></label>,
+    body: <label className="field"><span>Draft</span><VoiceField name="t" target="llm" rows={10} autoFocus defaultValue={dr.t} ctx={`done when: ${stepOf(j, sid)!.x}`} /></label>,
     foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="check" sm />Accept edited</button></>,
     onSubmit: (fd) => { closeModal(); acceptDraft(id, sid, String(fd.get('t') || '')) },
   })
@@ -219,7 +238,7 @@ export function tplSend(id: string, sid: string, i: number) {
     title: 'Review and send', form: 'tpl',
     body: <>
       <div className="src"><Ic n={k === 'work' ? 'file' : 'message'} sm /> {chName(j0, k, lbl)}</div>
-      <label className="field"><span>Message</span><textarea className="ta" name="t" rows={6} data-autofocus defaultValue={txt} /></label>
+      <label className="field"><span>Message</span><VoiceField name="t" target="people" rows={6} autoFocus defaultValue={txt} ctx={txt} /></label>
       {unk.length ? <p className="why" style={{ margin: 0, color: 'var(--wait)' }}><Ic n="warn" sm /> Fill in {unk.map((u) => '{' + u + '}').join(', ')} before sending.</p> : null}
       <p className="hint" style={{ margin: 0 }}>{LIVE.on ? 'Sends through the bridge; recorded here once it went out.' : 'Demo: sending only records it here.'}</p>
     </>,
@@ -317,7 +336,7 @@ export function bAnswer(i: number) {
     title: b.k === 'p' ? 'Resolve' : 'Answer', form: 'bans',
     body: <>
       <p style={{ margin: 0 }}>{b.t}</p>
-      <label className="field"><span>{b.k === 'p' ? 'Resolution' : 'Answer'}</span><textarea className="ta" name="r" rows={3} data-autofocus defaultValue={b.r || ''} /></label>
+      <label className="field"><span>{b.k === 'p' ? 'Resolution' : 'Answer'}</span><VoiceField name="r" target="llm" rows={3} autoFocus defaultValue={b.r || ''} ctx={b.t} /></label>
     </>,
     foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="check" sm />Save</button></>,
     onSubmit: (fd) => {

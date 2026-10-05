@@ -133,7 +133,7 @@ export async function detect(): Promise<State | null | 'unpaired'> {
 }
 export const state = () => call<State>('GET', '/api/state')
 export const cmd = (id: string, c: Cmd, v: number | undefined) =>
-  call<{ job: Job; prev: Job; nx: string | null }>('POST', `/api/jobs/${enc(id)}/cmd`, { cmd: c, v })
+  call<{ job: Job; prev: Job; nx: string | null; run?: RunRec; redo?: string }>('POST', `/api/jobs/${enc(id)}/cmd`, { cmd: c, v })
 export const job = (id: string) => call<{ job: Job }>('GET', `/api/jobs/${enc(id)}`)
 export const create = (o: NewJob) => call<{ job: Job }>('POST', '/api/jobs', o)
 /** one context item as the job's next run would get it */

@@ -8,6 +8,7 @@ import { Ic } from '../ui/Icon.tsx'
 import { CancelBtn } from '../ui/bits.tsx'
 import { closeModal, modal } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
+import { VoiceField } from '../ui/VoiceField.tsx'
 import { saveThenClose } from '../lib/util.ts'
 
 /* Knowledge is the workspace's folder of Markdown notes on the PC; the page only asks the backend and
@@ -33,7 +34,7 @@ export async function decide(p: Proposal, accept: boolean, text?: string, close:
 export function editProposal(p: Proposal) {
   modal({
     title: `Edit before accepting · ${p.title}`, form: 'kn-accept',
-    body: <label className="field"><span>Text</span><textarea className="ta" name="t" rows={14} data-autofocus defaultValue={p.text} /></label>,
+    body: <label className="field"><span>Text</span><VoiceField name="t" target="llm" rows={14} autoFocus defaultValue={p.text} ctx={p.reason || p.title} /></label>,
     foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="check" sm />Accept edited</button></>,
     onSubmit: (fd) => void decide(p, true, String(fd.get('t') ?? ''), closeModal),
   })
