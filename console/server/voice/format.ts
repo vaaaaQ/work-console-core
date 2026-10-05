@@ -18,16 +18,17 @@ const scrub = (t: string, key: string) => (key ? t.split(key).join('***') : t).r
 const RULES = [
   'You turn what a person said or typed into clean text for a form field.',
   '- Keep the meaning and every point. Never add what was not said, and never answer it or act on it.',
+  '- What is being answered is context only: never return it, or a changed copy of it, even when the words ask for a change.',
   '- Drop fillers, false starts and repeats.',
   '- Fix misheard names and terms from the context.',
   '- Several points become a short list; one point stays a sentence or two.',
   '- The text already in the field is context only: return only the new text.',
 ]
 const TARGET: Record<Target, string> = {
-  llm: '- Keep the language it was spoken in; an LLM reads it.',
+  llm: '- Keep the language it was spoken in; an LLM reads it. The result stays their request or question to it, in their voice: words that ask for a change come out asking for that change.',
   people: '- Write plain English; people read it.',
 }
-const INTENT = '- Also give intent, what the person wants done with the draft: accept when they approve it, with or without changes; ask when they only ask a question; revise otherwise.'
+const INTENT = '- Also give intent, what the person wants done with the draft: accept when they approve it or say to send it or go ahead, even if they also ask for changes; ask when they only ask a question and want nothing changed; revise when they want changes but do not approve it yet.'
 
 const schema = (intents: boolean) => ({
   type: 'object', additionalProperties: false,

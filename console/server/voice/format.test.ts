@@ -33,7 +33,7 @@ test('one call to the model with a strict schema; ctx, field and the say go in',
   assert.equal((s.calls[0].init.headers as Record<string, string>).authorization, `Bearer ${KEY}`)
   assert.ok(b.text.format.strict); assert.deepEqual(b.text.format.schema.required, ['text'])
   assert.match(b.input, /the draft/); assert.match(b.input, /typed/); assert.match(b.input, /uh a and b/)
-  assert.match(b.instructions, /language it was spoken in/)
+  assert.match(b.instructions, /language it was spoken in/); assert.match(b.instructions, /never return it, or a changed copy of it/)
 })
 
 test('people get plain English; intents ask for the intent; an unknown intent is dropped', async () => {
