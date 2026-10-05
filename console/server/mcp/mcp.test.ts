@@ -15,10 +15,11 @@ import type { ActReq } from '../bridge/wire.ts'
 import { Bus } from '../events.ts'
 import { Jobs } from '../jobs/jobs.ts'
 import { notesStore } from '../knowledge/notes.ts'
+import { Runner } from '../llm/runner.ts'
 import { Spaces } from '../spaces.ts'
 import type { Space } from '../spaces.ts'
 import { fileStore } from '../store/file.ts'
-import { acme, demoCtx, demoSeed } from '../testkit.ts'
+import { acme, demoCtx, demoSeed, fakeSdk } from '../testkit.ts'
 import { jobTools, mcpHandler } from './mcp.ts'
 
 const TOKEN = 'a'.repeat(64)
@@ -33,12 +34,14 @@ const beta: WorkspacePage = {
     Acme's prefix is J, the one the demo seed's jobs carry. */
 function stubSpace(page: WorkspacePage, prefix: string, open: { v: boolean }, seed?: typeof demoSeed) {
   const store = fileStore(join(mkdtempSync(join(tmpdir(), 'wc-mcp-')), 's.json'), seed, prefix)
-  const jobs = new Jobs({ store, bus: new Bus(), ctx: demoCtx, gate: () => open.v })
+  const bus = new Bus(), { sdk, sessions } = fakeSdk()
+  const jobs = new Jobs({ store, bus, ctx: demoCtx, gate: () => open.v })
+  const runner = new Runner({ store, jobs, bus, sdk, cwd: tmpdir(), gate: () => open.v, artifactsDir: join(tmpdir(), 'wc-mcp-arts'), ctx: demoCtx })
   const acts: ActReq[] = []
   const bridge = { available: () => true, read: async () => ({}), act: async (a: ActReq) => { acts.push(a); return { status: 'ok' as const, result: { title: `Item ${a.args.id}` } } } }
   const notes = notesStore(join(mkdtempSync(join(tmpdir(), 'wc-kn-')), 'kn'))
-  const space = { id: page.id, prefix, page, jobs, ctx: demoCtx, notes, start: startItem({ jobs, ctx: demoCtx, bridge, page }) } as unknown as Space
-  return { space, jobs, acts, notes }
+  const space = { id: page.id, prefix, page, jobs, runner, ctx: demoCtx, notes, start: startItem({ jobs, ctx: demoCtx, bridge, page }) } as unknown as Space
+  return { space, jobs, acts, notes, sessions, runner }
 }
 
 async function setup(t: { after(f: () => unknown): void }, o: { open?: { v: boolean }; both?: boolean } = {}) {
@@ -65,7 +68,7 @@ async function setup(t: { after(f: () => unknown): void }, o: { open?: { v: bool
   }
   const init = await post({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 't', version: '1' } } })
   sid = init.sid!
-  return { jobs: a.jobs, acts: a.acts, notes: a.notes, beta: b, spaces, open, post, rpc, call, init, setSid: (s: string) => { sid = s } }
+  return { jobs: a.jobs, acts: a.acts, notes: a.notes, sessions: a.sessions, runner: a.runner, beta: b, spaces, open, post, rpc, call, init, setSid: (s: string) => { sid = s } }
 }
 const openJob = async (jobs: Jobs) => {
   const x = demoCtx()
@@ -81,7 +84,7 @@ test('initialize answers the asked protocol, a session id and the tools; a wrong
   assert.ok(s.init.sid)
   assert.equal((await s.post({ jsonrpc: '2.0', method: 'notifications/initialized' })).status, 202)
   const names = (await s.rpc('tools/list')).result.tools.map((x: { name: string }) => x.name)
-  assert.deepEqual(names, ['list_jobs', 'get_job', 'job_command', 'job_context', 'return_to', 'create_job', 'start_item', 'undo', 'knowledge_search', 'knowledge_read', 'knowledge_propose', 'list_playbooks'])
+  assert.deepEqual(names, ['list_jobs', 'get_job', 'job_command', 'draft_reply', 'job_context', 'return_to', 'create_job', 'start_item', 'undo', 'knowledge_search', 'knowledge_read', 'knowledge_propose', 'list_playbooks'])
   assert.equal((await s.post({ jsonrpc: '2.0', id: 9, method: 'tools/list' }, 'b'.repeat(64))).status, 401)
   assert.equal((await s.rpc('nope')).error.code, -32601)
   assert.equal((await s.post(null)).body.error.code, -32600)
@@ -281,8 +284,8 @@ test("job_context edits a beta job's context by its board's key or id, in beta's
 
 test('a job id no workspace owns is a not_found tool error naming it', async (t) => {
   const s = await setup(t, { both: true })
-  for (const tool of ['get_job', 'job_command', 'job_context', 'return_to']) {
-    const r = await s.call(tool, { id: 'X-0001', op: 'start', step: 's', why: 'w', kind: 'work', item: 'ACME-1' })
+  for (const tool of ['get_job', 'job_command', 'draft_reply', 'job_context', 'return_to']) {
+    const r = await s.call(tool, { id: 'X-0001', op: 'start', step: 's', why: 'w', kind: 'work', item: 'ACME-1', text: 't', intent: 'revise' })
     assert.equal(r.err, true, tool)
     assert.equal(r.text, 'not_found: no job X-0001', tool)
   }
@@ -396,4 +399,64 @@ test('ws is an enum of the registered ids and says it may be omitted when there 
   assert.match(two.get('list_jobs')!.description, /\{ ws, unavailable \}/, 'a down workspace is announced')
   assert.match(two.get('start_item')!.inputSchema.properties.playbook.description, /beta: action/)
   assert.equal('ws' in two.get('get_job')!.inputSchema.properties, false, 'a job id already names its workspace')
+})
+
+async function until(f: () => boolean | Promise<boolean>, ms = 2000) {
+  const t0 = Date.now()
+  while (!(await f())) { if (Date.now() - t0 > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 10)) }
+}
+/** an open job's current step with a draft from a run whose session is S1 */
+async function drafted(s: Awaited<ReturnType<typeof setup>>) {
+  const j = await openJob(s.jobs), at = T.atOf(demoCtx(), j)!
+  await s.runner.ask(j.id, at, 'go')
+  await until(() => s.sessions.length === 1)
+  s.sessions[0].push({ k: 'session', id: 'S1' }); await s.sessions[0].tools.submitDraft('v1'); s.sessions[0].end()
+  await until(async () => !(await s.jobs.get(j.id))!.flow[at].run)
+  return { j, at }
+}
+const stepOf = (g: { phases: { steps: { id: string }[] }[] }, id: string) => g.phases.flatMap((x) => x.steps).find((x) => x.id === id) as Record<string, unknown> & { conversation?: { q: string; intent?: string; state: string; a?: string }[] }
+
+test('draft_reply without wait answers the run; with wait the answer; get_job lists the conversation', async (t) => {
+  const s = await setup(t), d = await drafted(s)
+  const r = await s.call('draft_reply', { id: d.j.id, step: d.at, text: 'shorter', intent: 'revise' })
+  assert.equal(r.err, false, r.text); assert.equal(r.json().state, 'queued')
+  await until(() => s.sessions.length === 2)
+  assert.equal(s.sessions[1].resume, 'S1')
+  await s.sessions[1].tools.submitDraft('v2'); s.sessions[1].end()
+  await until(async () => !(await s.jobs.get(d.j.id))!.flow[d.at].run)
+  const p = s.call('draft_reply', { id: d.j.id, step: d.at, text: 'why?', intent: 'ask', wait: 5 })
+  await until(() => s.sessions.length === 3); s.sessions[2].end(true, undefined, 'Because.')
+  const w = (await p).json()
+  assert.equal(w.state, 'answered'); assert.equal(w.answer, 'Because.'); assert.equal(w.draft, 'v2')
+  const st = stepOf((await s.call('get_job', { id: d.j.id })).json(), d.at)
+  assert.deepEqual(st.conversation!.map((c) => [c.intent, c.state]), [[undefined, 'draft'], ['revise', 'draft'], ['ask', 'answered']])
+  assert.equal(st.conversation![2].a, 'Because.')
+  assert.equal((await s.jobs.get(d.j.id))!.jr.find((e) => /Replied to the LLM draft/.test(e.o))!.a, 'Claude Code')
+})
+
+test('draft_reply accept with wait says accepted; a step with only its first ask has no conversation; a reply with no draft is a tool error', async (t) => {
+  const s = await setup(t), d = await drafted(s)
+  assert.equal('conversation' in stepOf((await s.call('get_job', { id: d.j.id })).json(), d.at), false)
+  const p = s.call('draft_reply', { id: d.j.id, step: d.at, text: 'fine', intent: 'accept', wait: 5 })
+  await until(() => s.sessions.length === 2)
+  await s.sessions[1].tools.submitDraft('v2'); s.sessions[1].end()
+  const w = (await p).json()
+  assert.equal(w.state, 'draft'); assert.equal(w.accepted, true); assert.equal(w.draft, undefined)
+  const r = await s.call('draft_reply', { id: d.j.id, step: d.at, text: 'x', intent: 'revise' })
+  assert.equal(r.err, true); assert.match(r.text, /no_draft/)
+})
+
+test('job_command rejectDraft with why redoes the step, signed Claude Code; without why nothing starts', async (t) => {
+  const s = await setup(t), d = await drafted(s)
+  const r = await s.call('job_command', { id: d.j.id, op: 'rejectDraft', step: d.at, why: 'wrong scope' })
+  assert.equal(r.err, false, r.text); assert.ok(r.json().run)
+  await until(() => s.sessions.length === 2)
+  assert.equal(s.sessions[1].resume, undefined); assert.match(s.sessions[1].prompt, /## Why\nwrong scope/)
+  const j = (await s.jobs.get(d.j.id))!
+  assert.equal(j.jr.find((e) => /Asked the LLM/.test(e.o))!.a, 'Claude Code')
+  assert.match(j.jr.find((e) => /Rejected the LLM draft/.test(e.o))!.o, /: wrong scope\.$/)
+  await s.sessions[1].tools.submitDraft('v2'); s.sessions[1].end()
+  await until(async () => !(await s.jobs.get(d.j.id))!.flow[d.at].run)
+  const plain = (await s.call('job_command', { id: d.j.id, op: 'rejectDraft', step: d.at })).json()
+  assert.equal('run' in plain, false); assert.equal(s.sessions.length, 2)
 })

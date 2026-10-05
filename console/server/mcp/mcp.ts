@@ -3,9 +3,10 @@ import { existsSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { columns } from '../../src/data/board.ts'
 import { KINDS, ctxOf, parseWorkId } from '../../src/model/context.ts'
+import { thread } from '../../src/model/thread.ts'
 import * as T from '../../src/model/transitions.ts'
-import { SESSION_OPS } from '../../src/model/types.ts'
-import type { Cmd, Job } from '../../src/model/types.ts'
+import { INTENTS, SESSION_OPS } from '../../src/model/types.ts'
+import type { Cmd, Job, RunIntent, RunRec } from '../../src/model/types.ts'
 import { GatewayError } from '../bridge/wire.ts'
 import { HttpError } from '../events.ts'
 import type { Space, Spaces } from '../spaces.ts'
@@ -51,7 +52,8 @@ export function brief(x: T.Ctx, j: Job, ws: string) {
   }
 }
 
-export function detail(x: T.Ctx, j: Job, ws: string) {
+/** runs = the space's, for each step's conversation: there only once a reply has been made */
+export function detail(x: T.Ctx, j: Job, ws: string, runs: RunRec[] = []) {
   const at = T.atOf(x, j)
   return {
     ...brief(x, j, ws), v: j.v, current: at, roundFrom: j.rf ?? null, chat: j.chat, mail: j.mail, description: j.d,
@@ -59,11 +61,12 @@ export function detail(x: T.Ctx, j: Job, ws: string) {
     phases: (x.PB[j.pb]?.ph || []).map((p) => ({
       phase: `${p.c} ${p.n}`,
       steps: p.s.map((s) => {
-        const f = j.flow[s.id]
+        const f = j.flow[s.id], talk = thread(runs, j.id, s.id)
         return {
           id: s.id, title: s.t, who: s.m, state: f.s, doneWhen: s.x, meta: f.m || undefined,
           notes: f.b.length ? f.b.map((b, i) => ({ i, kind: b.k, text: b.t, open: !!b.o, answer: b.r || undefined })) : undefined,
           draft: f.dr ? clip(f.dr.t) : undefined, output: f.out ? clip(f.out) : undefined, running: f.run ? true : undefined,
+          conversation: talk.some((r) => r.parent) ? talk.map((r) => ({ q: clip(r.q), intent: r.intent, state: r.state, a: r.a ? clip(r.a) : undefined })) : undefined,
           artifacts: f.arts.length ? f.arts.map((a) => a.n + (a.ok ? '' : ' (planned)')) : undefined,
           plannedMessages: (x.TPL[s.id] || []).length ? (x.TPL[s.id] || []).map((_, i) => (f.sent[i] ? `${i}: sent` : `${i}: not sent`)) : undefined,
         }
@@ -104,8 +107,8 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
     if ('step' in c) c.step = stepId(x, j, c.step)
     const r = await sp.jobs.cmd(j.id, c as unknown as Cmd, undefined, 'session')
     s.undo.push({ id: j.id, v: r.job.v!, prev: r.prev }); s.undo.splice(0, s.undo.length - MAX_UNDO)
-    const e = r.job.jr[0]
-    return { job: brief(x, r.job, sp.id), journal: `${e.o} ${e.c} Next: ${e.n}` }
+    const e = r.job.jr[0], redo = await sp.runner.redoRejected(r.prev, c as unknown as Cmd, 'session')
+    return { job: brief(x, r.job, sp.id), journal: `${e.o} ${e.c} Next: ${e.n}`, ...(redo.run ? { run: redo.run.id } : {}), ...(redo.redo ? { redo: redo.redo } : {}) }
   }
   return [
     {
@@ -129,14 +132,15 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
       },
     },
     {
-      name: 'get_job', description: 'One job in full: every step with its state, notes, draft, output, artifacts and planned messages; past rounds; the last 10 journal entries.',
+      name: 'get_job', description: 'One job in full: every step with its state, notes, draft, output, artifacts and planned messages, and the replies to its draft once there are any; '
+        + 'past rounds; the last 10 journal entries.',
       inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'job id, e.g. J-0412' } }, required: ['id'] },
-      async run(a) { const { sp, j } = await get(a.id); return detail(sp.ctx(), j, sp.id) },
+      async run(a) { const { sp, j } = await get(a.id); return detail(sp.ctx(), j, sp.id, await sp.runner.all()) },
     },
     {
       name: 'job_command',
       description: 'Apply one job command, exactly as the console page would. It applies at once, shows live in the console and is journaled as Claude Code. '
-        + 'Args per op: start; close {st: done|cancelled, note?}; reopen; stepDone|stepSkip|stepResume|stepReopen|rejectDraft {step}; stepWait {step, m: what it waits for}; '
+        + 'Args per op: start; close {st: done|cancelled, note?}; reopen; stepDone|stepSkip|stepResume|stepReopen {step}; rejectDraft {step, why?: the reason; with one the step is redone in a fresh LLM session}; stepWait {step, m: what it waits for}; '
         + 'acceptDraft {step, text?: edited text}; noteAdd {step, k: q question|c contradiction|d design note|p problem, t}; noteAnswer {step, i, r}; noteReopen {step, i}; '
         + 'sent {step, i: planned message index, t: the text you sent, to: channel} (record only, send it yourself first); vote {step, n: reviewer, v}; '
         + 'nudged {to}; replied {subj}; returnTo {step, why}; describe {d: the description, Markdown in English, the user\'s part of every LLM run; empty removes it}. '
@@ -151,6 +155,27 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
         },
       },
       async run(a, s) { const { id, ...c } = a; return command(s, id, c) },
+    },
+    {
+      name: 'draft_reply',
+      description: "Reply to a step's LLM draft in the draft's own session, as the console page does. intent: revise (change it; it waits for review again), "
+        + 'accept (change it if asked, then it is accepted), ask (a question; the answer comes back as text and the draft stays). '
+        + 'wait (seconds, at most 50) waits for the run to end and returns its answer or the new draft; without it, the run id. Journaled as Claude Code.',
+      inputSchema: {
+        type: 'object', required: ['id', 'step', 'text', 'intent'],
+        properties: { id: { type: 'string' }, step: { type: 'string' }, text: { type: 'string' }, intent: { type: 'string', enum: [...INTENTS] }, wait: { type: 'integer', minimum: 0, maximum: 50 } },
+      },
+      async run(a) {
+        const { sp, j } = await get(a.id), step = stepId(sp.ctx(), j, a.step) as string
+        const r = await sp.runner.reply(j.id, step, str(a.text, 'text'), a.intent as RunIntent, { via: 'session' })
+        const w = Math.min(50, Math.max(0, Number(a.wait) || 0))
+        if (!w) return { run: r.id, state: r.state }
+        const e = await sp.runner.settle(r.id, w * 1000), f = (await sp.jobs.get(j.id))?.flow[step]
+        return {
+          run: e.id, state: e.ended ? e.state : 'running', answer: e.a, reason: e.reason,
+          draft: f?.dr ? clip(f.dr.t) : undefined, accepted: e.intent === 'accept' && !f?.dr && f?.s === 'done' ? true : undefined,
+        }
+      },
     },
     {
       name: 'job_context',
