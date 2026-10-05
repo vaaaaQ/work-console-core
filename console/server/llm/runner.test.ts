@@ -679,17 +679,41 @@ test("an accept reply revises, then accepts on the replier's word", async () => 
   assert.ok(j.jr.some((x) => /Replied to the LLM draft/.test(x.o) && x.a === 'Claude Code'))
 })
 
-test('an accept that cannot be saved leaves the revised draft waiting and pushes it', async () => {
-  const s = setup(), d = await withDraft(s), seen: string[] = []
-  s.runner.onSettled((x) => seen.push(x.state))
+test('an accept reply accepts as soon as its draft is in, while the session still winds down', async () => {
+  const s = setup(), d = await withDraft(s)
   await s.runner.reply(d.job, d.step, 'ok', 'accept')
   await until(() => s.sessions.length === 2)
   await s.sessions[1].tools.submitDraft('v2')
-  assert.equal(seen.length, 0, 'an accept turn does not push its draft before the accept')
-  await s.jobs.cmd(d.job, { op: 'close', st: 'done' })
+  const f = (await s.jobs.get(d.job))!.flow[d.step]
+  assert.equal(f.out, 'v2'); assert.equal(f.s, 'done')
   s.sessions[1].end()
-  await until(() => seen.includes('draft'))
+})
+
+test('an accept that cannot be saved leaves the revised draft waiting and pushes it once', async () => {
+  const s = setup(), d = await withDraft(s), seen: string[] = []
+  s.runner.onSettled((x) => seen.push(x.state))
+  const cmd = s.jobs.cmd.bind(s.jobs)
+  s.jobs.cmd = (id, c, ...rest) => (c.op === 'acceptDraft' ? Promise.reject(new Error('lost')) : cmd(id, c, ...rest))
+  const r = await s.runner.reply(d.job, d.step, 'ok', 'accept')
+  await until(() => s.sessions.length === 2)
+  await s.sessions[1].tools.submitDraft('v2')
+  assert.deepEqual(seen, ['draft'])
+  s.sessions[1].end()
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  assert.deepEqual(seen, ['draft'])
   assert.equal((await s.jobs.get(d.job))!.flow[d.step].dr!.t, 'v2')
+})
+
+test("a reply waits until the draft's session has wound down", async () => {
+  const s = setup(), d = await withDraft(s)
+  const r = await s.runner.reply(d.job, d.step, 'shorter', 'revise')
+  await until(() => s.sessions.length === 2)
+  await s.sessions[1].tools.submitDraft('v2')
+  await assert.rejects(s.runner.reply(d.job, d.step, 'again', 'revise'), code(409, 'busy'))
+  s.sessions[1].end()
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  await s.runner.reply(d.job, d.step, 'again', 'revise')
+  await until(() => s.sessions.length === 3)
 })
 
 test('a reply is refused without a draft, while a run is on, or without a session', async () => {

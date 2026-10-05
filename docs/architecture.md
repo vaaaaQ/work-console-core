@@ -225,10 +225,11 @@ draft, and `get_job` lists it.
 | intent | The session | The run ends as |
 |---|---|---|
 | `revise` | changes the draft and submits it again | `draft`, which waits for review again |
-| `accept` | changes the draft if asked, then submits it | `draft`, and the console accepts it, signed by whoever replied. If that accept fails, the draft stays and a push says so |
+| `accept` | changes the draft if asked, then submits it | `draft`, accepted the moment it is submitted, signed by whoever replied. If that accept fails, the draft stays and a push says so |
 | `ask` | answers in text and submits nothing | `answered`, with the answer in `a` (at most 4000 characters). The draft stays |
 
 - A reply needs a draft (409 `no_draft`), no run on the step (`busy`), and a session in the chain (`no_session`).
+  A turn whose session is still winding down after its draft is `busy` too, so two processes never share a session.
 - Accept, Edit and Reject wait while a reply runs. An interrupted reply resumes in its session like any run.
 - Reject with a reason, `rejectDraft {step, why}`, journals the reason and asks the step again in a fresh
   session. The prompt carries the step's instruction, the rejected draft and the reason. The command's

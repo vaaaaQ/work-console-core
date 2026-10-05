@@ -135,6 +135,8 @@ export class Runner {
     if (!f.dr) throw new HttpError(409, 'no_draft', 'this step has no draft to reply to')
     const c = await this.chain(job, step)
     if (!c.head || !c.session) throw new HttpError(409, 'no_session', 'this draft has no LLM session to continue; ask again instead')
+    // a run that has submitted its draft can still be winding its session down
+    if (this.live.has(c.head.id)) throw new HttpError(409, 'busy', 'the LLM is still finishing its last turn; send it again in a moment')
     const r: RunRec = { id: `r-${randomBytes(6).toString('hex')}`, job, step, q: t.trim(), state: 'queued', at: new Date().toISOString(), parent: c.head.id, intent, ...(o.via ? { via: o.via } : {}) }
     await this.jobs.cmd(job, { op: 'runReply', step, q: r.q, id: r.id, intent }, undefined, 'runner', o.via)
     await this.save(r)
@@ -327,8 +329,9 @@ export class Runner {
         await this.jobs.cmd(rec.job, { op: 'runDraft', step: rec.step, t }, undefined, 'runner')
         l.drafted = true
         r = { ...r!, state: 'draft' }
-        // an accept turn pushes only if its accept fails
-        await this.save(r, rec.intent !== 'accept')
+        // an accept turn accepts at once, before anyone can act on the draft; it pushes only if that fails
+        const accepted = rec.intent === 'accept' && await this.jobCmd(rec, { op: 'acceptDraft', step: rec.step, said: true }, rec.via ?? 'page')
+        await this.save(r, !accepted)
       },
       addArtifact: (n: string, content: string) => keep(safeName(n), (f) => writeFile(f, content, 'utf8')),
       addArtifactFile: async (p: string, n?: string) => {
@@ -392,9 +395,7 @@ export class Runner {
     if (l.why) return // cancel / interruptAll already settled the record
     const now = () => new Date().toISOString()
     if (l.drafted) {
-      // a failed accept leaves the revised draft waiting, with a push
-      const kept = rec.intent !== 'accept' || await this.jobCmd(rec, { op: 'acceptDraft', step: rec.step, said: true }, rec.via ?? 'page')
-      await this.save({ ...r!, state: 'draft', ended: now() }, !kept)
+      await this.save({ ...r!, state: 'draft', ended: now() }, false)
       return
     }
     if (rec.intent === 'ask' && !error) {
