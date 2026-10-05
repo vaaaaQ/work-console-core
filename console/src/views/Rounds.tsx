@@ -6,6 +6,7 @@ import type { Job, Round } from '../model/types.ts'
 import { LIVE } from '../live/api.ts'
 import { ArtName } from '../ui/artifact.tsx'
 import { Ic } from '../ui/Icon.tsx'
+import { OutText } from '../ui/outText.ts'
 
 /* Past rounds of a job: one compact row each under the phase columns, newest first. A row expands into
    what that pass left behind, read-only. Columns line up with the board because both use the fixed
@@ -21,7 +22,7 @@ function RoundDetail({ j, r }: { j: Job; r: Round }) {
           {f.arts.length ? <div className="arts">{f.arts.map((a, i) => (
             <span key={i} className={'art' + (a.ok ? '' : ' gh')}><Ic n={artIc(a.n)} sm />{LIVE.on && a.link ? <ArtName n={a.n} link={a.link} /> : a.n}</span>))}</div> : null}
           {f.b.map((b, i) => <p key={i} className="why"><Ic n={BK[b.k].i} sm /> {b.t}{b.r ? ` — ${b.r}` : b.o ? ' (open)' : ''}</p>)}
-          {f.out ? <pre className="out">{f.out}</pre> : f.dr ? <><div className="why">LLM draft, not accepted</div><pre className="out">{f.dr.t}</pre></> : null}
+          {f.out ? <OutText t={f.out} /> : f.dr ? <><div className="why">LLM draft, not accepted</div><OutText t={f.dr.t} /></> : null}
           {sent.map((m, i) => <p key={'m' + i} className="why"><Ic n="send" sm /> sent {tfmt(m.at)}: {m.t}</p>)}
         </section>
       )

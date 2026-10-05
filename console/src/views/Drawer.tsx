@@ -15,6 +15,7 @@ import { LIVE } from '../live/api.ts'
 import { FillT, NodePill } from '../ui/bits.tsx'
 import { RunFeed, lastRun } from '../ui/RunFeed.tsx'
 import { Ic } from '../ui/Icon.tsx'
+import { OutSeg, OutText } from '../ui/outText.ts'
 
 type P = { j: Job; s: Step; f: Flow }
 
@@ -30,12 +31,12 @@ function LlmSec({ j, s, f }: P) {
   )
   if (f.dr) return (
     <section className="sec"><div className="eyebrow">LLM draft</div><div className="llmr pending">
-      <div className="hd"><Ic n="bot" sm /><b>Waiting for your review</b><span>· {tfmt(f.dr.at)}</span></div><pre className="out">{f.dr.t}</pre>
+      <div className="hd"><Ic n="bot" sm /><b>Waiting for your review</b><span>· {tfmt(f.dr.at)}</span><OutSeg /></div><OutText t={f.dr.t} />
       <div className="row"><button className="btn sm pri" onClick={() => acceptDraft(j.id, s.id)}><Ic n="check" sm />Accept</button>
         <button className="btn sm" onClick={() => editDraft(j.id, s.id)}><Ic n="pen" sm />Edit…</button>
         <button className="btn sm" onClick={() => rejectDraft(j.id, s.id)}><Ic n="x" sm />Reject</button></div></div></section>
   )
-  if (f.out) return <section className="sec"><div className="eyebrow">Accepted output</div><pre className="out">{f.out}</pre></section>
+  if (f.out) return <section className="sec"><div className="row"><div className="eyebrow">Accepted output</div><span className="fsp" /><OutSeg /></div><OutText t={f.out} /></section>
   return null
 }
 

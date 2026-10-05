@@ -12,6 +12,7 @@ import { L } from '../live/boot.ts'
 import { decide, editProposal } from '../actions/knowledge.tsx'
 import { FillT } from '../ui/bits.tsx'
 import { Ic } from '../ui/Icon.tsx'
+import { OutSeg, OutText } from '../ui/outText.ts'
 
 function ApCard({ x }: { x: Approval }) {
   const { j, s, f } = x
@@ -21,8 +22,8 @@ function ApCard({ x }: { x: Approval }) {
     const dr = f.dr!
     return (
       <article className={'dc' + (dr.nw ? ' new' : '')}>
-        <div className="dc-h"><span className="st"><Ic n="bot" sm /><b>LLM draft · {s.t}</b></span>{lnk}<span className="src">{tfmt(dr.at)}</span></div>
-        <div className="why">{j.t} · done when: {s.x}</div><pre className="out">{dr.t}</pre>
+        <div className="dc-h"><span className="st"><Ic n="bot" sm /><b>LLM draft · {s.t}</b></span>{lnk}<span className="src">{tfmt(dr.at)}</span><OutSeg /></div>
+        <div className="why">{j.t} · done when: {s.x}</div><OutText t={dr.t} />
         <div className="row"><button className="btn sm pri" onClick={() => acceptDraft(j.id, s.id)}><Ic n="check" sm />Accept</button>
           <button className="btn sm" onClick={() => editDraft(j.id, s.id)}><Ic n="pen" sm />Edit…</button>
           <button className="btn sm" onClick={() => rejectDraft(j.id, s.id)}><Ic n="x" sm />Reject</button>{open}</div>
