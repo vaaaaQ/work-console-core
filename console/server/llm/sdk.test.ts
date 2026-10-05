@@ -1,5 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { homedir } from 'node:os'
+import { sep } from 'node:path'
 import { ALLOW, DENY, askOptions, mcpServers, permissions, runToolDefs, userMessage } from './sdk.ts'
 import type { RunTools } from './sdk.ts'
 
@@ -12,6 +14,11 @@ test("a session loads no user or local settings, and may use only its own tools,
   for (const k of ['mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose']) assert.ok(p.allowedTools.includes(k), k)
   assert.ok(!p.allowedTools.some((t) => t.startsWith('mcp__bridge__knowledge')), 'knowledge is the console\'s, not the bridge\'s')
   for (const d of ['mcp__bridge__bridge_act', 'Read(~/.bridge/**)', 'Read(~/.work-console/**)']) assert.ok(p.disallowedTools.includes(d), d)
+})
+
+test("a session never reads the user's own CLAUDE.md, which a work dir under the home folder would reach as a parent's", () => {
+  const h = homedir().split(sep).join('/')
+  assert.deepEqual(permissions([]).settings.claudeMdExcludes, [`${h}/.claude/CLAUDE.md`, `${h}/.claude/rules/**`])
 })
 
 test("a session's MCP servers: A's bridge with the LLM token, its run tools, and the workspace's own", () => {

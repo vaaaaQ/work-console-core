@@ -1,5 +1,7 @@
 import { createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk'
 import type { McpServerConfig, SDKResultMessage, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk'
+import { homedir } from 'node:os'
+import { sep } from 'node:path'
 import { z } from 'zod'
 import type { Hit, Note, ProposalIn } from '../knowledge/notes.ts'
 import type { PromptImage } from './context.ts'
@@ -9,7 +11,8 @@ import type { Shot } from './shot.ts'
    runs in dontAsk mode with an explicit tool list: its own tools (the workspace's knowledge among them),
    A's read tools and config's runTools. The user's own user and local settings are not loaded, because their shell
    allow rules would let a session reach the console's API or A's tokens; only the repo's project
-   settings are, for its CLAUDE.md and skills. It reads A through the gateway's MCP with the llm
+   settings are, for its CLAUDE.md and skills. The user's own CLAUDE.md stays out too, though a work
+   dir under the home folder would reach it as a parent's. It reads A through the gateway's MCP with the llm
    token and writes only through the run's own tools. */
 
 export interface RunTools {
@@ -56,12 +59,17 @@ export const DENY = [
   'Bash(*mcp.token*)', 'PowerShell(*mcp.token*)', 'Bash(*.work-console*)', 'PowerShell(*.work-console*)',
 ]
 
+const HOME = homedir().split(sep).join('/')
+/** the user's own CLAUDE.md and rules, which Claude Code reads as any parent folder's */
+const USER_MD = [`${HOME}/.claude/CLAUDE.md`, `${HOME}/.claude/rules/**`]
+
 /** the permission half of a session's options: which settings load and which tools it may use.
     strictMcpConfig keeps the user's own user-scope MCP servers, the console's own job tools among them, out;
     bridge false: a workspace without a gateway, so no bridge tools */
 export function permissions(runTools: string[], bridge = true) {
   return {
     settingSources: ['project'] as ('project')[],
+    settings: { claudeMdExcludes: USER_MD },
     strictMcpConfig: true,
     permissionMode: 'dontAsk' as const,
     allowedTools: [...(bridge ? ALLOW : ALLOW.filter((t) => !BRIDGE.includes(t))), ...runTools],
