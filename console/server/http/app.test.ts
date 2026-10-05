@@ -18,6 +18,7 @@ import { Pairing } from '../pairing/pairing.ts'
 import { hub, makeSpace, Spaces } from '../spaces.ts'
 import type { Space } from '../spaces.ts'
 import { acme, acmeServer } from '../testkit.ts'
+import type { Format } from '../voice/format.ts'
 import type { Voice } from '../voice/whisper.ts'
 import type { Plugin, WorkspaceServer, WsConfig } from '../workspace.ts'
 import { createApp } from './app.ts'
@@ -64,7 +65,7 @@ function expectErrors(t: TestContext, ...pats: RegExp[]) {
 type Fakes = Record<string, FakeGateway>
 /** acme and beta (or acme alone), each on its own fake gateway; `before` runs before the sources start.
     A setup that fails partway closes what it opened, so a red run fails instead of hanging. */
-async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[]; before?: (f: Fakes) => void; voice?: Voice } = {}) {
+async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[]; before?: (f: Fakes) => void; voice?: Voice; format?: Format } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'wc-http-')), web = join(dir, 'web')
   const list: Space[] = [], servers: Server[] = []
   let h: ReturnType<typeof createApp> | null = null, unhub = () => {}
@@ -88,7 +89,7 @@ async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[];
     const loop = createServer((q, s) => h!.loopback(q, s)), lanS = createServer((q, s) => h!.lan(q, s))
     servers.push(loop, lanS)
     const lp = await listen(loop), np = await listen(lanS)
-    h = createApp({ loopbackPort: lp, lanPort: 7411, pcName: 'pc', hub: bus, spaces, pairing, notify, staticDirs: [web], artifactsDir: join(dir, 'arts'), tz: 'Asia/Tokyo', voice: o.voice })
+    h = createApp({ loopbackPort: lp, lanPort: 7411, pcName: 'pc', hub: bus, spaces, pairing, notify, staticDirs: [web], artifactsDir: join(dir, 'arts'), tz: 'Asia/Tokyo', voice: o.voice, format: o.format })
     o.before?.(fakes)
     for (const s of list) s.source.start()
     await until(() => list.every((s) => s.source.available()))
@@ -812,6 +813,25 @@ test('transcribe: the audio reaches the voice, past the usual 2 MB; state says w
   try {
     assert.equal((await call(none.lp, 'GET', '/api/state')).json.voice, false)
     const r = await call(none.lp, 'POST', '/api/ws/acme/transcribe', { body: { audio: 'AA==', mime: 'audio/webm' } })
+    assert.equal(r.status, 503); assert.equal(r.json.error.code, 'no_key')
+  } finally { await none.stop() }
+})
+
+test('format: the text, ctx and target reach the formatter; a bad target is 400; without one it is no_key', async () => {
+  const got: unknown[] = []
+  const format: Format = { format: async (o) => { got.push(o); return { text: o.text.toUpperCase(), ...(o.intents ? { intent: 'ask' as const } : {}) } } }
+  const { lp, stop } = await setup({ one: true, format })
+  try {
+    const r = await call(lp, 'POST', '/api/ws/acme/format', { body: { text: 'hi', ctx: 'the draft', target: 'llm', intents: true } })
+    assert.equal(r.status, 200); assert.deepEqual(r.json, { text: 'HI', intent: 'ask' })
+    assert.deepEqual(got[0], { text: 'hi', ctx: 'the draft', field: undefined, target: 'llm', intents: true })
+    const bad = await call(lp, 'POST', '/api/ws/acme/format', { body: { text: 'hi', target: 'robots' } })
+    assert.equal(bad.status, 400); assert.equal(bad.json.error.code, 'bad_args')
+    assert.equal((await call(lp, 'POST', '/api/ws/acme/format', { body: { target: 'llm' } })).status, 400, 'no text')
+  } finally { await stop() }
+  const none = await setup({ one: true })
+  try {
+    const r = await call(none.lp, 'POST', '/api/ws/acme/format', { body: { text: 'hi', target: 'llm' } })
     assert.equal(r.status, 503); assert.equal(r.json.error.code, 'no_key')
   } finally { await none.stop() }
 })

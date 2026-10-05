@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { coreDefaults, repoRoot } from './config.ts'
+import { coreDefaults, loadConfig, repoRoot } from './config.ts'
 
 test('LLM sessions run in the repo around the console: the nearest folder with a .git, a file or a folder', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'wc-repo-'))
@@ -25,4 +25,11 @@ test('LLM sessions run in the repo around the console: the nearest folder with a
 test('the default work dir is that repo unless WORK_CONSOLE_CWD says otherwise', () => {
   assert.equal(coreDefaults({}).workDir, repoRoot())
   assert.equal(coreDefaults({ WORK_CONSOLE_CWD: 'C:/work' }).workDir, 'C:/work')
+})
+
+test('dictated text is tidied by gpt-6-luna unless config.json names another model', () => {
+  const home = mkdtempSync(join(tmpdir(), 'wc-cfg-'))
+  assert.equal(loadConfig({ WORK_CONSOLE_HOME: home }).formatModel, 'gpt-6-luna')
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ formatModel: 'gpt-6' }))
+  assert.equal(loadConfig({ WORK_CONSOLE_HOME: home }).formatModel, 'gpt-6')
 })

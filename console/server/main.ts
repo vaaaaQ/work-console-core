@@ -21,6 +21,7 @@ import { Reminders } from './notify/reminders.ts'
 import { Pairing } from './pairing/pairing.ts'
 import { hub, makeSpace, Spaces } from './spaces.ts'
 import type { Space } from './spaces.ts'
+import { formatter } from './voice/format.ts'
 import { whisper } from './voice/whisper.ts'
 import { checkWorkspaces } from './workspace.ts'
 import type { WorkspaceServer } from './workspace.ts'
@@ -110,6 +111,7 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
     staticDirs: [join(PKG, 'dist'), join(PKG, 'public')], artifactsDir, tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
     mcp: mcpHandler({ tools: jobTools({ spaces }), token: () => readToken(mcpToken) }),
     voice: whisper({ keyPath: cfg.openaiKeyPath }),
+    format: formatter({ keyPath: cfg.openaiKeyPath, model: cfg.formatModel }),
   })
   for (const s of list) s.source.start()
   const fakes: Record<string, FakeGateway> = Object.fromEntries(list.flatMap((s) => (s.fake ? [[s.id, s.fake]] : [])))

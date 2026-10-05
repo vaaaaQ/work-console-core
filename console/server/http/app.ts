@@ -18,6 +18,7 @@ import type { Notify } from '../notify/notify.ts'
 import { qrSvg } from '../pairing/pairing.ts'
 import type { Pairing } from '../pairing/pairing.ts'
 import type { Space, Spaces } from '../spaces.ts'
+import type { Format } from '../voice/format.ts'
 import type { Voice } from '../voice/whisper.ts'
 import type { PluginReq } from '../workspace.ts'
 
@@ -48,6 +49,8 @@ export interface Deps {
   mcp?: RequestListener
   /** the mic's speech to text; none = no voice */
   voice?: Voice
+  /** dictated text made clean for a field; none = no Tidy up */
+  format?: Format
 }
 
 type Side = 'loopback' | 'lan'
@@ -370,6 +373,13 @@ export function createApp(d: Deps) {
       const b = await r.body(30 << 20)
       if (!d.voice) throw new HttpError(503, 'no_key', 'voice is off on this console')
       return { text: await d.voice.transcribe(str(b.audio, 'audio'), str(b.mime, 'mime'), dropped(r)) }
+    }],
+    ['POST', /^\/format$/, async (r) => {
+      const b = await r.body()
+      if (!d.format) throw new HttpError(503, 'no_key', 'voice is off on this console')
+      if (b.target !== 'llm' && b.target !== 'people') throw new HttpError(400, 'bad_args', 'target is llm or people')
+      const opt = (v: unknown) => (typeof v === 'string' ? v : undefined)
+      return await d.format.format({ text: str(b.text, 'text'), ctx: opt(b.ctx), field: opt(b.field), target: b.target, intents: b.intents === true }, dropped(r))
     }],
     // a build reads for up to 120 s; a page that goes away stops it. A key another workspace holds is not offered
     ['POST', /^\/build$/, async (r, s) => {
