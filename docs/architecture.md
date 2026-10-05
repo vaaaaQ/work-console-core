@@ -215,6 +215,25 @@ What a run's prompt holds, in this order (`console/server/llm/prompt.ts`):
 - The run tool `context` returns the same parts but How to work, pictures included, read anew, for a long run whose first prompt is far behind it.
 - A resumed run keeps its session and gets one line; it reads nothing until it calls `context`.
 
+### Replies to a draft
+
+A person answers a draft in the draft's own session: `POST /api/runs/<id>/reply {t, intent}`. The reply
+is a run whose `parent` is the step's newest run, and it resumes the newest session in that chain. A
+step's runs linked by `parent` are its conversation (`src/model/thread.ts`); the page shows it under the
+draft, and `get_job` lists it.
+
+| intent | The session | The run ends as |
+|---|---|---|
+| `revise` | changes the draft and submits it again | `draft`, which waits for review again |
+| `accept` | changes the draft if asked, then submits it | `draft`, and the console accepts it, signed by whoever replied. If that accept fails, the draft stays and a push says so |
+| `ask` | answers in text and submits nothing | `answered`, with the answer in `a` (at most 4000 characters). The draft stays |
+
+- A reply needs a draft (409 `no_draft`), no run on the step (`busy`), and a session in the chain (`no_session`).
+- Accept, Edit and Reject wait while a reply runs. An interrupted reply resumes in its session like any run.
+- Reject with a reason, `rejectDraft {step, why}`, journals the reason and asks the step again in a fresh
+  session. The prompt carries the step's instruction, the rejected draft and the reason. The command's
+  answer carries `run`, or `redo` with the reason none started. Without a reason, nothing starts.
+
 ### Auto-ask
 
 With `autoAsk: true` in its config a workspace runs its LLM steps by itself (`console/server/llm/autoAsk.ts`).
@@ -251,7 +270,7 @@ Each workspace has a folder of Markdown notes: `knowledgeDir` in its config, def
 
 ## Voice
 
-The New job form takes speech. The page records with MediaRecorder, which needs a secure context
+The New job form and every long text field take speech. The page records with MediaRecorder, which needs a secure context
 (`http://127.0.0.1:7410` or the LAN's `https`), and sends the recording to
 `POST /api/ws/<id>/transcribe {audio, mime}`: base64 audio in a JSON body of up to 30 MB. The backend
 hands it to OpenAI's `whisper-1` (`console/server/voice/whisper.ts`) and answers `{text}`.
@@ -262,6 +281,26 @@ hands it to OpenAI's `whisper-1` (`console/server/voice/whisper.ts`) and answers
   still works, and the route answers 503 `no_key`.
 - The key never reaches an answer or a log: OpenAI's messages, which can quote part of it, are scrubbed
   first. A page that drops the request aborts the call.
+
+### Tidying up
+
+`POST /api/ws/<id>/format {text, ctx?, field?, target, intents?}` answers `{text, intent?}`
+(`console/server/voice/format.ts`). It makes one call to OpenAI's Responses API with `formatModel` from
+`config.json` (default `gpt-6-luna`) and a strict JSON schema, using the same key.
+
+| Input | What |
+|---|---|
+| `text` | the words as heard, at most 20 000 characters |
+| `ctx` | what is being answered: the draft, the question or the step, at most 8000 characters |
+| `field` | the text already in the field, as context only |
+| `target` | `llm` keeps the spoken language; `people` gets plain English |
+| `intents` | the answer also says which of `revise`, `accept` and `ask` the words mean |
+
+- The errors are 503 `no_key`, 502 `bad_key` or `format_failed`, 504 after 30 s, and 499 when the page
+  drops the request. The key is scrubbed from each.
+- The page's field is `src/ui/VoiceField.tsx`. The heard words go in at the cursor at once, then the
+  tidied text replaces them. If the user edited them meanwhile, they stay as said. Tidy up sends the
+  whole field. A form reads it like a textarea.
 
 ### The builder
 
@@ -288,15 +327,19 @@ The says fill the form: `POST /api/ws/<id>/build {id, say[], form}` answers `{fo
 ## Claude Code access
 
 The backend serves its own MCP at `127.0.0.1:7410/mcp` (`console/server/mcp/mcp.ts`). It offers
-the job tools (`list_jobs`, `get_job`, `job_command`, `job_context`, `return_to`, `create_job`,
+the job tools (`list_jobs`, `get_job`, `job_command`, `draft_reply`, `job_context`, `return_to`, `create_job`,
 `start_item`, `undo`, `list_playbooks`), so a terminal session can move jobs without the page, and
 the knowledge tools (`knowledge_search`, `knowledge_read`, `knowledge_propose`). These are console
 commands, not source acts. It is one server for every workspace: a job id names its workspace by its
 prefix, and `create_job`, `start_item` and the knowledge tools take `ws`, which may be omitted while
 only one workspace is registered.
 
+- `draft_reply {id, step, text, intent, wait?}` replies to a draft as the page does. With `wait` (at
+  most 50 s) it returns the answer or the new draft; without it, the run id.
+- `job_command rejectDraft` takes `why` as the page does. A reply or redo it starts is signed Claude Code.
+
 ## Notifications
 
 `console/server/notify/` turns deltas into short notices: a new review vote, a red build, a
-mention, a reminder. The page receives them over SSE. A phone gets them over the LAN port
+mention, a reminder, a revised draft, an LLM's answer to a question. The page receives them over SSE. A phone gets them over the LAN port
 7411 after pairing (`console/server/pairing/`).
