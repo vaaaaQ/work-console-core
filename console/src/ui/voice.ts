@@ -34,6 +34,33 @@ export async function record(): Promise<Recording> {
   }
 }
 
+/** one recording at a time with a length cap; cancel also works while the browser still asks for the mic */
+export class Recorder {
+  private r: Recording | null = null
+  private cap?: ReturnType<typeof setTimeout>
+  private want = false
+  private o: { max: number; onCap: () => void; record?: () => Promise<Recording> }
+  constructor(o: Recorder['o']) { this.o = o }
+  get on() { return this.want }
+  /** false when it was cancelled or stopped while the browser asked; throws why the mic did not start */
+  async start() {
+    this.want = true
+    let r: Recording
+    try { r = await (this.o.record ?? record)() } catch (e) { this.want = false; throw e }
+    if (!this.want || this.r) { r.cancel(); return false }
+    this.r = r
+    this.cap = setTimeout(this.o.onCap, this.o.max)
+    return true
+  }
+  /** the audio, or null when nothing was recording */
+  async stop() {
+    clearTimeout(this.cap); this.want = false
+    const r = this.r; this.r = null
+    return r ? r.stop() : null
+  }
+  cancel() { clearTimeout(this.cap); this.want = false; this.r?.cancel(); this.r = null }
+}
+
 /** why the mic could not start, in words */
 export function micError(e: unknown) {
   const n = (e as { name?: string } | null)?.name

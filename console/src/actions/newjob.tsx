@@ -18,8 +18,7 @@ import { Ic } from '../ui/Icon.tsx'
 import { CancelBtn, ExportBtn, FlowLegend, FlowMap } from '../ui/bits.tsx'
 import { closeModal, modal, modalForm } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
-import { canRecord, micError, record } from '../ui/voice.ts'
-import type { Recording } from '../ui/voice.ts'
+import { canRecord, micError, Recorder } from '../ui/voice.ts'
 import { go, setHash } from './nav.tsx'
 import { pbAdd } from './playbooks.tsx'
 
@@ -37,7 +36,7 @@ const REC_MAX = 10 * 60_000
 
 let F: Nj | null = null
 let B: Bar = BAR0
-let rec: Recording | null = null, recCap: ReturnType<typeof setTimeout> | undefined
+const R = new Recorder({ max: REC_MAX, onCap: () => { void stopRec() } })
 let ac: AbortController | null = null
 let creating = false
 /** the key Create job saved the steps under, so a second try overwrites them instead of picking a new key */
@@ -55,8 +54,7 @@ const setB = (p: Partial<Bar>) => { B = { ...B, ...p }; ping() }
 const busyK = () => B.busy?.k
 
 function stopAll() {
-  clearTimeout(recCap)
-  rec?.cancel(); rec = null
+  R.cancel()
   ac?.abort(); ac = null
   B = { ...B, busy: null }
 }
@@ -96,30 +94,22 @@ function open() {
 async function startRec() {
   if (B.busy || !F) return
   setB({ busy: { k: 'rec', at: 0, lines: [] }, err: '', audio: null })
-  let r: Recording
-  try { r = await record() } catch (e) { if (busyK() === 'rec') setB({ busy: null, err: micError(e) }); return }
-  // closed, or stopped, while the browser asked for the mic
-  if (busyK() !== 'rec' || rec) { r.cancel(); return }
-  rec = r
-  recCap = setTimeout(() => { void stopRec() }, REC_MAX)
+  // false: closed, or stopped, while the browser asked for the mic
+  try { if (!(await R.start())) return } catch (e) { if (busyK() === 'rec') setB({ busy: null, err: micError(e) }); return }
   setB({ busy: { k: 'rec', at: Date.now(), lines: [] } })
 }
 
 async function stopRec() {
-  const r = rec
-  clearTimeout(recCap)
-  if (!r) { if (B.busy?.k === 'rec') setB({ busy: null }); return }
-  rec = null
-  let got: { audio: string; mime: string }
-  try { got = await r.stop() } catch (e) { setB({ busy: null, err: `The recording failed: ${(e as Error).message}` }); return }
+  let got: { audio: string; mime: string } | null
+  try { got = await R.stop() } catch (e) { setB({ busy: null, err: `The recording failed: ${(e as Error).message}` }); return }
+  if (!got) { if (B.busy?.k === 'rec') setB({ busy: null }); return }
   if (!got.audio) { setB({ busy: null, err: 'Nothing was recorded.' }); return }
   await hear(got)
 }
 
 /** drops the recording: nothing is sent and the form stays as it was */
 function cancelRec() {
-  clearTimeout(recCap)
-  rec?.cancel(); rec = null
+  R.cancel()
   if (busyK() === 'rec') setB({ busy: null })
 }
 
