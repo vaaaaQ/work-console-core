@@ -7,7 +7,7 @@ flowchart LR
     backend <-- HTTP + SSE<br/>Bearer console --> gw[Gateway<br/>127.0.0.1:47821]
     sdk[LLM run<br/>Claude Agent SDK] <-- MCP<br/>Bearer llm --> gw
     backend --> sdk
-    cc[Claude Code session] <-- MCP /mcp --> backend
+    cc[Claude Code or Cursor session] <-- MCP /mcp --> backend
     gw <--> carrier[Extension carrier]
     carrier <--> tabs[Signed-in tool tabs<br/>pack script]
     gw --- state[(State store<br/>jobs, runs, marks…)]
@@ -253,6 +253,33 @@ A person still accepts, edits or rejects every draft.
 - The 6 s wait outlasts the page's Undo, so an undone step asks nothing.
 - Sessions stay capped at `maxSessions`; the rest queue. The push for an interrupted run says it resumes by itself.
 
+### Providers
+
+Which LLM app the console uses is the person's choice, one file per console: `<home>/providers.json`
+(`console/server/settings.ts`), set on the PC's Settings page through `GET`/`PUT /api/settings`
+(loopback only, else 403 `pc_only`). It is read on every use, so a change applies from the next run.
+
+```mermaid
+flowchart LR
+  set[(providers.json<br/>auto · manual · paths)] --> pick[providerPick]
+  pick -->|auto| run[runs, Auto-ask,<br/>replies, the builder]
+  set -->|manual| open[step's Open button]
+  open -->|same app, session| resume[resume the run's session]
+  open -->|otherwise| fresh[new session + short prompt]
+  fresh --> ctx[step_context] --> sub[submit_draft]
+```
+*auto runs by itself; manual is what a person opens by hand. A hand-made session reads its step and hands its draft in through the console MCP.*
+
+| Key | What |
+|---|---|
+| `auto` | the provider of every run the console starts. Only one that can run by itself (`Provider.auto`); today that is Claude |
+| `manual` | what a step's Open button opens: Claude Code (`claude-cli://` link, or `claude --resume` copied when the step's newest run was Claude's) or Cursor (`cursor://anysphere.cursor-deeplink/prompt`) |
+| `claudePath`, `cursorPath` | the apps' binaries when not found by themselves; a path must be an existing file |
+
+- The registry is `console/server/llm/providers.ts`; a provider is `{id, label, auto?, open}`.
+- A run records its `provider`. A resume or a reply uses the one its run recorded; a provider that cannot run by itself fails it with `provider_unavailable`.
+- `GET /api/jobs/<id>/steps/<step>/open` is loopback only. It answers `{open: {kind: link|command, value}, label}` and is 409 `busy` while the step has a run.
+
 ## Knowledge
 
 Each workspace has a folder of Markdown notes: `knowledgeDir` in its config, default
@@ -329,10 +356,10 @@ The says fill the form: `POST /api/ws/<id>/build {id, say[], form}` answers `{fo
 - A build stops after 120 s (504), when the page drops the request (499), or when Claude Code is
   signed out (503).
 
-## Claude Code access
+## Session access
 
 The backend serves its own MCP at `127.0.0.1:7410/mcp` (`console/server/mcp/mcp.ts`). It offers
-the job tools (`list_jobs`, `get_job`, `job_command`, `draft_reply`, `job_context`, `return_to`, `create_job`,
+the job tools (`list_jobs`, `get_job`, `job_command`, `draft_reply`, `step_context`, `submit_draft`, `job_context`, `return_to`, `create_job`,
 `start_item`, `undo`, `list_playbooks`), so a terminal session can move jobs without the page, and
 the knowledge tools (`knowledge_search`, `knowledge_read`, `knowledge_propose`). These are console
 commands, not source acts. It is one server for every workspace: a job id names its workspace by its
@@ -341,11 +368,14 @@ only one workspace is registered.
 
 - `draft_reply {id, step, text, intent, wait?}` replies to a draft as the page does. With `wait` (at
   most 50 s) it returns the answer or the new draft; without it, the run id.
-- `job_command rejectDraft` takes `why` as the page does. A reply or redo it starts is signed Claude Code.
+- `job_command rejectDraft` takes `why` as the page does.
 - `job_command waitAdd {step, j, plan?}` makes a step wait for another open job of the workspace, `waitDel {step, j}`
   removes the link and `blockerDrop {step}` dismisses a blocker a reply asked for. `stepDone` and `acceptDraft` take
   `force: true` to finish a step whose blockers are still open. `get_job` shows each step's `waitsFor` and, on the
   blocker, `holds`, the steps of other jobs that wait for it; `holds` is read from every job of the workspace.
+- Every change is signed with the client's name from `initialize` (`clientInfo.name`), Claude Code when it gives none.
+- `step_context {id, step}` returns what a run of the step would be told, pictures included, with How to work told for a session opened by hand.
+- `submit_draft {id, step, output, artifacts?}` hands that session's draft in (`draftIn`): it waits in Approvals like a run's. It is `busy` while a run of the step is queued or running, and `draft_waiting` while a draft waits. Undo takes back the draft and its artifact links.
 
 ## Notifications
 
