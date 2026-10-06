@@ -13,7 +13,7 @@ import type { Store } from '../store/port.ts'
 export type Who = 'page' | 'runner' | 'session' | 'console' | 'run'
 /** a saved command: who sent it, the job before it and the job as saved */
 export type CmdEv = { who: Who; cmd: Cmd; prev: Job; job: Job }
-const ALLOWED: Partial<Record<Who, Set<string>>> = { page: new Set(PAGE_OPS), session: new Set(SESSION_OPS), console: new Set(['noteAdd', 'reopen', 'stepDone', 'artifact', 'journal', 'blockerClosed']), run: new Set(['start']) }
+const ALLOWED: Partial<Record<Who, Set<string>>> = { page: new Set(PAGE_OPS), session: new Set([...SESSION_OPS, 'draftIn']), console: new Set(['noteAdd', 'reopen', 'stepDone', 'artifact', 'journal', 'blockerClosed']), run: new Set(['start']) }
 const BY: Partial<Record<Who, string>> = { session: 'Claude Code', console: 'console', run: 'LLM' }
 
 export class Jobs {
@@ -47,8 +47,9 @@ export class Jobs {
     return saved
   }
 
-  /** as = whose word it is when the runner acts for someone (an accept reply): it signs the journal */
-  async cmd(id: string, c: Cmd, expectV?: number, who: Who = 'page', as?: Who): Promise<{ job: Job; prev: Job; nx: string | null }> {
+  /** as = whose word it is when the runner acts for someone (an accept reply): it signs the journal;
+      name = the signer in place of as's, e.g. the MCP client a session runs in */
+  async cmd(id: string, c: Cmd, expectV?: number, who: Who = 'page', as?: Who, name?: string): Promise<{ job: Job; prev: Job; nx: string | null }> {
     const ok = ALLOWED[who]
     if (ok) {
       if (!c || !ok.has(c.op)) throw new HttpError(400, 'bad_args', `the ${who} cannot send ${c?.op}`)
@@ -61,7 +62,7 @@ export class Jobs {
       // a link checks its blocker and walks the links for a cycle, so it reads the other jobs as they are now
       const others = c.op === 'waitAdd' ? new Map((await this.store.jobs()).map((j) => [j.id, j])) : null
       let r: { job: Job; nx: string | null }
-      try { r = T.apply({ ...this.ctx(), by: BY[as ?? who], ...(others ? { jobOf: (i: string) => others.get(i) } : {}) }, cur, c) } catch (e) {
+      try { r = T.apply({ ...this.ctx(), by: name || BY[as ?? who], ...(others ? { jobOf: (i: string) => others.get(i) } : {}) }, cur, c) } catch (e) {
         if (e instanceof T.CmdError) throw new HttpError(400, e.code, e.message)
         throw e
       }

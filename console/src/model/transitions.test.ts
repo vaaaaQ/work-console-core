@@ -591,3 +591,17 @@ test('waitDel of a link that is not there is refused; blockerClosed for one the 
   assert.deepEqual(w.run('A-1', { op: 'blockerClosed', step: 'tr', j: 'A-2', st: 'done', out: 'x' }).job, before)
   assert.deepEqual(w.run('A-1', { op: 'blockerDrop', step: 'tr' }).job, before)
 })
+
+test('draftIn: a session hands in a draft for review, signed as the session; refused busy, with a draft waiting, and on a closed or finished step', () => {
+  const j = open(), at = atOf(X, j)!
+  const clean = apply(X, j, { op: 'stepResume', step: at }).job
+  const d = apply({ ...X, by: 'Cursor' }, clean, { op: 'draftIn', step: at, t: ' the draft ' }).job
+  assert.equal(d.flow[at].dr!.t, 'the draft'); assert.equal(d.flow[at].s, 'wait'); assert.equal(d.flow[at].m, 'draft handed in')
+  assert.equal(d.jr[0].a, 'Cursor'); assert.match(d.jr[0].o, /handed in/)
+  assert.throws(() => apply(X, d, { op: 'draftIn', step: at, t: 'again' }), (e: unknown) => e instanceof CmdError && /^draft_waiting/.test(e.message))
+  const run = apply(X, clean, { op: 'runStart', step: at, q: 'q', id: 'r-1' }).job
+  assert.throws(() => apply(X, run, { op: 'draftIn', step: at, t: 'x' }), (e: unknown) => e instanceof CmdError && /^busy/.test(e.message))
+  code(() => apply(X, clean, { op: 'draftIn', step: at, t: '  ' }), 'bad_args')
+  code(() => apply(X, apply(X, clean, { op: 'stepDone', step: at }).job, { op: 'draftIn', step: at, t: 'x' }), 'bad_state')
+  code(() => apply(X, apply(X, clean, { op: 'close', st: 'done' }).job, { op: 'draftIn', step: at, t: 'x' }), 'bad_state')
+})

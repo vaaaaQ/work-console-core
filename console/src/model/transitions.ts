@@ -265,7 +265,7 @@ function returnTo(x: Ctx, j: Job, sid: string, why: string) {
 }
 
 const STEP_OPS = new Set(['returnTo', 'stepDone', 'stepSkip', 'stepWait', 'stepResume', 'stepReopen', 'acceptDraft', 'rejectDraft',
-  'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'runStart', 'runReply', 'runDraft', 'runAnswer', 'runEnd', 'artifact',
+  'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'runStart', 'runReply', 'runDraft', 'draftIn', 'runAnswer', 'runEnd', 'artifact',
   'waitAdd', 'waitDel', 'blockerClosed', 'runBlocker', 'blockerDrop'])
 
 /** runs one command on a copy of the job; nx is the step to show next, when the command moved on */
@@ -482,6 +482,16 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       const re = !!F.run.reply
       F.run = null; F.dr = { t: cmd.t, at: nowOf(x).toISOString(), nw: 1 }; F.s = 'wait'; F.m = re ? 'LLM draft revised' : 'LLM draft ready'; F.nw = 1
       jr(x, j, re ? `Draft for “${S.t}” revised.` : `Draft for “${S.t}” is ready.`, 'waiting for your review.', 'accept, edit or reject it.', 'LLM', 'wait'); syncStatus(x, j)
+      break
+    }
+    case 'draftIn': {
+      if (F.run) throw new CmdError('bad_state', `busy: “${S.t}” has an LLM run; wait for it or cancel it`)
+      if (F.dr) throw new CmdError('bad_state', `draft_waiting: “${S.t}” has a draft waiting; reply to it or reject it first`)
+      if (!isLive(F)) throw new CmdError('bad_state', `“${S.t}” is not open; reopen it first`)
+      const t = (cmd.t || '').trim()
+      if (!t) throw new CmdError('bad_args', 'the draft is empty')
+      F.dr = { t, at: nowOf(x).toISOString(), nw: 1 }; F.s = 'wait'; F.m = 'draft handed in'; F.nw = 1
+      jr(x, j, `Draft for “${S.t}” handed in.`, 'waiting for your review.', 'accept, edit or reject it.', by(x), 'wait'); syncStatus(x, j)
       break
     }
     case 'runAnswer':

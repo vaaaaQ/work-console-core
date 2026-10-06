@@ -99,6 +99,8 @@ export type Cmd =
   /** a reply to the draft in its own session; the draft stays until it is revised */
   | { op: 'runReply'; step: string; q: string; id: string; intent: RunIntent; resumed?: boolean }
   | { op: 'runDraft'; step: string; t: string }
+  /** a draft a session made by hand hands in through the console's MCP; it waits for review as a run's does */
+  | { op: 'draftIn'; step: string; t: string }
   /** an ask reply's answer: the run ends, the draft stays */
   | { op: 'runAnswer'; step: string; a: string }
   /** due = an interrupted run that resumes by itself */
