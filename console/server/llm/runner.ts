@@ -13,10 +13,10 @@ import type { Jobs } from '../jobs/jobs.ts'
 import type { Notes } from '../knowledge/notes.ts'
 import type { Store } from '../store/port.ts'
 import type { PromptImage, RunContext } from './context.ts'
-import { buildPrompt, contextText, redoText, replyPrompt, RESUME_ASK_PROMPT, RESUME_PROMPT } from './prompt.ts'
+import { buildPrompt, contextText, manualText, redoText, replyPrompt, RESUME_ASK_PROMPT, RESUME_PROMPT } from './prompt.ts'
 import type { PromptIn } from './prompt.ts'
 import { pickOf } from './providers.ts'
-import type { SdkPick } from './providers.ts'
+import type { OpenIn, SdkPick } from './providers.ts'
 import type { KnowledgeIn, Sdk } from './sdk.ts'
 import { checkUrl } from './shot.ts'
 import type { Shot } from './shot.ts'
@@ -113,13 +113,13 @@ export class Runner {
     return j
   }
 
-  /** auto = the console asks by itself, and the journal says so; via = who asked when not the user */
-  async ask(job: string, step: string, q: string, o: { auto?: boolean; via?: 'session' } = {}): Promise<RunRec> {
+  /** auto = the console asks by itself, and the journal says so; via = who asked when not the user, name = its signer */
+  async ask(job: string, step: string, q: string, o: { auto?: boolean; via?: 'session'; name?: string } = {}): Promise<RunRec> {
     if (!this.gate()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; no run was started')
     if (!q || !q.trim()) throw new HttpError(400, 'bad_args', 'the instruction is empty')
     await this.hasRun(job, step)
     const r: RunRec = { id: `r-${randomBytes(6).toString('hex')}`, job, step, q: q.trim(), state: 'queued', at: new Date().toISOString(), provider: this.pick.auto(), ...(o.via ? { via: o.via } : {}) }
-    await this.jobs.cmd(job, { op: 'runStart', step, q: r.q, id: r.id, ...(o.auto ? { auto: true } : {}) }, undefined, 'runner', o.via)
+    await this.jobs.cmd(job, { op: 'runStart', step, q: r.q, id: r.id, ...(o.auto ? { auto: true } : {}) }, undefined, 'runner', o.via, o.name)
     await this.save(r)
     this.queue.push({ id: r.id })
     this.pump()
@@ -133,7 +133,7 @@ export class Runner {
   }
 
   /** a reply to the step's draft in its own session; via = who replied when not the user: a session, or the console itself */
-  async reply(job: string, step: string, t: string, intent: RunIntent, o: { via?: 'session' | 'console' } = {}): Promise<RunRec> {
+  async reply(job: string, step: string, t: string, intent: RunIntent, o: { via?: 'session' | 'console'; name?: string } = {}): Promise<RunRec> {
     if (!this.gate()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; the reply was not sent')
     if (!t || !t.trim()) throw new HttpError(400, 'bad_args', 'the reply is empty')
     if (!INTENTS.includes(intent)) throw new HttpError(400, 'bad_args', `intent is one of ${INTENTS.join(', ')}`)
@@ -149,7 +149,7 @@ export class Runner {
     // a run that has submitted its draft can still be winding its session down
     if (this.live.has(c.head.id)) throw new HttpError(409, 'busy', 'the LLM is still finishing its last turn; send it again in a moment')
     const r: RunRec = { id: `r-${randomBytes(6).toString('hex')}`, job, step, q: t.trim(), state: 'queued', at: new Date().toISOString(), parent: c.head.id, intent, provider: c.provider, ...(o.via ? { via: o.via } : {}) }
-    await this.jobs.cmd(job, { op: 'runReply', step, q: r.q, id: r.id, intent }, undefined, 'runner', o.via)
+    await this.jobs.cmd(job, { op: 'runReply', step, q: r.q, id: r.id, intent }, undefined, 'runner', o.via, o.name)
     await this.save(r)
     this.queue.push({ id: r.id, resume: c.session, reply: true })
     this.pump()
@@ -158,11 +158,50 @@ export class Runner {
 
   /** after a rejectDraft with a reason: the step again in a fresh session, told the draft and why. Never throws:
       the draft is rejected either way, and redo says why no run started */
-  async redoRejected(prev: Job, c: Cmd, via?: 'session'): Promise<{ run?: RunRec; redo?: string }> {
+  async redoRejected(prev: Job, c: Cmd, via?: 'session', name?: string): Promise<{ run?: RunRec; redo?: string }> {
     if (c.op !== 'rejectDraft' || !c.why?.trim()) return {}
     const dr = prev.flow[c.step]?.dr, s = T.stepOf(this.ctx(), prev, c.step)
     if (!dr || !s) return {}
-    try { return { run: await this.ask(prev.id, c.step, redoText(T.askText(s), dr.t, c.why), { via }) } } catch (e) { return { redo: (e as Error).message } }
+    try { return { run: await this.ask(prev.id, c.step, redoText(T.askText(s), dr.t, c.why), { via, name }) } } catch (e) { return { redo: (e as Error).message } }
+  }
+
+  /** the dir a run of the job works in: the job's own, or the workspace's */
+  private dirOf(job: Job) { return this.workDir ? this.workDir.dir(job) : Promise.resolve(this.cwd) }
+
+  /** the prompt's input for the job as it is now, and the pictures its context names; cwd = the run's dir */
+  private async input(j: Job, cwd: string): Promise<{ o: PromptIn; images: PromptImage[] }> {
+    const c = await this.context(j), kn = this.notes
+    const wd = this.workDir ? { workDir: cwd, branch: this.workDir.branch?.(j) } : {}
+    return { o: { ctx: c.ctx, images: c.images.length, pbNotes: kn ? await kn.forPlaybook(j.pb) : [], me: this.me, bridge: this.bridge, knowledge: !!kn, ...wd }, images: c.images }
+  }
+
+  /** a step taken up by hand: the job, its step and title, its dir, and its newest session run with that run's provider */
+  async openIn(job: string, step: string): Promise<OpenIn> {
+    const j = await this.jobs.get(job)
+    if (!j) throw new HttpError(404, 'not_found', `no job ${job}`)
+    const s = T.stepOf(this.ctx(), j, step)
+    if (!s || !j.flow[step]) throw new HttpError(400, 'bad_step', `${job} has no step ${step}`)
+    if (j.flow[step].run) throw new HttpError(409, 'busy', 'this step has an LLM run; wait for it or cancel it')
+    const c = await this.chain(job, step)
+    return { dir: await this.dirOf(j), job, title: j.t, step, stepTitle: s.t, ...(c.session ? { run: { provider: c.provider, session: c.session } } : {}) }
+  }
+
+  /** what a session taken up by hand reads for the step: a run's prompt on the step's own instruction, and its pictures */
+  async stepText(job: string, step: string): Promise<{ text: string; images: PromptImage[] }> {
+    const j = await this.jobs.get(job)
+    if (!j) throw new HttpError(404, 'not_found', `no job ${job}`)
+    const s = T.stepOf(this.ctx(), j, step)
+    if (!s || !j.flow[step]) throw new HttpError(400, 'bad_step', `${job} has no step ${step}`)
+    const x = await this.input(j, await this.dirOf(j))
+    return { text: manualText(this.ctx(), j, step, T.askText(s), x.o), images: x.images }
+  }
+
+  /** a file in the job's artifact folder, then the step's link to it */
+  async keepArtifact(job: string, step: string, name: string, write: (f: string) => Promise<void>) {
+    const dir = join(this.artifactsDir, job)
+    await mkdir(dir, { recursive: true })
+    await write(join(dir, name))
+    await this.jobs.cmd(job, { op: 'artifact', step, n: name, link: `/api/artifacts/${encodeURIComponent(job)}/${encodeURIComponent(name)}` }, undefined, 'runner')
   }
 
   /** the run once it has ended, or as it is after ms */
@@ -306,19 +345,11 @@ export class Runner {
     const job = await this.jobs.get(r.job)
     if (!job) { await this.end(r, 'failed', 'the job is gone'); return }
     // a resumed session is found by its dir, so it must get the same one
-    let cwd = this.cwd
-    if (this.workDir) {
-      try { cwd = await this.workDir.dir(job) } catch (e) { if (!l.why) await this.end(r, 'failed', `no work dir: ${(e as Error).message}`); return }
-      if (l.why) return // cancel / interruptAll settled it while the dir was made
-    }
+    let cwd: string
+    try { cwd = await this.dirOf(job) } catch (e) { if (!l.why) await this.end(r, 'failed', `no work dir: ${(e as Error).message}`); return }
+    if (l.why) return // cancel / interruptAll settled it while the dir was made
     const rec = r
-    /** a file in the job's artifact folder, then the step's link to it */
-    const keep = async (name: string, write: (f: string) => Promise<void>) => {
-      const dir = join(this.artifactsDir, rec.job)
-      await mkdir(dir, { recursive: true })
-      await write(join(dir, name))
-      await this.jobs.cmd(rec.job, { op: 'artifact', step: rec.step, n: name, link: `/api/artifacts/${encodeURIComponent(rec.job)}/${encodeURIComponent(name)}` }, undefined, 'runner')
-    }
+    const keep = (name: string, write: (f: string) => Promise<void>) => this.keepArtifact(rec.job, rec.step, name, write)
     /** a path under the run's own dir, links resolved, so a run cannot publish the console's files */
     const within = async (p: string) => {
       const real = await realpath(resolve(cwd, p)).catch(() => { throw new Error(`no such file: ${p}`) })
@@ -327,12 +358,7 @@ export class Runner {
       return real
     }
     const shot = this.screenshot, jt = this.jobTools, kn = this.notes
-    const wd = this.workDir ? { workDir: cwd, branch: this.workDir.branch?.(job) } : {}
-    /** the prompt's input for the job as it is now, and the pictures its context names */
-    const input = async (j: Job): Promise<{ o: PromptIn; images: PromptImage[] }> => {
-      const c = await this.context(j)
-      return { o: { ctx: c.ctx, images: c.images.length, pbNotes: kn ? await kn.forPlaybook(j.pb) : [], me: this.me, bridge: this.bridge, knowledge: !!kn, ...wd }, images: c.images }
-    }
+    const input = (j: Job) => this.input(j, cwd)
     let made = 0
     const tools = {
       submitDraft: async (t: string) => {

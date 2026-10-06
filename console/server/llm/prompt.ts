@@ -93,6 +93,22 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: Prompt
   ])
 }
 
+/** what a session taken up by hand reads through the console MCP's step_context: a run's prompt, how to work told for that session */
+export function manualText(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn = {}): string {
+  const p = parts(x, j, step, q, o), w = who(o)
+  return join([
+    `You are working one step of a job in ${w}'s Work Console, in a session ${w} opened by hand.`,
+    ...p.data,
+    block('## How to work', [
+      `- Everything above was read for this step just now: work from it.`,
+      ...(o.images ? [`- [image N] in the text is the picture labelled [image N] before this text.`] : []),
+      `- You never send anything to a source (no chat posts, mails, votes, comments or state changes): ${w} sends after review.`,
+      `- Finish by calling submit_draft {id: "${j.id}", step: "${step}", output} on the work-console MCP server exactly once, with the draft for ${w} to review; files the step expects go in its artifacts as {name, content}.`,
+    ]),
+    ...p.user,
+  ])
+}
+
 /** what the run's context tool returns: the prompt's sections but how to work, read anew */
 export function contextText(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn = {}): string {
   const p = parts(x, j, step, q, o)

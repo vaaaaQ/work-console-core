@@ -44,7 +44,8 @@ function stubSpace(page: WorkspacePage, prefix: string, open: { v: boolean }, se
   return { space, jobs, acts, notes, sessions, runner }
 }
 
-async function setup(t: { after(f: () => unknown): void }, o: { open?: { v: boolean }; both?: boolean } = {}) {
+/** client = the clientInfo name initialize sends; null = none */
+async function setup(t: { after(f: () => unknown): void }, o: { open?: { v: boolean }; both?: boolean; client?: string | null } = {}) {
   const open = o.open ?? { v: true }
   install(o.both ? [{ page: acme }, { page: beta }] : [{ page: acme }])
   const a = stubSpace(acme, 'J', open, demoSeed), b = o.both ? stubSpace(beta, 'B', open) : undefined
@@ -66,7 +67,7 @@ async function setup(t: { after(f: () => unknown): void }, o: { open?: { v: bool
     const r = (await rpc('tools/call', { name, arguments: args })).result
     return { err: !!r.isError, text: r.content[0].text as string, json: () => JSON.parse(r.content[0].text) }
   }
-  const init = await post({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 't', version: '1' } } })
+  const init = await post({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, ...(o.client === null ? {} : { clientInfo: { name: o.client ?? 'Claude Code', version: '1' } }) } })
   sid = init.sid!
   return { jobs: a.jobs, acts: a.acts, notes: a.notes, sessions: a.sessions, runner: a.runner, beta: b, spaces, open, post, rpc, call, init, setSid: (s: string) => { sid = s } }
 }
@@ -84,7 +85,7 @@ test('initialize answers the asked protocol, a session id and the tools; a wrong
   assert.ok(s.init.sid)
   assert.equal((await s.post({ jsonrpc: '2.0', method: 'notifications/initialized' })).status, 202)
   const names = (await s.rpc('tools/list')).result.tools.map((x: { name: string }) => x.name)
-  assert.deepEqual(names, ['list_jobs', 'get_job', 'job_command', 'draft_reply', 'job_context', 'return_to', 'create_job', 'start_item', 'undo', 'knowledge_search', 'knowledge_read', 'knowledge_propose', 'list_playbooks'])
+  assert.deepEqual(names, ['list_jobs', 'get_job', 'job_command', 'draft_reply', 'step_context', 'submit_draft', 'job_context', 'return_to', 'create_job', 'start_item', 'undo', 'knowledge_search', 'knowledge_read', 'knowledge_propose', 'list_playbooks'])
   assert.equal((await s.post({ jsonrpc: '2.0', id: 9, method: 'tools/list' }, 'b'.repeat(64))).status, 401)
   assert.equal((await s.rpc('nope')).error.code, -32601)
   assert.equal((await s.post(null)).body.error.code, -32600)
@@ -512,4 +513,54 @@ test('job_command acceptDraft with an open blocker is refused bad_state; force a
   assert.equal(ok.err, false, ok.text)
   const st = stepOf((await s.call('get_job', { id: d.j.id })).json(), d.at)
   assert.equal(st.state, 'done'); assert.equal('waitsFor' in st, false)
+})
+
+test('step_context gives a run\'s prompt for the step, told how a hand-made session finishes', async (t) => {
+  const s = await setup(t), j = await openJob(s.jobs), x = demoCtx(), at = T.atOf(x, j)!
+  const r = (await s.rpc('tools/call', { name: 'step_context', arguments: { id: j.id, step: T.stepOf(x, j, at)!.t } })).result
+  assert.equal(r.isError, undefined)
+  const text = r.content.at(-1).text as string
+  assert.ok(text.includes(`## Job ${j.id}: ${j.t}`), text)
+  assert.match(text, /## How to work/)
+  assert.ok(text.includes(`submit_draft {id: "${j.id}", step: "${at}", output}`))
+  assert.match(text, /## Instruction/)
+  assert.equal(text, (await s.runner.stepText(j.id, at)).text)
+})
+
+test('submit_draft hands a draft in for review, signed by the client; undo takes it back; a second one is draft_waiting', async (t) => {
+  const s = await setup(t, { client: 'Cursor' }), j = await openJob(s.jobs), at = T.atOf(demoCtx(), j)!
+  const r = await s.call('submit_draft', { id: j.id, step: at, output: 'the hand-made draft', artifacts: [{ name: 'notes.md', content: '# n' }] })
+  assert.equal(r.err, false, r.text)
+  assert.deepEqual(r.json().artifacts, ['notes.md'])
+  const after = (await s.jobs.get(j.id))!
+  assert.equal(after.flow[at].dr!.t, 'the hand-made draft'); assert.equal(after.flow[at].s, 'wait')
+  assert.equal(after.jr.find((e) => /handed in/.test(e.o))!.a, 'Cursor')
+  assert.ok(after.flow[at].arts.some((a) => a.n === 'notes.md' && a.ok))
+  const again = await s.call('submit_draft', { id: j.id, step: at, output: 'v2' })
+  assert.equal(again.err, true); assert.match(again.text, /^draft_waiting/)
+  assert.equal((await s.call('undo')).err, false)
+  const back = (await s.jobs.get(j.id))!
+  assert.equal(back.flow[at].dr, null); assert.ok(!back.flow[at].arts.some((a) => a.n === 'notes.md'))
+})
+
+test('submit_draft is busy while a run of the step is queued or running; a session without clientInfo signs Claude Code', async (t) => {
+  const s = await setup(t, { client: null }), j = await openJob(s.jobs), at = T.atOf(demoCtx(), j)!
+  await s.runner.ask(j.id, at, 'go')
+  const busy = await s.call('submit_draft', { id: j.id, step: at, output: 'x' })
+  assert.equal(busy.err, true); assert.match(busy.text, /^busy/)
+  await until(() => s.sessions.length === 1)
+  s.sessions[0].end(false, 'no')
+  await until(async () => !(await s.jobs.get(j.id))!.flow[at].run)
+  const r = await s.call('submit_draft', { id: j.id, step: at, output: 'mine' })
+  assert.equal(r.err, false, r.text)
+  assert.equal((await s.jobs.get(j.id))!.jr.find((e) => /handed in/.test(e.o))!.a, 'Claude Code')
+})
+
+test('openIn gives the dir and the newest session run with its provider; a running step is busy', async (t) => {
+  const s = await setup(t), d = await drafted(s)
+  const o = await s.runner.openIn(d.j.id, d.at)
+  assert.deepEqual(o.run, { provider: 'claude', session: 'S1' })
+  assert.equal(o.dir, tmpdir()); assert.equal(o.job, d.j.id); assert.equal(o.step, d.at)
+  await s.runner.reply(d.j.id, d.at, 'more', 'revise')
+  await assert.rejects(s.runner.openIn(d.j.id, d.at), (e: unknown) => (e as { code?: string }).code === 'busy')
 })

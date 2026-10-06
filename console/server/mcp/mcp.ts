@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync, writeFileSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { columns } from '../../src/data/board.ts'
 import { KINDS, ctxOf, parseWorkId } from '../../src/model/context.ts'
@@ -10,27 +11,33 @@ import { INTENTS, SESSION_OPS } from '../../src/model/types.ts'
 import type { Cmd, Job, RunIntent, RunRec } from '../../src/model/types.ts'
 import { GatewayError } from '../bridge/wire.ts'
 import { HttpError } from '../events.ts'
+import { safeName } from '../llm/runner.ts'
 import type { Space, Spaces } from '../spaces.ts'
 
-/* Job tools for the user's own Claude Code sessions: an MCP server (streamable HTTP, JSON replies only)
+/* Job tools for the user's own sessions (Claude Code, Cursor, …): an MCP server (streamable HTTP, JSON replies only)
    on the loopback listener at /mcp, behind a bearer token kept in the console's home. A change goes
    through the same Jobs.cmd as the page's, applies at once, is broadcast to open pages and is signed
-   "Claude Code" in the journal. Undo walks back this session's own changes. The console's LLM runs
+   in the journal with the client's own name (Claude Code when it gives none). A step taken up by hand
+   reads its context with step_context and hands its draft in with submit_draft. Undo walks back this session's own changes. The console's LLM runs
    never get these tools: they load no user-scope MCP servers and deny this one by name.
    One server for every workspace: a job id names its workspace by its prefix, and create_job,
    start_item and the knowledge tools take a ws (optional while only one is registered).
    Knowledge is read here and only proposed: a proposal waits for the user in Approvals. */
 
+/** raw = run returns the MCP content itself (pictures), not a value to send as JSON text */
 export interface Tool {
-  name: string; description: string; inputSchema: Record<string, unknown>
+  name: string; description: string; inputSchema: Record<string, unknown>; raw?: true
   run(a: Record<string, unknown>, s: Session): Promise<unknown>
 }
 /** what a session can take back: a command (put prev back if v is still current) or a job it created */
 type Undo = { id: string; v: number; prev: Job } | { id: string; created: true }
-export interface Session { undo: Undo[] }
+/** client = the MCP client's name from initialize, which signs the session's changes */
+export interface Session { undo: Undo[]; client?: string }
 
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05']
 const MAX_UNDO = 50
+/** a hand-made draft's files: how many, and how big each */
+const ARTS_MAX = 10, ART_MAX = 5 << 20
 
 /** creates the token file once; the token is read from it on every request */
 export function ensureToken(path: string) {
@@ -109,9 +116,9 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
   const command = async (s: Session, id: unknown, c: Record<string, unknown>) => {
     const { sp, j } = await get(id), x = sp.ctx()
     if ('step' in c) c.step = stepId(x, j, c.step)
-    const r = await sp.jobs.cmd(j.id, c as unknown as Cmd, undefined, 'session')
+    const r = await sp.jobs.cmd(j.id, c as unknown as Cmd, undefined, 'session', undefined, s.client)
     s.undo.push({ id: j.id, v: r.job.v!, prev: r.prev }); s.undo.splice(0, s.undo.length - MAX_UNDO)
-    const e = r.job.jr[0], redo = await sp.runner.redoRejected(r.prev, c as unknown as Cmd, 'session')
+    const e = r.job.jr[0], redo = await sp.runner.redoRejected(r.prev, c as unknown as Cmd, 'session', s.client)
     return { job: brief(x, r.job, sp.id), journal: `${e.o} ${e.c} Next: ${e.n}`, ...(redo.run ? { run: redo.run.id } : {}), ...(redo.redo ? { redo: redo.redo } : {}) }
   }
   return [
@@ -166,14 +173,14 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
       name: 'draft_reply',
       description: "Reply to a step's LLM draft in the draft's own session, as the console page does. intent: revise (change it; it waits for review again), "
         + 'accept (change it if asked, then it is accepted), ask (a question; the answer comes back as text and the draft stays). '
-        + 'wait (seconds, at most 50) waits for the run to end and returns its answer or the new draft; without it, the run id. Journaled as Claude Code.',
+        + 'wait (seconds, at most 50) waits for the run to end and returns its answer or the new draft; without it, the run id. Journaled under your client\'s name.',
       inputSchema: {
         type: 'object', required: ['id', 'step', 'text', 'intent'],
         properties: { id: { type: 'string' }, step: { type: 'string' }, text: { type: 'string' }, intent: { type: 'string', enum: [...INTENTS] }, wait: { type: 'integer', minimum: 0, maximum: 50 } },
       },
-      async run(a) {
+      async run(a, s) {
         const { sp, j } = await get(a.id), step = stepId(sp.ctx(), j, a.step) as string
-        const r = await sp.runner.reply(j.id, step, str(a.text, 'text'), a.intent as RunIntent, { via: 'session' })
+        const r = await sp.runner.reply(j.id, step, str(a.text, 'text'), a.intent as RunIntent, { via: 'session', name: s.client })
         const w = Math.min(50, Math.max(0, Number(a.wait) || 0))
         if (!w) return { run: r.id, state: r.state }
         const e = await sp.runner.settle(r.id, w * 1000), f = (await sp.jobs.get(j.id))?.flow[step]
@@ -181,6 +188,53 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
           run: e.id, state: e.ended ? e.state : 'running', answer: e.a, reason: e.reason,
           draft: f?.dr ? clip(f.dr.t) : undefined, accepted: e.intent === 'accept' && !f?.dr && f?.s === 'done' ? true : undefined,
         }
+      },
+    },
+    {
+      name: 'step_context',
+      description: "What an LLM run of the step would be told, for a step taken up by hand: the pictures its context names, the job and its step, its context items, "
+        + 'its knowledge notes, earlier outputs, the journal, how to work, the description and the step\'s instruction. Read it first, do the step, then hand the result in with submit_draft.',
+      inputSchema: { type: 'object', required: ['id', 'step'], properties: { id: { type: 'string' }, step: { type: 'string', description: 'step id or exact title' } } },
+      raw: true,
+      async run(a) {
+        const { sp, j } = await get(a.id), step = stepId(sp.ctx(), j, a.step) as string
+        const c = await sp.runner.stepText(j.id, step)
+        return [
+          ...c.images.flatMap((im) => [{ type: 'text', text: im.label }, { type: 'image', data: im.data, mimeType: im.mime }]),
+          { type: 'text', text: c.text },
+        ]
+      },
+    },
+    {
+      name: 'submit_draft',
+      description: 'Hand in the draft of a step taken up by hand: it waits in Approvals for the user to accept, reply to or reject, as an LLM run\'s draft does. '
+        + 'artifacts: files the step expects, as {name, content}, at most 10 of 5 MB each. Refused busy while an LLM run of the step is queued or running, '
+        + 'and draft_waiting while a draft waits (reply to it with draft_reply, or reject it with job_command, first). Undo takes it back.',
+      inputSchema: {
+        type: 'object', required: ['id', 'step', 'output'],
+        properties: {
+          id: { type: 'string' }, step: { type: 'string', description: 'step id or exact title' }, output: { type: 'string' },
+          artifacts: { type: 'array', maxItems: ARTS_MAX, items: { type: 'object', required: ['name', 'content'], properties: { name: { type: 'string' }, content: { type: 'string' } } } },
+        },
+      },
+      async run(a, s) {
+        const arts = Array.isArray(a.artifacts) ? a.artifacts as { name?: unknown; content?: unknown }[] : []
+        if (arts.length > ARTS_MAX) throw new HttpError(400, 'bad_args', `at most ${ARTS_MAX} artifacts`)
+        const files = arts.map((x) => {
+          if (typeof x?.content !== 'string') throw new HttpError(400, 'bad_args', 'an artifact\'s content is text')
+          if (Buffer.byteLength(x.content) > ART_MAX) throw new HttpError(400, 'bad_args', `${String(x.name)} is over 5 MB`)
+          return { name: safeName(str(x.name, 'an artifact\'s name')), content: x.content }
+        })
+        const { sp, j } = await get(a.id), step = stepId(sp.ctx(), j, a.step) as string
+        const busy = (await sp.runner.all()).some((r) => r.job === j.id && r.step === step && (r.state === 'queued' || r.state === 'running'))
+        if (busy || j.flow[step]?.run) throw new HttpError(409, 'busy', 'an LLM run of this step is queued or running; wait for it or cancel it')
+        if (j.flow[step]?.dr) throw new HttpError(409, 'draft_waiting', 'a draft of this step waits; reply to it with draft_reply or reject it first')
+        const out = await command(s, j.id, { op: 'draftIn', step, t: str(a.output, 'output') })
+        for (const f of files) await sp.runner.keepArtifact(j.id, step, f.name, (p) => writeFile(p, f.content, 'utf8'))
+        // undo takes back the draft and its artifact links together
+        const u = s.undo.at(-1)
+        if (files.length && u && 'v' in u && u.id === j.id) u.v = (await sp.jobs.get(j.id))!.v!
+        return { ...out, artifacts: files.length ? files.map((f) => f.name) : undefined }
       },
     },
     {
@@ -356,11 +410,15 @@ export function mcpHandler(o: { tools: Tool[]; token: () => string; version?: st
     switch (m.method) {
       case 'initialize': {
         const asked = String(m.params?.protocolVersion || '')
-        made.sid = randomUUID(); session(made.sid)
+        const name = (m.params?.clientInfo as { name?: unknown } | undefined)?.name
+        made.sid = randomUUID()
+        const s = session(made.sid)
+        if (typeof name === 'string' && name.trim()) s.client = name.trim().slice(0, 60)
         return reply({
           protocolVersion: PROTOCOLS.includes(asked) ? asked : PROTOCOLS[0], capabilities: { tools: { listChanged: false } },
           serverInfo: { name: 'work-console', version: o.version || '1.0.0' },
-          instructions: 'Work Console jobs and knowledge. Read a job with get_job before changing it. Every change applies at once, shows live in the console and is journaled as Claude Code; undo takes back this session\'s last change. '
+          instructions: 'Work Console jobs and knowledge. Read a job with get_job before changing it. Every change applies at once, shows live in the console and is journaled under your client\'s name; undo takes back this session\'s last change. '
+            + 'A step taken up by hand: read it with step_context, do it, hand the result in with submit_draft. '
             + 'Knowledge notes say how a workspace\'s tools, systems and machines work: search them before guessing, and propose what is missing with knowledge_propose; the user decides. '
             + 'A job id names its workspace; create_job, start_item and the knowledge tools take ws, which may be left out while one workspace is registered.',
         })
@@ -372,7 +430,7 @@ export function mcpHandler(o: { tools: Tool[]; token: () => string; version?: st
         if (!t) return error(-32602, `no tool ${m.params?.name}`)
         try {
           const r = await t.run((m.params?.arguments as Record<string, unknown>) || {}, session(sid))
-          return reply({ content: [{ type: 'text', text: JSON.stringify(r, null, 1) }] })
+          return reply({ content: t.raw ? r : [{ type: 'text', text: JSON.stringify(r, null, 1) }] })
         } catch (e) {
           if (!(e instanceof HttpError)) console.error('mcp tool failed', t.name, e)
           return reply({ content: [{ type: 'text', text: fail(e) }], isError: true })
