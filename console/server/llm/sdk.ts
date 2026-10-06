@@ -171,8 +171,11 @@ export function userMessage(prompt: string, images: PromptImage[]): SDKUserMessa
   }
 }
 async function* once<T>(x: T) { yield x }
+/** the Claude Code binary the settings name; none = the SDK's own */
+export const exeOption = (p?: string) => (p ? { pathToClaudeCodeExecutable: p } : {})
 
-export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runTools: string[]; mcp?: Record<string, unknown>; bridge?: boolean }): Sdk {
+/** claudePath = read at each session's start */
+export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runTools: string[]; mcp?: Record<string, unknown>; bridge?: boolean; claudePath?: () => string | undefined }): Sdk {
   return {
     async *start({ prompt, images, resume, cwd, tools, abort }) {
       const run = createSdkMcpServer({ name: 'run', version: '1.0.0', tools: runToolDefs(tools) })
@@ -182,6 +185,7 @@ export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runToo
         options: {
           cwd, resume, abortController: abort,
           ...permissions(o.runTools, o.bridge !== false),
+          ...exeOption(o.claudePath?.()),
           mcpServers: mcpServers(o, run),
         },
       })
@@ -200,7 +204,7 @@ export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runToo
     },
     async *ask({ system, prompt, schema, tools, cwd, abort }) {
       const own = createSdkMcpServer({ name: ASK, version: '1.0.0', tools: tools.map((t) => tool(t.name, t.description, t.input, (a) => answer(() => t.run(a))())) })
-      const q = query({ prompt, options: { ...askOptions({ system, schema, tools: tools.map((t) => t.name), cwd, abort }), mcpServers: { [ASK]: own } } })
+      const q = query({ prompt, options: { ...askOptions({ system, schema, tools: tools.map((t) => t.name), cwd, abort }), ...exeOption(o.claudePath?.()), mcpServers: { [ASK]: own } } })
       const pre = `mcp__${ASK}__`
       for await (const m of q) {
         if (m.type === 'assistant') {

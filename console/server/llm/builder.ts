@@ -19,6 +19,8 @@ import type { NoteIndex, Notes } from '../knowledge/notes.ts'
 import { resolveItem } from './context.ts'
 import { hitLine, noteText } from './sdk.ts'
 import type { AskTool, Sdk } from './sdk.ts'
+import { pickOf } from './providers.ts'
+import type { SdkPick } from './providers.ts'
 
 /* The job builder: one read-only session per build fills the New job form from what the user said. Its prompt
    carries what most builds need (the workspace, the playbook catalog, the note index, the form and every say),
@@ -378,7 +380,8 @@ export function toolLine(name: string, a: Record<string, unknown>): string {
 /* ===== a build ===== */
 
 export interface BuilderOpts {
-  ws: string; page: WorkspacePage; sdk: Sdk; notes: Pick<Notes, 'list' | 'search' | 'read'>
+  /** one Sdk, or the pick: a build runs on the auto provider as the settings say now */
+  ws: string; page: WorkspacePage; sdk: Sdk | SdkPick; notes: Pick<Notes, 'list' | 'search' | 'read'>
   /** none = a workspace without a gateway: no source tools */
   source: SourceReader | null
   ctx(): T.Ctx; bus: Bus
@@ -393,7 +396,10 @@ export type Build = (b: BuildIn, o: { tz: string; signal?: AbortSignal; taken?: 
 export function builder(o: BuilderOpts): Build {
   const ms = o.timeoutMs ?? 120_000
   return async (b, { tz, signal, taken }) => {
-    if (!o.sdk.ask) throw new HttpError(501, 'no_builder', 'this console cannot run the builder')
+    const pick = pickOf(o.sdk)
+    let sdk: Sdk
+    try { sdk = pick.get(pick.auto()) } catch (e) { throw new HttpError(503, 'provider_unavailable', (e as Error).message) }
+    if (!sdk.ask) throw new HttpError(501, 'no_builder', 'this console cannot run the builder')
     if (signal?.aborted) throw new HttpError(499, 'aborted', 'the page dropped the request')
     const { PB, TPL } = o.ctx()
     const notes = await o.notes.list().catch(() => [])
@@ -410,7 +416,7 @@ export function builder(o: BuilderOpts): Build {
     let out: unknown, error = ''
     emit('Started')
     try {
-      for await (const e of o.sdk.ask({ system: SYSTEM, prompt, schema: FORM_SCHEMA, tools, cwd, abort })) {
+      for await (const e of sdk.ask({ system: SYSTEM, prompt, schema: FORM_SCHEMA, tools, cwd, abort })) {
         if (e.k === 'tool') emit(toolLine(e.name, e.input), e.name)
         else if (e.ok) out = e.out
         else error = e.error

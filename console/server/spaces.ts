@@ -20,7 +20,8 @@ import type { Notes } from './knowledge/notes.ts'
 import { autoAsk } from './llm/autoAsk.ts'
 import { resolveContext } from './llm/context.ts'
 import { Runner } from './llm/runner.ts'
-import { agentSdk } from './llm/sdk.ts'
+import { providerPick } from './llm/providers.ts'
+import { Settings } from './settings.ts'
 import type { Sdk } from './llm/sdk.ts'
 import { withWs } from './notify/notify.ts'
 import { bridgeStore } from './store/bridge.ts'
@@ -143,7 +144,12 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   })
 
   const jobs = new Jobs({ store, bus, ctx, gate })
-  const sdk = o.sdk ?? agentSdk({ gatewayUrl: cfg.gatewayUrl, llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools, mcp: w.llm?.mcp, bridge: w.llm?.bridge })
+  // a new run takes the auto provider the settings name now; a resume or a reply the one its run recorded
+  const settings = new Settings(o.home)
+  const sdk = o.sdk ?? providerPick(() => settings.read(), (p) => p.auto!({
+    gatewayUrl: cfg.gatewayUrl, llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools, mcp: w.llm?.mcp, bridge: w.llm?.bridge,
+    claudePath: () => settings.read().claudePath,
+  }))
   // fake mode touches no real repo
   const workDir = fake ? undefined : w.workDir?.(cfg)
   const runner = new Runner({

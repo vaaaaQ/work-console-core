@@ -834,3 +834,36 @@ test('a second open_blocker in one run is refused', async () => {
   await assert.rejects(() => s.sessions[1].tools.openBlocker!('again'), /already opened/)
   s.sessions[1].end()
 })
+
+test('providers: a run records the auto provider; its reply stays on it after auto changes; a new ask takes the new auto', async () => {
+  const a = fakeSdk(), b = fakeSdk(), cur = { v: 'claude' as 'claude' | 'cursor' }
+  const pick = { auto: () => cur.v, get: (id: 'claude' | 'cursor') => { if (id === 'claude') return a.sdk; if (cur.v === 'cursor' && id === 'cursor') return b.sdk; throw new Error('provider_unavailable: Cursor cannot run by itself') } }
+  const { runner, jobs } = setup({ v: true }, { sdk: pick }), [t, u] = await targets(jobs, 2)
+  const r = await runner.ask(t.job, t.step, 'draft please')
+  assert.equal(r.provider, 'claude')
+  await until(() => a.sessions.length === 1)
+  a.sessions[0].push({ k: 'session', id: 's-1' }); await a.sessions[0].tools.submitDraft('v1'); a.sessions[0].end()
+  await until(async () => (await state(runner, r.id)) === 'draft')
+  cur.v = 'cursor'
+  const re = await runner.reply(t.job, t.step, 'shorter', 'revise')
+  assert.equal(re.provider, 'claude', 'the reply continues the claude session')
+  await until(() => a.sessions.length === 2)
+  assert.equal(a.sessions[1].resume, 's-1')
+  assert.equal(b.sessions.length, 0)
+  a.sessions[1].end()
+  await until(async () => (await runner.get(re.id))!.ended != null)
+  // a new ask takes the new auto
+  const n = await runner.ask(u.job, u.step, 'other')
+  assert.equal(n.provider, 'cursor')
+  await until(() => b.sessions.length === 1)
+  b.sessions[0].end()
+  await until(async () => (await state(runner, n.id)) === 'failed')
+})
+
+test('providers: a hand-edited auto without auto fails the run as provider_unavailable', async () => {
+  const pick = { auto: () => 'cursor' as const, get: () => { throw new Error('provider_unavailable: Cursor cannot run by itself') } }
+  const { runner, jobs } = setup({ v: true }, { sdk: pick }), [t] = await targets(jobs, 1)
+  const r = await runner.ask(t.job, t.step, 'x')
+  await until(async () => (await state(runner, r.id)) === 'failed')
+  assert.match((await runner.get(r.id))!.reason!, /^provider_unavailable/)
+})

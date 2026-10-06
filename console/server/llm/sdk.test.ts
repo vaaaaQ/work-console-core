@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { homedir } from 'node:os'
 import { sep } from 'node:path'
-import { ALLOW, DENY, askOptions, mcpServers, permissions, runToolDefs, userMessage } from './sdk.ts'
+import { ALLOW, DENY, askOptions, exeOption, mcpServers, permissions, runToolDefs, userMessage } from './sdk.ts'
 import type { RunTools } from './sdk.ts'
 
 test("a session loads no user or local settings, and may use only its own tools, A's reads and runTools", () => {
@@ -145,4 +145,10 @@ test('open_blocker is offered only when given, and is allowed', () => {
   const defs = runToolDefs({ ...base, openBlocker: none })
   assert.ok(defs.some((d) => d.name === 'open_blocker'))
   for (const d of defs) assert.ok(ALLOW.includes(`mcp__run__${d.name}`), d.name)
+})
+
+test('the settings\' Claude Code binary goes to the SDK only when one is set', () => {
+  assert.deepEqual(exeOption('C:/x/claude.exe'), { pathToClaudeCodeExecutable: 'C:/x/claude.exe' })
+  assert.deepEqual(exeOption(undefined), {})
+  assert.deepEqual(exeOption(''), {})
 })

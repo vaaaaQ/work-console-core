@@ -15,12 +15,14 @@ import type { Store } from '../store/port.ts'
 import type { PromptImage, RunContext } from './context.ts'
 import { buildPrompt, contextText, redoText, replyPrompt, RESUME_ASK_PROMPT, RESUME_PROMPT } from './prompt.ts'
 import type { PromptIn } from './prompt.ts'
+import { pickOf } from './providers.ts'
+import type { SdkPick } from './providers.ts'
 import type { KnowledgeIn, Sdk } from './sdk.ts'
 import { checkUrl } from './shot.ts'
 import type { Shot } from './shot.ts'
 import type { WorkDir } from './worktree.ts'
 
-/* One Claude Code session per ask, at most `max` at a time; the rest wait in order. The run record
+/* One LLM session per ask, on the provider the run records, at most `max` at a time; the rest wait in order. The run record
    is the durable half (state, session id); the feed lives in memory while the session runs. */
 
 const FEED_MAX = 200
@@ -45,7 +47,7 @@ export function safeName(n: string) {
 export type JobTools = { ws: Ws; pb: string; prj: string[]; prefix: string }
 
 export class Runner {
-  private store: Store; private jobs: Jobs; private bus: Bus; private sdk: Sdk; private cwd: string
+  private store: Store; private jobs: Jobs; private bus: Bus; private pick: SdkPick; private cwd: string
   private max: number; private gate: () => boolean; private artifactsDir: string; private ctx: () => T.Ctx
   private context: (j: Job) => Promise<RunContext>; private me?: string; private bridge?: boolean; private workDir?: WorkDir
   private screenshot?: (o: Shot & { out: string; fileRoot?: string }) => Promise<unknown>
@@ -60,9 +62,9 @@ export class Runner {
 
   /** context = reads the job's context items and their pictures for a run's prompt and its context tool; me = what prompts call the user (unset or empty: "the user");
       bridge false = the workspace has no gateway, so prompts do not point at the bridge tools;
-      workDir = each job's own dir, in place of cwd */
+      workDir = each job's own dir, in place of cwd; sdk = one Sdk, or the pick of a run's provider */
   constructor(o: {
-    store: Store; jobs: Jobs; bus: Bus; sdk: Sdk; cwd: string; max?: number; gate: () => boolean; artifactsDir: string; ctx: () => T.Ctx
+    store: Store; jobs: Jobs; bus: Bus; sdk: Sdk | SdkPick; cwd: string; max?: number; gate: () => boolean; artifactsDir: string; ctx: () => T.Ctx
     context?: (j: Job) => Promise<RunContext>; me?: string; bridge?: boolean; workDir?: WorkDir
     /** takes a png of a page into out; none = runs get no screenshot tool */
     screenshot?: (o: Shot & { out: string; fileRoot?: string }) => Promise<unknown>
@@ -73,7 +75,7 @@ export class Runner {
     /** an interrupted run resumes by itself once, at resumeDue() after the comeback */
     autoResume?: boolean
   }) {
-    this.store = o.store; this.jobs = o.jobs; this.bus = o.bus; this.sdk = o.sdk; this.cwd = o.cwd
+    this.store = o.store; this.jobs = o.jobs; this.bus = o.bus; this.pick = pickOf(o.sdk); this.cwd = o.cwd
     this.max = o.max ?? 3; this.gate = o.gate; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => ({ ctx: [], images: [] })); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot; this.jobTools = o.jobTools; this.notes = o.notes
     this.autoResume = !!o.autoResume
   }
@@ -116,7 +118,7 @@ export class Runner {
     if (!this.gate()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; no run was started')
     if (!q || !q.trim()) throw new HttpError(400, 'bad_args', 'the instruction is empty')
     await this.hasRun(job, step)
-    const r: RunRec = { id: `r-${randomBytes(6).toString('hex')}`, job, step, q: q.trim(), state: 'queued', at: new Date().toISOString(), ...(o.via ? { via: o.via } : {}) }
+    const r: RunRec = { id: `r-${randomBytes(6).toString('hex')}`, job, step, q: q.trim(), state: 'queued', at: new Date().toISOString(), provider: this.pick.auto(), ...(o.via ? { via: o.via } : {}) }
     await this.jobs.cmd(job, { op: 'runStart', step, q: r.q, id: r.id, ...(o.auto ? { auto: true } : {}) }, undefined, 'runner', o.via)
     await this.save(r)
     this.queue.push({ id: r.id })
@@ -124,10 +126,10 @@ export class Runner {
     return r
   }
 
-  /** the step's thread: its newest run, and the newest session in it, which a reply continues */
+  /** the step's thread: its newest run, and the newest session in it, which a reply continues on the provider that made it */
   private async chain(job: string, step: string) {
-    const t = thread(await this.store.runs(), job, step)
-    return { head: t.at(-1), session: t.findLast((r) => r.session)?.session }
+    const t = thread(await this.store.runs(), job, step), s = t.findLast((r) => r.session)
+    return { head: t.at(-1), session: s?.session, provider: s?.provider ?? 'claude' }
   }
 
   /** a reply to the step's draft in its own session; via = who replied when not the user: a session, or the console itself */
@@ -146,7 +148,7 @@ export class Runner {
     if (!c.head || !c.session) throw new HttpError(409, 'no_session', 'this draft has no LLM session to continue; ask again instead')
     // a run that has submitted its draft can still be winding its session down
     if (this.live.has(c.head.id)) throw new HttpError(409, 'busy', 'the LLM is still finishing its last turn; send it again in a moment')
-    const r: RunRec = { id: `r-${randomBytes(6).toString('hex')}`, job, step, q: t.trim(), state: 'queued', at: new Date().toISOString(), parent: c.head.id, intent, ...(o.via ? { via: o.via } : {}) }
+    const r: RunRec = { id: `r-${randomBytes(6).toString('hex')}`, job, step, q: t.trim(), state: 'queued', at: new Date().toISOString(), parent: c.head.id, intent, provider: c.provider, ...(o.via ? { via: o.via } : {}) }
     await this.jobs.cmd(job, { op: 'runReply', step, q: r.q, id: r.id, intent }, undefined, 'runner', o.via)
     await this.save(r)
     this.queue.push({ id: r.id, resume: c.session, reply: true })
@@ -400,7 +402,8 @@ export class Runner {
       const prompt = first ? buildPrompt(this.ctx(), job, rec.step, rec.q, first.o)
         : reply ? replyPrompt(rec.q, rec.intent ?? 'revise', this.me, true)
         : rec.intent === 'ask' ? RESUME_ASK_PROMPT : RESUME_PROMPT
-      for await (const e of this.sdk.start({ prompt, ...(first?.images.length ? { images: first.images } : {}), resume, cwd, tools, abort: l.ac })) {
+      const sdk = this.pick.get(rec.provider ?? 'claude')
+      for await (const e of sdk.start({ prompt, ...(first?.images.length ? { images: first.images } : {}), resume, cwd, tools, abort: l.ac })) {
         if (l.why) break
         if (e.k === 'session') { if (r!.session !== e.id) { r = { ...r!, session: e.id }; await this.save(r) } }
         else if (e.k === 'text') { this.line(id, e.t); said = e.t }
