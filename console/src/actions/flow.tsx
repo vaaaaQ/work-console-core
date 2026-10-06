@@ -14,7 +14,7 @@ import { askText } from '../model/transitions.ts'
 import type { BadgeKind, Cmd, Job, JobStatus, RunRec } from '../model/types.ts'
 import { commit } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
-import { CancelBtn } from '../ui/bits.tsx'
+import { CancelBtn, copy } from '../ui/bits.tsx'
 import { closeModal, modal } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
 import { VoiceField } from '../ui/VoiceField.tsx'
@@ -182,6 +182,15 @@ export async function llmCancel() {
 /** live only: cancels a run by its record, queued or running */
 export async function runCancel(runId: string) {
   try { const { run } = await api.cancelRun(runId); commit(() => { LIVE.runs[run.id] = run }) } catch (e) { toast(failText(e)) }
+}
+
+/** live, on the PC: the step taken up by hand in the manual provider; a link opens the app, a command goes to the clipboard */
+export async function openStep(id: string, sid: string) {
+  try {
+    const { open, label } = await api.openStep(id, sid)
+    if (open.kind === 'link') { location.href = open.value; toast(<>Opening <b>{label}</b>…</>) }
+    else copy(open.value, null, <>Copied — paste it in a terminal to go on in <b>{label}</b></>)
+  } catch (e) { toast(failText(e)) }
 }
 
 /** live only: continues an interrupted or failed run in its own Claude session */

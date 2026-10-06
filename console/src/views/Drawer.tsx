@@ -11,7 +11,7 @@ import { closeDrawer, go } from '../actions/nav.tsx'
 import { newBlocker } from '../actions/newjob.tsx'
 import { isWide, toggleWide } from '../actions/wide.ts'
 import {
-  acceptDraft, askLlm, doCmd, bAdd, bAnswer, bReopen, editDraft, llmCancel, nudge, rejectDraft, rvOpen, rvVote, stepDoneHere, stepReopen,
+  acceptDraft, askLlm, doCmd, bAdd, bAnswer, bReopen, editDraft, llmCancel, nudge, openStep, rejectDraft, rvOpen, rvVote, stepDoneHere, stepReopen,
   stepResume, stepSkip, stepWait, tplSend,
 } from '../actions/flow.tsx'
 import { LIVE } from '../live/api.ts'
@@ -144,8 +144,12 @@ function StepActs({ j, s, f }: P) {
   const llmFirst = s.m === 'llm' && !f.dr
   const done = <button key="done" className={'btn' + (llmFirst || f.dr ? '' : ' pri')} onClick={stepDoneHere}><Ic n="check" sm />Mark done</button>
   const ask = <button key="ask" className={'btn' + (llmFirst ? ' pri' : '')} onClick={() => askLlm(j, s.id)}><Ic n="bot" sm />{f.dr ? 'Ask again…' : 'Ask LLM…'}</button>
+  const open = LIVE.on && LIVE.pc
+    ? <button className="btn ghost" title="Take the step up by hand; the session hands its draft in itself" onClick={() => void openStep(j.id, s.id)}><Ic n="external" sm />Open in {LIVE.providers.manualLabel}</button>
+    : null
   return <>
     {llmFirst ? [ask, done] : [done, ask]}
+    {open}
     {f.s === 'wait' ? <button className="btn ghost" onClick={stepResume}><Ic n="play" sm />Resume</button>
       : <button className="btn ghost" onClick={stepWait}><Ic n="hourglass" sm />Waiting…</button>}
     <button className="btn ghost" onClick={stepSkip}><Ic n="skip" sm />Skip</button>

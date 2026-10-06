@@ -154,7 +154,7 @@ export interface CalEvent { b: string; v: string; t: string; d: string; n: strin
 export interface Pr { id: string; br: string; to: string; ch: string }
 
 export type View = 'jobs' | 'job' | 'approvals' | 'knowledge' | 'today' | 'chats' | 'mail' | 'calendar' | 'board' | 'time'
-  | 'playbooks' | 'workspaces' | 'devices'
+  | 'playbooks' | 'workspaces' | 'devices' | 'settings'
 /** what New job had typed while a dialog opened over it */
 export interface NjDraft { t?: string; key?: string; prj?: string; pb?: string; src?: string; chat?: string; mail?: string; ev?: string; due?: string }
 /** UI state: f/prj/q = jobs filter, sel = selected step, flash = row just created, sum = LLM summaries,

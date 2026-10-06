@@ -11,6 +11,7 @@ import { LIVE, missingParts, pushSupported, subscribePush } from './live/api.ts'
 import { L } from './live/boot.ts'
 import { REG } from './data/registry.ts'
 import { Devices } from './views/Devices.tsx'
+import { Settings } from './views/Settings.tsx'
 import { Ic } from './ui/Icon.tsx'
 import { ModalHost, closeModal, isModalOpen } from './ui/modal.tsx'
 import { openPalette } from './ui/Palette.tsx'
@@ -32,13 +33,14 @@ import { Workspaces } from './views/Workspaces.tsx'
 
 const TITLE: Record<View, string> = {
   jobs: 'Jobs', job: 'Job', approvals: 'Approvals', knowledge: 'Knowledge', today: 'Today', chats: 'Chats', mail: 'Mail',
-  calendar: 'Calendar', board: 'Board', time: 'Time', playbooks: 'Playbooks', workspaces: 'Workspaces', devices: 'Devices',
+  calendar: 'Calendar', board: 'Board', time: 'Time', playbooks: 'Playbooks', workspaces: 'Workspaces', devices: 'Devices', settings: 'Settings',
 }
 const BODY: Record<View, () => React.ReactElement> = {
   jobs: () => <Jobs />, job: () => <JobView />, approvals: () => <Approvals />, knowledge: () => <Knowledge />, today: () => <Today />,
   chats: () => <Chats />, mail: () => <MailView />, calendar: () => <CalendarView />, board: () => <BoardView />, time: () => <TimeView />,
   playbooks: () => <Playbooks />, workspaces: () => <Workspaces />,
   devices: () => <Devices />,
+  settings: () => <Settings />,
 }
 
 /** what the open view settles on as it renders: the chat shown counts as read, and the mail list keeps one message selected */

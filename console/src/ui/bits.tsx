@@ -8,6 +8,13 @@ import { changeNo, useWorld } from '../store.ts'
 import { dismiss } from '../actions/nav.tsx'
 import { canSave, saveFile } from '../actions/playbooks.tsx'
 import { Ic } from './Icon.tsx'
+import { toast } from './toasts.tsx'
+
+/** t to the clipboard; el = what to select for Ctrl+C when the clipboard is refused; done = the toast */
+export function copy(t: string, el?: HTMLElement | null, done: React.ReactNode = 'Copied') {
+  const pick = () => { if (!el) return; const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s?.removeAllRanges(); s?.addRange(r) }
+  try { navigator.clipboard.writeText(t).then(() => toast(done), () => { pick(); toast(el ? 'Selected — press Ctrl+C' : 'The clipboard was refused') }) } catch { pick(); toast(el ? 'Selected — press Ctrl+C' : 'The clipboard was refused') }
+}
 
 export function Pill({ st }: { st: JobStatus }) {
   const x: { l: string; c: string; h?: 1; p?: 1 } = STATUS[st] || { l: st, c: 'off' }

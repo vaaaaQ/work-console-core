@@ -32,8 +32,18 @@ export interface State {
   side: 'loopback' | 'lan'; device: string | null; push: { key: string } | null
   /** the PC has an OpenAI key, so the mic can be offered */
   voice: boolean
+  /** who runs by itself, and who a step taken up by hand opens in */
+  providers?: Providers
   ws: Record<string, WsBlock>
 }
+export type ProviderId = 'claude' | 'cursor'
+export type Providers = { auto: ProviderId; manual: ProviderId; manualLabel: string }
+/** the console's settings file; a path left out is the provider's own default */
+export type ProviderSettings = { auto: ProviderId; manual: ProviderId; claudePath?: string; cursorPath?: string }
+/** auto = it can run by itself */
+export type ProviderInfo = { id: ProviderId; label: string; auto: boolean }
+/** link = the page follows it; command = the page copies it for a terminal */
+export type Open = { kind: 'link' | 'command'; value: string }
 /** every frame but a build's names the workspace it came from; a build's names the build, which the page named */
 export type Ev =
   | { kind: 'job'; ws: string; job: Job } | { kind: 'run'; ws: string; run: RunRec } | { kind: 'feed'; ws: string; run: string; t: string; tool?: string }
@@ -76,6 +86,7 @@ export const LIVE = {
   push: null as string | null,
   /** the backend can turn speech into text */
   voice: false,
+  providers: { auto: 'claude', manual: 'claude', manualLabel: 'Claude Code' } as Providers,
   /** one block per workspace the backend serves */
   ws: {} as Record<string, LiveWs>,
 }
@@ -203,6 +214,11 @@ export const format = (ws: string, b: { text: string; ctx?: string; field?: stri
 /** the New job form filled from what was said: say = every say so far, oldest first; id names the build in its events */
 export const build = async (ws: string, id: string, say: string[], form: BuildForm, signal?: AbortSignal) =>
   (await wsCall<{ form: BuildForm }>(ws, 'POST', '/build', { id, say, form }, 150000, signal)).form
+export const settings = () => call<{ settings: ProviderSettings; providers: ProviderInfo[] }>('GET', '/api/settings')
+/** b = the keys to change; a path of '' drops it */
+export const putSettings = (b: Partial<ProviderSettings>) => call<{ settings: ProviderSettings; providers: ProviderInfo[] }>('PUT', '/api/settings', b)
+/** the step taken up by hand in the manual provider */
+export const openStep = (job: string, step: string) => call<{ open: Open; label: string }>('GET', `/api/jobs/${enc(job)}/steps/${enc(step)}/open`)
 export const pairNew = () => call<{ url: string; qr: string; expires: string }>('POST', '/api/pair/new')
 export const devices = () => call<{ devices: Device[] }>('GET', '/api/devices')
 export const revoke = (id: string) => call<object>('DELETE', `/api/devices/${enc(id)}`)

@@ -367,3 +367,24 @@ test('voice: the state says when the PC has a key; the page sends a recording an
     assert.equal(sent!.get('model'), 'whisper-1')
   } finally { globalThis.fetch = real; LIVE.voice = false; await m.close() }
 })
+
+test('providers: the state names them, settings round-trip, a step opens in the manual one', async () => {
+  const m = await backend()
+  try {
+    applyState(await api.state())
+    assert.deepEqual(LIVE.providers, { auto: 'claude', manual: 'claude', manualLabel: 'Claude Code' })
+    const g = await api.settings()
+    assert.deepEqual(g.settings, { auto: 'claude', manual: 'claude' })
+    assert.deepEqual(g.providers.map((p) => p.id), ['claude', 'cursor'])
+    await assert.rejects(api.putSettings({ auto: 'cursor' }), (e: api.ApiError) => e.status === 400 && e.code === 'bad_args')
+    assert.equal((await api.putSettings({ manual: 'cursor' })).settings.manual, 'cursor')
+    applyState(await api.state())
+    assert.equal(LIVE.providers.manualLabel, 'Cursor')
+    const { job } = await api.create({ t: 'By hand', key: 'ACME-4243', pb: 'action', prj: 'platform', ws: 'acme' })
+    const started = await api.cmd(job.id, { op: 'start' }, job.v)
+    const step = Object.keys(started.job.flow).find((k) => T.isLive(started.job.flow[k]))!
+    const o = await api.openStep(job.id, step)
+    assert.equal(o.label, 'Cursor'); assert.equal(o.open.kind, 'link')
+    assert.match(o.open.value, /^cursor:\/\/anysphere\.cursor-deeplink\/prompt\?text=/)
+  } finally { LIVE.providers = { auto: 'claude', manual: 'claude', manualLabel: 'Claude Code' }; await m.close() }
+})
