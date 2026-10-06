@@ -1,6 +1,7 @@
 import type { CalEvent, Chat, Cmd, Job, Mail, Msg, Playbook, RunIntent, RunRec, Tpl } from '../model/types.ts'
 import type { NewJob } from '../model/transitions.ts'
 import type { Resolved } from '../model/context.ts'
+import type { TrackerView } from '../model/tracker.ts'
 import type { BuildForm } from '../model/njForm.ts'
 import type { BoardItem } from '../data/board.ts'
 import type { TimeItem } from '../data/time.ts'
@@ -139,6 +140,9 @@ export const create = (o: NewJob) => call<{ job: Job }>('POST', '/api/jobs', o)
 /** one context item as the job's next run would get it */
 export const ctxPreview = async (id: string, k: string, item: string) =>
   (await call<{ item: Resolved }>('GET', `/api/jobs/${enc(id)}/context/${enc(k)}/${enc(item)}`, undefined, 30000)).item
+/** the job's work items and their PRs; fresh = past the backend's 5-minute cache */
+export const tracker = async (id: string, fresh = false) =>
+  (await call<{ tracker: TrackerView }>('GET', `/api/jobs/${enc(id)}/tracker${fresh ? '?fresh=1' : ''}`, undefined, 60000)).tracker
 export const undo = (id: string, v: number, prev: Job) => call<{ job: Job }>('POST', '/api/undo', { job: id, v, prev })
 /** an artifact's text for the viewer; link is the one the runner recorded */
 export async function artText(link: string): Promise<string> {

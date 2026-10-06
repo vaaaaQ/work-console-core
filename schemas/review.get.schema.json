@@ -54,6 +54,107 @@
         ],
         "additionalProperties": false
       }
+    },
+    "pr": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "link": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "draft": {
+          "type": "boolean"
+        },
+        "author": {
+          "type": "string"
+        },
+        "closedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "votes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "reviewer": {
+                "type": "string"
+              },
+              "vote": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "reviewer",
+              "vote"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "merge": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "policies": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "blocking": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name",
+              "status",
+              "blocking"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "title",
+        "repo",
+        "link",
+        "source",
+        "target",
+        "status",
+        "draft",
+        "author",
+        "closedAt",
+        "votes",
+        "merge",
+        "policies"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [

@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { started } from '../../src/data/board.ts'
 import type { BoardItem } from '../../src/data/board.ts'
 import type { Board } from '../../src/workspace.ts'
-import { MAIL0, WORK0 } from '../../src/data/demo.ts'
+import { MAIL0, PRS0, WORK0 } from '../../src/data/demo.ts'
 import { fillMonth } from '../../src/data/time.ts'
 import type { FillArgs, TimeItem } from '../../src/data/time.ts'
 import type { FakeSeed } from '../workspace.ts'
@@ -166,6 +166,8 @@ export async function startFakeGateway(o: {
         const it = find(concept, id)
         return json(200, it ? { status: 'ok', rev: c.rev, items: it } : { status: 'not_found', message: `${concept} '${id}' does not exist` })
       }
+      // a PR the demo knows reads as the pack's review get, listed or not
+      if (concept === 'review' && Object.hasOwn(PRS0, id)) return json(200, { status: 'ok', rev: c.rev, items: { threads: [], pr: PRS0[id] } })
       const it = c.items.find((i) => i.id === id)
       if (!it) return json(200, { status: 'source_error', message: `no ${concept} ${id}` })
       if (Object.hasOwn(gets, concept)) return json(200, { status: 'ok', rev: c.rev, items: gets[concept](id, it) })

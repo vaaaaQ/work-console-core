@@ -1,5 +1,6 @@
 import type { Chat, JobSeed, JournalEntry, LogEntry, Mail, Pr, StepOverride } from '../../../src/model/types.ts'
 import type { WorkDoc } from '../../../src/data/demo.ts'
+import type { PrHeader } from '../../../src/model/tracker.ts'
 import type { GatewayItem } from '../../../src/workspace.ts'
 import { weekDays } from '../../../src/model/cal.ts'
 import { dayOf, fromWall } from '../../../src/lib/zone.ts'
@@ -78,11 +79,21 @@ export const work: Record<string, WorkDoc> ={
   acceptanceCriteria:'- A token over its limit gets 429 with a Retry-After header.\n- The limit is read from the gateway\'s existing token bucket.',
   comments:[{id:'1',author:'Dana',at:'2026-09-24T12:10:00Z',text:'Per token, as agreed with the PO.'},
    {id:'2',author:'Priya Shah',at:'2026-09-25T15:40:00Z',text:'The bucket already exists in the gateway; reusing it.'}],
-  images:[{ref:'acme-512-1',name:'limit-banner.png',from:'description'}]},
+  images:[{ref:'acme-512-1',name:'limit-banner.png',from:'description'}],
+  link:'https://jira.example/browse/ACME-512',area:'Platform\API',iteration:'Sprint 41',prs:['482','470']},
  'ACME-530':{type:'Story',title:'Search: index archived projects',state:'In Progress',assignedTo:'Sam Rivera',
   description:'Archived projects show up in search results, marked as archived.',reproSteps:'',
   acceptanceCriteria:'- An archived project is found by name.\n- Its result carries an Archived badge.',
   comments:[{id:'1',author:'Lena Ortiz',at:'2026-09-29T13:22:00Z',text:'Any ETA on staging? QA planned it for tomorrow.'}]},
+};
+
+/* pull requests as the bridge's review get returns them in pr, by id */
+export const prs: Record<string, PrHeader> ={
+ '482':{title:'Rate limiting per token',repo:'acme/platform',link:'https://github.example/acme/platform/pull/482',source:'feature/ACME-512-rate-limit',target:'main',
+  status:'active',draft:false,author:'You',closedAt:null,votes:[{reviewer:'Priya Shah',vote:10},{reviewer:'Tom Becker',vote:0}],merge:'succeeded',
+  policies:[{name:'Minimum number of reviewers',status:'queued',blocking:true},{name:'Build',status:'approved',blocking:true}]},
+ '470':{title:'Rate limiting per user (superseded)',repo:'acme/platform',link:'https://github.example/acme/platform/pull/470',source:'feature/ACME-512-per-user',target:'main',
+  status:'abandoned',draft:false,author:'You',closedAt:'2026-09-23T16:00:00Z',votes:[{reviewer:'Priya Shah',vote:-10}],merge:null,policies:null},
 };
 
 /* canned LLM reply drafts, per chat and author; the greeting goes in front */

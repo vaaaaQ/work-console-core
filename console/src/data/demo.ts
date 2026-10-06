@@ -1,3 +1,4 @@
+import type { PrHeader } from '../model/tracker.ts'
 import type { CalEvent, Chat, JobSeed, JournalEntry, LogEntry, Mail, Pr, StepOverride, Tpl, Ws } from '../model/types.ts'
 
 /* The demo data of the registered workspaces: jobs, chats, mail and meetings. Each workspace brings its
@@ -25,9 +26,14 @@ export interface WorkDoc {
   type: string; title: string; state: string; assignedTo: string | null; description: string; reproSteps: string; acceptanceCriteria: string
   comments: { id: string; author: string; at: string; text: string }[]
   images?: { ref: string; name: string; from: string }[]
+  link?: string; area?: string; iteration?: string
+  /** the ids of the PRs linked to it */
+  prs?: string[]
 }
 /* work items by id; the fake gateway and the demo context preview read these */
 export const WORK0: Record<string, WorkDoc> = {}
+/* pull requests by id, as the bridge's review get returns them in pr; the fake gateway and the demo panels read these */
+export const PRS0: Record<string, PrHeader> = {}
 /* canned LLM reply drafts, per chat and author; the greeting goes in front */
 export const CDR: Record<string, string> = {}
 

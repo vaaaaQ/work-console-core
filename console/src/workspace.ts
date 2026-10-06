@@ -1,7 +1,8 @@
 import type * as React from 'react'
 import type { BoardItem } from './data/board.ts'
-import { CAL, CAL_ITEMS, CDR, CHATS0, JOBS0, JR, LLMS, LOG0, MAIL0, OVR, PRI, RET0, TPL0, WORK0 } from './data/demo.ts'
+import { CAL, CAL_ITEMS, CDR, CHATS0, JOBS0, JR, LLMS, LOG0, MAIL0, OVR, PRI, PRS0, RET0, TPL0, WORK0 } from './data/demo.ts'
 import type { WorkDoc } from './data/demo.ts'
+import type { PrHeader } from './model/tracker.ts'
 import { PACKS, setDefaultWs } from './data/packs.ts'
 import { REG } from './data/registry.ts'
 import { CORE_ACT_NAMES } from './data/core.ts'
@@ -26,6 +27,8 @@ export interface Demo {
   mail?: Mail[]; cal?: GatewayItem[]; board?: () => BoardItem[]; time?: (today: string) => TimeItem[]
   /** work items by id, as the bridge's work get returns them */
   work?: Record<string, WorkDoc>
+  /** pull requests by id, as the bridge's review get returns them in pr */
+  prs?: Record<string, PrHeader>
 }
 /** start = the playbook Start gives a board item's job; key = the job key of an item id; itemId = the item id in a key, or null;
     ready = the column a free item waits in (default Ready); dev = where Start moves it (default Dev, In Progress) */
@@ -78,7 +81,7 @@ export function install(list: Registered[]): void {
   JOBS0.splice(0, JOBS0.length, ...pages.flatMap((p) => p.demo.jobs))
   refill(OVR, merged((p) => p.demo.ovr)); refill(JR, merged((p) => p.demo.jr)); refill(RET0, merged((p) => p.demo.ret))
   refill(PRI, merged((p) => p.demo.pri)); refill(LLMS, merged((p) => p.demo.llms)); refill(CDR, merged((p) => p.demo.cdr))
-  refill(MDR, merged((p) => p.demo.mdr)); refill(WORK0, merged((p) => p.demo.work))
+  refill(MDR, merged((p) => p.demo.mdr)); refill(WORK0, merged((p) => p.demo.work)); refill(PRS0, merged((p) => p.demo.prs))
   refill(CHATS0, byWs((p) => p.demo.chats)); refill(LOG0, byWs((p) => p.demo.log)); refill(MAIL0, byWs((p) => p.demo.mail))
   refill(CAL_ITEMS, byWs((p) => p.demo.cal))
   refill(CAL, byWs((p) => p.demo.cal?.map((i) => ({ id: i.id, ...adapt.cal(i, p.pack.tz) }))))

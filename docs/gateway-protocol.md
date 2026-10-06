@@ -72,6 +72,14 @@ comment as `comment:<id>`. `image` is a get-only concept: `GET /api/items/image/
 nothing. A run gets the pictures its prompt names with that prompt; one the backend cannot read
 says `[image N: unavailable]` there and never fails the run.
 
+For the job page's work item and PR panels a work get may also carry `link`, `area`, `iteration`
+and `prs`, the ids of the pull requests linked to the item. A review get may carry `pr`, the PR
+itself: `title`, `repo`, `link`, `source` and `target` branch, `status` (`active`, `completed` or
+`abandoned`), `draft`, `author`, `closedAt`, `votes` as `{reviewer, vote}` (10 approved, 5 with
+suggestions, 0 none, -5 waiting, -10 rejected), `merge` and, while it is active, `policies` as
+`{name, status, blocking}`. All of them are optional: a source without them shows no panels or
+shows less.
+
 `put` with `expectV: null` creates the document; any other value must equal the stored `v`. The
 stored document gets `v = expectV + 1` and `updated`. A document is capped at 256 KB.
 

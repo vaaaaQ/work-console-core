@@ -14,6 +14,7 @@ import { noteIn } from '../knowledge/notes.ts'
 import { buildIn } from '../llm/builder.ts'
 import { resolveItem } from '../llm/context.ts'
 import { safeName } from '../llm/runner.ts'
+import { TrackerCache } from '../tracker.ts'
 import type { Notify } from '../notify/notify.ts'
 import { qrSvg } from '../pairing/pairing.ts'
 import type { Pairing } from '../pairing/pairing.ts'
@@ -309,6 +310,8 @@ export function createApp(d: Deps) {
     return { s, job }
   }
 
+  const tracker = new TrackerCache()
+
   /** shared: matched against the whole path */
   const routes: Route[] = [
     ['GET', /^\/api\/state$/, state],
@@ -328,6 +331,12 @@ export function createApp(d: Deps) {
       const it = ctxOf(job).find((c) => c.k === r.p[1] && c.id === r.p[2])
       if (!it) throw new HttpError(404, 'not_found', `${r.p[1]} ${r.p[2]} is not in ${job.id}'s context`)
       return { item: await resolveItem(s.source, it, s.page.me, s.notes) }
+    }],
+    // the job's work items and the PRs linked to them, for the page's two panels; fresh=1 skips the 5-minute cache
+    ['GET', /^\/api\/jobs\/([^/]+)\/tracker$/, async (r) => {
+      const { s, job } = await jobOf(r.p[0])
+      const ids = ctxOf(job).filter((c) => c.k === 'work').map((c) => c.id)
+      return { tracker: await tracker.read(job.id, ids, (c, id) => s.source.get(c, id), r.q.get('fresh') === '1') }
     }],
     ['POST', /^\/api\/undo$/, async (r) => {
       const b = await r.body(), id = str(b.job, 'job')

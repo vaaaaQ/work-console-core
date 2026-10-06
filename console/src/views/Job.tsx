@@ -12,6 +12,7 @@ import { ArtName, dlHref } from '../ui/artifact.tsx'
 import { Ic } from '../ui/Icon.tsx'
 import { CtxPanel, DescPanel } from './Context.tsx'
 import { Rounds } from './Rounds.tsx'
+import { TrackerPanels } from './Tracker.tsx'
 
 const LEGEND: NodeState[] = ['done', 'cur', 'wait', 'bad', 'fut', 'tpl']
 
@@ -73,6 +74,7 @@ export function JobView() {
     <div className="jh"><button className="back" onClick={() => go('jobs')}><Ic n="arrow-left" sm />Jobs</button>
       <div className="jh-row"><span className="key">{j.key}</span><h1>{j.t}</h1><Pill st={j.st} /><span className="fsp" /><JobActs j={j} /></div>
       <div className="meta"><span>Playbook <b>{pb.n}</b>{pb.ws ? '' : ' · core'}</span><span>Project <b>{j.prj}</b></span><span>Updated <b>{ago(j.ts)}</b></span><span className="mono">{j.id} · {j.slug}</span></div></div>
+    <TrackerPanels j={j} />
     <div className="toolbar"><div className="legend">{LEGEND.map((k) => <span key={k}><i className={'chip s-' + k} />{NODE[k][1]}</span>)}</div><span className="fsp" />
       {j.rounds?.length ? <span className="rd-cur">Round {j.rounds.length + 1}</span> : null}<span className="hint">Click a step to work on it</span></div>
     <div className="bw" id="bw"><Board j={j} /><Rounds j={j} /></div>

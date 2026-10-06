@@ -59,6 +59,22 @@
         "additionalProperties": false
       },
       "maxItems": 20
+    },
+    "link": {
+      "type": "string"
+    },
+    "area": {
+      "type": "string"
+    },
+    "iteration": {
+      "type": "string"
+    },
+    "prs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 50
     }
   },
   "required": [

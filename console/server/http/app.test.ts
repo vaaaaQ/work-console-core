@@ -733,6 +733,33 @@ test("context preview: a job's item reads as the run would get it; an item not o
   } finally { await stop() }
 })
 
+test("tracker: a job's work items and their PRs, active first; cached, fresh on ask, a snapshot while the bridge is down", async () => {
+  const { lp, fakes, stop } = await setup()
+  try {
+    const r = await call(lp, 'POST', '/api/jobs', { body: { t: 'Rate limits', key: 'ACME-512', pb: 'action', prj: 'platform', ws: 'acme' } })
+    assert.equal(r.status, 200, r.text)
+    const id = r.json.job.id
+    const t = await call(lp, 'GET', `/api/jobs/${id}/tracker`)
+    assert.equal(t.status, 200, t.text)
+    const tr = t.json.tracker
+    assert.equal(tr.supported, true)
+    assert.deepEqual(tr.items.map((c: { id: string; title: string; area: string; prs: string[] }) => [c.id, c.title, c.area, c.prs]),
+      [['ACME-512', 'Public API: rate limiting per token', 'Platform\API', ['482', '470']]])
+    assert.deepEqual(tr.prs.map((p: { id: string; status: string; items: string[] }) => [p.id, p.status, p.items]), [['482', 'active', ['ACME-512']], ['470', 'abandoned', ['ACME-512']]])
+    assert.equal(tr.prs[0].policies[0].name, 'Minimum number of reviewers')
+    fakes.acme.setSource('work', 'unavailable')
+    assert.equal((await call(lp, 'GET', `/api/jobs/${id}/tracker`)).json.tracker.at, tr.at, 'within five minutes: the cached read')
+    const down = (await call(lp, 'GET', `/api/jobs/${id}/tracker?fresh=1`)).json.tracker
+    assert.equal(down.at, tr.at)
+    assert.equal(down.items[0].title, 'Public API: rate limiting per token')
+    assert.match(down.offline, /work is unavailable/)
+    fakes.acme.setSource('work', null)
+    const none = await call(lp, 'POST', '/api/jobs', { body: { t: 'No item', key: 'ops', pb: 'action', prj: 'platform', ws: 'acme' } })
+    assert.equal((await call(lp, 'GET', `/api/jobs/${none.json.job.id}/tracker`)).json.tracker.supported, false)
+    assert.equal((await call(lp, 'GET', '/api/jobs/J-NOPE/tracker')).status, 404)
+  } finally { await stop() }
+})
+
 test('a workspace route answers only under /api/ws/<id>, and the state has no merged top level', async () => {
   for (const o of [{}, { one: true }]) {
     const { lp, stop } = await setup(o)
