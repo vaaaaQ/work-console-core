@@ -80,7 +80,7 @@ export const work: Record<string, WorkDoc> ={
   comments:[{id:'1',author:'Dana',at:'2026-09-24T12:10:00Z',text:'Per token, as agreed with the PO.'},
    {id:'2',author:'Priya Shah',at:'2026-09-25T15:40:00Z',text:'The bucket already exists in the gateway; reusing it.'}],
   images:[{ref:'acme-512-1',name:'limit-banner.png',from:'description'}],
-  link:'https://jira.example/browse/ACME-512',area:'Platform\API',iteration:'Sprint 41',prs:['482','470']},
+  link:'https://jira.example/browse/ACME-512',area:'Platform/API',iteration:'Sprint 41',prs:['482','470']},
  'ACME-530':{type:'Story',title:'Search: index archived projects',state:'In Progress',assignedTo:'Sam Rivera',
   description:'Archived projects show up in search results, marked as archived.',reproSteps:'',
   acceptanceCriteria:'- An archived project is found by name.\n- Its result carries an Archived badge.',

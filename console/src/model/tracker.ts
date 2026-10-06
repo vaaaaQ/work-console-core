@@ -14,9 +14,10 @@ export interface PrHeader {
 }
 /** work.get's fields the panel shows; prs = the ids of the PRs linked to it */
 export type WorkHead = Omit<WorkDetail, 'comments' | 'images'> & { link?: string; area?: string; iteration?: string }
-export interface WorkCard extends WorkHead { id: string; prs: string[]; err?: string }
+/** err = why it could not be read, code = the answer's status */
+export interface WorkCard extends WorkHead { id: string; prs: string[]; err?: string; code?: string }
 /** items = the work items that link it, in the context's order */
-export interface PrRow extends PrHeader { id: string; items: string[]; err?: string }
+export interface PrRow extends PrHeader { id: string; items: string[]; err?: string; code?: string }
 /** supported false = the workspace has no tracker to show (or the job no work item): no panels */
 export interface Tracker { supported: boolean; items: WorkCard[]; prs: PrRow[]; at: string }
 /** what the page gets; offline = why it shows an earlier snapshot (or nothing): every work item failed to read */
@@ -45,7 +46,7 @@ export async function buildTracker(ids: string[], get: TrackerGet, now: string):
   if (!ids.length || works.every((w) => !w.ok && w.status === 'unsupported')) return { supported: false, items: [], prs: [], at: now }
   const items: WorkCard[] = works.map((w, i) => {
     const id = ids[i]
-    if (!w.ok) return { id, prs: [], err: w.err }
+    if (!w.ok) return { id, prs: [], err: w.err, code: w.status }
     const card: WorkCard = { id, prs: Array.isArray(w.d.prs) ? [...new Set(w.d.prs.filter((p): p is string => typeof p === 'string' && PR_ID.test(p)))] : [] }
     for (const k of HEAD) if (w.d[k] !== undefined) (card as unknown as Record<string, unknown>)[k] = w.d[k]
     return card
@@ -55,7 +56,7 @@ export async function buildTracker(ids: string[], get: TrackerGet, now: string):
   const reviews = await Promise.all([...by.keys()].map((id) => fetch1(get, 'review', id)))
   const prs: PrRow[] = [...by.entries()].map(([id, links], i) => {
     const r = reviews[i]
-    if (!r.ok) return { id, items: links, err: r.err }
+    if (!r.ok) return { id, items: links, err: r.err, code: r.status }
     const h = r.d.pr && typeof r.d.pr === 'object' ? r.d.pr as PrHeader : {}
     return { ...h, id, items: links }
   })
@@ -63,5 +64,8 @@ export async function buildTracker(ids: string[], get: TrackerGet, now: string):
   return { supported: true, items, prs, at: now }
 }
 
-/** every work item failed to read: the bridge is down, so an earlier snapshot is worth more than this */
-export const isOffline = (t: Tracker) => t.supported && t.items.length > 0 && t.items.every((c) => c.err !== undefined)
+const DOWN = new Set(['unavailable', 'timeout', 'source_unavailable'])
+/** every work item failed to read because the bridge is down: an earlier snapshot is worth more than this */
+export const isOffline = (t: Tracker) => t.supported && t.items.length > 0 && t.items.every((c) => c.err !== undefined && DOWN.has(c.code ?? ''))
+/** a read with a failed card or row: shown, but not kept */
+export const isPartial = (t: Tracker) => [...t.items, ...t.prs].some((x) => x.err !== undefined)

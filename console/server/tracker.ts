@@ -1,9 +1,9 @@
-import { buildTracker, isOffline } from '../src/model/tracker.ts'
+import { buildTracker, isOffline, isPartial } from '../src/model/tracker.ts'
 import type { Tracker, TrackerGet, TrackerView } from '../src/model/tracker.ts'
 
 /* The job page's work item and PR panels, read through the bridge and kept per job for five minutes.
    While the bridge is down a job's last snapshot is answered instead, with why; a read that fails
-   never replaces it. */
+   anywhere is shown but never kept. */
 
 export const TRACKER_TTL = 5 * 60_000
 
@@ -22,7 +22,7 @@ export class TrackerCache {
       const offline = t.items[0].err!
       return same ? { ...same.t, offline } : { ...t, offline }
     }
-    this.m.set(job, { ids: key, t, ms })
+    if (!isPartial(t)) this.m.set(job, { ids: key, t, ms })
     return t
   }
 }

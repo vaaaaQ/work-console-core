@@ -744,7 +744,7 @@ test("tracker: a job's work items and their PRs, active first; cached, fresh on 
     const tr = t.json.tracker
     assert.equal(tr.supported, true)
     assert.deepEqual(tr.items.map((c: { id: string; title: string; area: string; prs: string[] }) => [c.id, c.title, c.area, c.prs]),
-      [['ACME-512', 'Public API: rate limiting per token', 'Platform\API', ['482', '470']]])
+      [['ACME-512', 'Public API: rate limiting per token', 'Platform/API', ['482', '470']]])
     assert.deepEqual(tr.prs.map((p: { id: string; status: string; items: string[] }) => [p.id, p.status, p.items]), [['482', 'active', ['ACME-512']], ['470', 'abandoned', ['ACME-512']]])
     assert.equal(tr.prs[0].policies[0].name, 'Minimum number of reviewers')
     fakes.acme.setSource('work', 'unavailable')

@@ -49,3 +49,17 @@ test('a down bridge answers the last snapshot with why; without one, the failed 
   s.up = true
   assert.equal((await c.read('J-1', ['1'], get)).offline, undefined, 'the next read after the bridge is back is live')
 })
+
+test('a read with a failed PR is shown but not kept: the next read tries again', async () => {
+  const c = new TrackerCache({ now: () => 0 })
+  let reads = 0, prUp = false
+  const get: TrackerGet = async (k, id) => {
+    if (k === 'work') { reads++; return { status: 'ok', items: { title: 'One', prs: ['5'] } } }
+    return prUp ? { status: 'ok', items: { threads: [], pr: { title: 'pr ' + id } } } : { status: 'source_error', message: 'ADO said 500' }
+  }
+  assert.equal((await c.read('J-1', ['1'], get)).prs[0].err, 'ADO said 500')
+  prUp = true
+  assert.equal((await c.read('J-1', ['1'], get)).prs[0].title, 'pr 5')
+  assert.equal((await c.read('J-1', ['1'], get)).prs[0].title, 'pr 5')
+  assert.equal(reads, 2)
+})

@@ -62,6 +62,8 @@ test('every item failing is offline; every work get unsupported, or no work item
   const pg = await buildTracker(['7'], over({ 'work/7': { status: 'unsupported', message: 'no tracker' } }), NOW)
   assert.equal(pg.supported, false)
   assert.equal(isOffline(pg), false)
+  const gone = await buildTracker(['7'], over({ 'work/7': { status: 'not_found', message: 'no work item 7' } }), NOW)
+  assert.equal(isOffline(gone), false, 'a deleted item is not a down bridge')
   const none = await buildTracker([], over({}), NOW)
   assert.equal(none.supported, false)
 })
