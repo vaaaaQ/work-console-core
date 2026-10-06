@@ -12,12 +12,14 @@ import { HttpError } from '../events.ts'
 import type { Bus, Ev } from '../events.ts'
 import { noteIn } from '../knowledge/notes.ts'
 import { buildIn } from '../llm/builder.ts'
+import { PROVIDERS } from '../llm/providers.ts'
 import { resolveItem } from '../llm/context.ts'
 import { safeName } from '../llm/runner.ts'
 import { TrackerCache } from '../tracker.ts'
 import type { Notify } from '../notify/notify.ts'
 import { qrSvg } from '../pairing/pairing.ts'
 import type { Pairing } from '../pairing/pairing.ts'
+import type { Settings } from '../settings.ts'
 import type { Space, Spaces } from '../spaces.ts'
 import type { Format } from '../voice/format.ts'
 import type { Voice } from '../voice/whisper.ts'
@@ -46,6 +48,8 @@ export interface Deps {
   staticDirs: string[]; artifactsDir: string
   /** the PC's zone, for /api/state's home */
   tz: string
+  /** the provider choice: who runs by itself and who a step opens in */
+  settings: Settings
   /** the job tools for Claude Code sessions, served on loopback only */
   mcp?: RequestListener
   /** the mic's speech to text; none = no voice */
@@ -72,7 +76,8 @@ const ART_TYPES: Record<string, string> = {
 }
 /** artifact types the page shows as they are; never svg or html, which could run script */
 const ART_IMAGES: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' }
-const PC_ONLY = /^\/api\/(pair|devices)(\/|$)/
+/** pairing, devices, the provider settings and opening a step in an app on the PC */
+const PC_ONLY = /^\/api\/(pair|devices|settings)(\/|$)|^\/api\/jobs\/[^/]+\/steps\/[^/]+\/open$/
 /** a workspace-bound route: the workspace id, then the path the per-space table and plugins match */
 const IN_WS = /^\/api\/ws\/([^/]+)(\/.*)$/
 
@@ -172,7 +177,7 @@ export function createApp(d: Deps) {
     }
     if (origin && origin.toLowerCase() !== `https://${host}`) { fail(res, 403, 'bad_origin', 'cross-site request'); return null }
     if (!path.startsWith('/api/')) return { device: null }
-    if (PC_ONLY.test(path)) { fail(res, 403, 'pc_only', 'pairing and devices are managed on the PC'); return null }
+    if (PC_ONLY.test(path)) { fail(res, 403, 'pc_only', 'this is done on the PC'); return null }
     const dev = d.pairing.check(cookieOf(req, COOKIE))
     if (!dev) { fail(res, 401, 'not_paired', 'this device is not paired; scan the pairing code on the PC'); return null }
     return { device: dev.id }
@@ -199,11 +204,12 @@ export function createApp(d: Deps) {
     return { jobs, runs, marks, parts: { jobs: js, runs: rs, marks: ms }, playbooks: s.ctx().PB, templates: s.ctx().TPL, bridge: bridgeOf(s), plugins }
   }
   async function state(r: Req) {
-    const list = d.spaces.list, blocks = await Promise.all(list.map(block))
+    const list = d.spaces.list, blocks = await Promise.all(list.map(block)), set = d.settings.read()
     return {
       home: { tz: d.tz, pc: d.pcName },
       side: r.side, device: r.device, push: d.notify ? { key: d.notify.publicKey() } : null,
       voice: d.voice?.ready() ?? false,
+      providers: { auto: set.auto, manual: set.manual, manualLabel: PROVIDERS[set.manual].label },
       ws: Object.fromEntries(list.map((s, i) => [s.id, blocks[i]])),
     }
   }
@@ -326,6 +332,13 @@ export function createApp(d: Deps) {
     }],
     ['GET', /^\/api\/jobs\/([^/]+)$/, async (r) => ({ job: (await jobOf(r.p[0])).job })],
     ['POST', /^\/api\/jobs\/([^/]+)\/cmd$/, async (r) => cmd(r.p[0], await r.body())],
+    // the step taken up by hand in the manual provider: a link the page follows, or a command it copies
+    ['GET', /^\/api\/jobs\/([^/]+)\/steps\/([^/]+)\/open$/, async (r) => {
+      const { s, job } = await jobOf(r.p[0]), p = PROVIDERS[d.settings.read().manual]
+      return { open: p.open(await s.runner.openIn(job.id, r.p[1])), label: p.label }
+    }],
+    ['GET', /^\/api\/settings$/, () => ({ settings: d.settings.read(), providers: d.settings.list() })],
+    ['PUT', /^\/api\/settings$/, async (r) => ({ settings: d.settings.write(await r.body()), providers: d.settings.list() })],
     // the text a run would get for one of the job's context items, from the run's own renderer
     ['GET', /^\/api\/jobs\/([^/]+)\/context\/([^/]+)\/([^/]+)$/, async (r) => {
       const { s, job } = await jobOf(r.p[0])

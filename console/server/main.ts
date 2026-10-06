@@ -25,6 +25,7 @@ import { formatter } from './voice/format.ts'
 import { whisper } from './voice/whisper.ts'
 import { checkWorkspaces } from './workspace.ts'
 import type { WorkspaceServer } from './workspace.ts'
+import { Settings } from './settings.ts'
 
 /* Wiring. Loopback always; LAN only once install.ps1 has made tls/server.key and tls/server.crt.
    One space per registered workspace (spaces.ts), each with its own gateway, store, jobs and runner;
@@ -110,6 +111,7 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
     loopbackPort, lanPort: lanPort ?? cfg.lanPort, pcName: cfg.pcName, hub: bus, spaces, pairing, notify,
     staticDirs: [join(PKG, 'dist'), join(PKG, 'public')], artifactsDir, tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
     mcp: mcpHandler({ tools: jobTools({ spaces }), token: () => readToken(mcpToken) }),
+    settings: new Settings(cfg.home),
     voice: whisper({ keyPath: cfg.openaiKeyPath }),
     format: formatter({ keyPath: cfg.openaiKeyPath, model: cfg.formatModel }),
   })

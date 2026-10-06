@@ -20,6 +20,7 @@ import type { Space } from '../spaces.ts'
 import { acme, acmeServer } from '../testkit.ts'
 import type { Format } from '../voice/format.ts'
 import type { Voice } from '../voice/whisper.ts'
+import { Settings } from '../settings.ts'
 import type { Plugin, WorkspaceServer, WsConfig } from '../workspace.ts'
 import { createApp } from './app.ts'
 
@@ -91,7 +92,7 @@ async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[];
     const loop = createServer((q, s) => h!.loopback(q, s)), lanS = createServer((q, s) => h!.lan(q, s))
     servers.push(loop, lanS)
     const lp = await listen(loop), np = await listen(lanS)
-    h = createApp({ loopbackPort: lp, lanPort: 7411, pcName: 'pc', hub: bus, spaces, pairing, notify, staticDirs: [web], artifactsDir: join(dir, 'arts'), tz: 'Asia/Tokyo', voice: o.voice, format: o.format })
+    h = createApp({ loopbackPort: lp, lanPort: 7411, pcName: 'pc', hub: bus, spaces, pairing, notify, staticDirs: [web], artifactsDir: join(dir, 'arts'), tz: 'Asia/Tokyo', settings: new Settings(dir), voice: o.voice, format: o.format })
     o.before?.(fakes)
     for (const s of list) s.source.start()
     await until(() => list.every((s) => s.source.available()))
@@ -155,6 +156,8 @@ test('LAN: the page is public, the API needs a paired cookie, pairing and device
     assert.equal((await call(np, 'GET', '/api/ws/acme/sources', { host })).status, 401)
     assert.equal((await call(np, 'POST', '/api/pair/new', { host, body: {} })).status, 403)
     assert.equal((await call(np, 'GET', '/api/devices', { host })).status, 403)
+    assert.equal((await call(np, 'GET', '/api/settings', { host })).status, 403)
+    assert.equal((await call(np, 'GET', '/api/jobs/A-0001/steps/s1/open', { host })).status, 403)
 
     const made = await call(lp, 'POST', '/api/pair/new', { body: {} })
     assert.equal(made.status, 200)
@@ -892,5 +895,37 @@ test("a reply goes to the run's step in its session; reject with a reason answer
     assert.match(prompts[n + 1], /## Why\nwrong scope/)
     const plain = await call(lp, 'POST', `/api/jobs/${job.id}/cmd`, { body: { cmd: { op: 'noteAdd', step, k: 'q', t: 'x' } } })
     assert.equal(plain.status, 200); assert.equal('run' in plain.json, false)
+  } finally { await stop() }
+})
+
+test('settings: read with the providers, written key by key, refused whole; state names the manual provider', async () => {
+  const { lp, stop } = await setup({ one: true })
+  try {
+    const g = await call(lp, 'GET', '/api/settings')
+    assert.equal(g.status, 200, g.text)
+    assert.deepEqual(g.json.settings, { auto: 'claude', manual: 'claude' })
+    assert.deepEqual(g.json.providers.map((p: { id: string; auto: boolean }) => [p.id, p.auto]), [['claude', true], ['cursor', false]])
+    const bad = await call(lp, 'PUT', '/api/settings', { body: { manual: 'cursor', auto: 'cursor' } })
+    assert.equal(bad.status, 400); assert.equal(bad.json.error.code, 'bad_args')
+    assert.equal((await call(lp, 'GET', '/api/settings')).json.settings.manual, 'claude', 'a refused write changes nothing')
+    const ok = await call(lp, 'PUT', '/api/settings', { body: { manual: 'cursor' } })
+    assert.equal(ok.status, 200, ok.text); assert.equal(ok.json.settings.manual, 'cursor')
+    assert.deepEqual((await call(lp, 'GET', '/api/state')).json.providers, { auto: 'claude', manual: 'cursor', manualLabel: 'Cursor' })
+  } finally { await stop() }
+})
+
+test('open: a step without a session opens in the manual provider with a short prompt; a link for Cursor', async () => {
+  const { lp, stop } = await setup({ one: true })
+  try {
+    const { job, step } = await openStep(lp)
+    const c = await call(lp, 'GET', `/api/jobs/${job.id}/steps/${step}/open`)
+    assert.equal(c.status, 200, c.text)
+    assert.equal(c.json.label, 'Claude Code'); assert.equal(c.json.open.kind, 'link')
+    assert.match(c.json.open.value, /^claude-cli:\/\/open\?/)
+    assert.ok(decodeURIComponent(c.json.open.value).includes(job.id))
+    await call(lp, 'PUT', '/api/settings', { body: { manual: 'cursor' } })
+    const u = await call(lp, 'GET', `/api/jobs/${job.id}/steps/${step}/open`)
+    assert.equal(u.json.label, 'Cursor'); assert.match(u.json.open.value, /^cursor:\/\/anysphere\.cursor-deeplink\/prompt\?text=/)
+    assert.equal((await call(lp, 'GET', `/api/jobs/${job.id}/steps/nope/open`)).status, 400)
   } finally { await stop() }
 })
