@@ -6,13 +6,14 @@ import { join } from 'node:path'
 import { FMT, freeKey } from '../../src/model/pbFormat.ts'
 import type { PbFile } from '../../src/model/pbFormat.ts'
 import { DESC_MAX } from '../../src/model/transitions.ts'
-import type { Playbook, Step } from '../../src/model/types.ts'
+import * as T from '../../src/model/transitions.ts'
+import type { Job, Playbook, Step } from '../../src/model/types.ts'
 import type { ConceptReply } from '../bridge/wire.ts'
 import { Bus, HttpError } from '../events.ts'
 import type { Ev } from '../events.ts'
 import { notesStore } from '../knowledge/notes.ts'
 import { acme, demoCtx } from '../testkit.ts'
-import { FORM_SCHEMA, SYSTEM, buildIn, buildPrompt, buildTools, builder, checkForm, dueAt, formOut, nowLine, toolLine } from './builder.ts'
+import { FORM_SCHEMA, SYSTEM, buildIn, buildPrompt, buildTools, builder, checkForm, dueAt, formIn, formOut, nowLine, toolLine } from './builder.ts'
 import type { BuildForm, BuilderOpts, SourceReader } from './builder.ts'
 import type { AskEvent, AskTool, Sdk } from './sdk.ts'
 
@@ -403,4 +404,52 @@ test('the catalog says where each step sends, so a mail job does not land on a c
   const mail = buildPrompt({ page: acme, PB, TPL: { ...T, sn: [['mail', 'a@x.example', '{draft}', { subject: 'Hi' }], ['mail', '', '{draft}']] }, notes: [], form: empty(), say: ['x'], now: NOW, tz: HOME, sources: false })
   assert.ok(mail.split('\n').includes("  SN Send: Send it (you; sends a new mail, a reply to the job's mail)"), mail)
   assert.ok(SYSTEM.includes('A job whose result is a new mail needs a step that sends one'))
+})
+
+/* ===== blocker mode ===== */
+const BX = { PB, TPL: {} }
+const job = (id: string, t: string, st: Job['st'] = 'active'): Job => { const j = T.freshJob(BX, id, { t, key: 'NEW', pb: 'action', prj: 'ops', ws: 'acme' }); j.st = st; return j }
+const W = job('A-6', 'Local stand'), S0 = T.steps(BX, 'action')[0].id, S1 = T.steps(BX, 'action')[1].id
+const BL = { j: 'A-6', step: S0, plan: '', link: null }
+
+test('formIn keeps a blocker but never a link the page sent', () => {
+  const f = formIn({ bl: { j: 'A-6', step: S0, plan: 'go on', link: { j: 'A-7', why: 'x' } } })
+  assert.deepEqual(f.bl, { j: 'A-6', step: S0, plan: 'go on', link: null })
+  assert.equal(formIn({ bl: { j: 'A-6' } }).bl, undefined)
+})
+
+test('checkForm: blocker step, plan and a link checked against the open jobs', () => {
+  const open = job('A-7', 'Ask Imre'), done = job('A-8', 'Old', 'done'), all = [W, open, done]
+  const ok = checkForm({ ...ANS, blocker: { step: S1, plan: 'if yes, set it', link: { job: 'A-7', why: 'already asks Imre' } } }, opts({ form: empty({ bl: BL }), jobs: all }))
+  assert.deepEqual(ok.bl, { j: 'A-6', step: S1, plan: 'if yes, set it', link: { j: 'A-7', why: 'already asks Imre' } })
+  const bad = checkForm({ ...ANS, blocker: { step: 'nope', plan: '', link: { job: 'A-8', why: '' } } }, opts({ form: empty({ bl: { ...BL, plan: 'kept' } }), jobs: all }))
+  assert.deepEqual(bad.bl, { j: 'A-6', step: S0, plan: 'kept', link: null })
+  assert.ok(bad.why.some((w) => w.includes('nope'))); assert.ok(bad.why.some((w) => w.includes('A-8')))
+  assert.equal(checkForm(ANS, opts()).bl, undefined)
+})
+
+test('a link that would make a cycle is refused', () => {
+  const b = job('A-7', 'Ask Imre'); b.flow[S0].w = [{ j: 'A-6', st: 'open' }]
+  const f = checkForm({ ...ANS, blocker: { step: S0, plan: '', link: { job: 'A-7', why: '' } } }, opts({ form: empty({ bl: BL }), jobs: [W, b] }))
+  assert.equal(f.bl!.link, null); assert.ok(f.why.some((w) => w.includes('A-7')))
+})
+
+test('the prompt in blocker mode carries the waiting job, its draft and the open jobs with what they hold', () => {
+  const w = job('A-6', 'Local stand'); w.flow[S0].dr = { t: 'Set the connection string from kv-1', at: '' }
+  const o = job('A-7', 'Ask Imre'); o.d = 'Ask Imre which secret\nmore'
+  const h = job('A-9', 'Deploy'); h.flow[S0].w = [{ j: 'A-7', st: 'open' }]
+  const p = buildPrompt({ page: acme, PB, notes: [], form: empty({ bl: BL }), say: ['wait for Imre'], now: NOW, tz: HOME, sources: false, blocker: { waiter: w, all: [w, o, h] } })
+  assert.match(p, /# Blocker\nThe new job blocks A-6 “Local stand”/)
+  assert.match(p, /Set the connection string from kv-1/)
+  assert.match(p, /# Open jobs/)
+  assert.match(p, /- A-7: Ask Imre · .* · active · Ask Imre which secret · holds A-9\//)
+  assert.doesNotMatch(p, /- A-6:/)
+  assert.ok(p.indexOf('# Blocker') < p.indexOf('# The form now'))
+})
+
+test('the schema and formOut carry the blocker', () => {
+  assert.ok((FORM_SCHEMA.properties as Record<string, unknown>).blocker)
+  assert.deepEqual(formOut(empty({ bl: { ...BL, plan: 'p', link: { j: 'A-7', why: 'w' } } }), HOME).blocker, { step: S0, plan: 'p', link: { job: 'A-7', why: 'w' } })
+  assert.equal('blocker' in formOut(empty(), HOME), false)
+  assert.match(SYSTEM, /blocker:/)
 })

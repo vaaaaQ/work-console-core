@@ -155,7 +155,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   })
   const offAuto = cfg.autoAsk === true ? autoAsk({ jobs, runner, ctx, delay: o.askDelay }) : () => {}
   // a workspace without a gateway gives the builder no sources to read
-  const build = builder({ ws: id, page: w.page, sdk, notes, source: w.llm?.bridge === false ? null : source, ctx, bus })
+  const build = builder({ ws: id, page: w.page, sdk, notes, source: w.llm?.bridge === false ? null : source, ctx, bus, jobs: () => jobs.all() })
   const offInterrupt = bus.on((e) => {
     if (e.kind === 'bridge' && e.state === 'unavailable')
       void runner.interruptAll('the bridge went away').catch((err) => console.error(`interrupting the runs of ${id}:`, (err as Error).message))

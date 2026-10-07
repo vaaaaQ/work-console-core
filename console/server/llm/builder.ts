@@ -4,11 +4,12 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import { dayOf, fromWall, offsetAt, zoneName } from '../../src/lib/zone.ts'
 import { KINDS, ctxLabel, ctxUnit } from '../../src/model/context.ts'
+import { holdsOf, reaches } from '../../src/model/blockers.ts'
 import { FMT, freeKey, stepProblems } from '../../src/model/pbFormat.ts'
 import type { PbFile, PbStepFile } from '../../src/model/pbFormat.ts'
-import type { BuildForm } from '../../src/model/njForm.ts'
+import type { BlockerForm, BuildForm } from '../../src/model/njForm.ts'
 import * as T from '../../src/model/transitions.ts'
-import type { CtxItem, CtxKind, Mode, Playbook, Tpl } from '../../src/model/types.ts'
+import type { CtxItem, CtxKind, Job, Mode, Playbook, Tpl } from '../../src/model/types.ts'
 import type { WorkspacePage } from '../../src/workspace.ts'
 import { READY } from '../bridge/wire.ts'
 import type { ConceptReply } from '../bridge/wire.ts'
@@ -55,7 +56,7 @@ const countOf = (k: unknown, n: unknown) => {
 
 /** the form as the page sends it, leniently: a missing field is empty and a malformed context item is left out */
 export function formIn(f: unknown): BuildForm {
-  const o = obj(f), npb = obj(o.npb)
+  const o = obj(f), npb = obj(o.npb), bl = obj(o.bl)
   return {
     t: str(o.t), key: str(o.key), prj: str(o.prj), pb: str(o.pb), d: str(o.d), due: str(o.due),
     ctx: arr(o.ctx).flatMap((c) => {
@@ -64,6 +65,7 @@ export function formIn(f: unknown): BuildForm {
     }),
     npb: npb.file && typeof npb.file === 'object' && !Array.isArray(npb.file) ? { once: npb.once === true, file: npb.file as PbFile } : null,
     why: [],
+    ...(str(bl.j) && str(bl.step) ? { bl: { j: str(bl.j), step: str(bl.step), plan: str(bl.plan), link: null } } : {}),
   }
 }
 
@@ -110,6 +112,10 @@ export const FORM_SCHEMA = {
     },
     due: S,
     problems: { type: 'array', items: S },
+    blocker: {
+      type: 'object', additionalProperties: false, required: ['step', 'plan'],
+      properties: { step: S, plan: S, link: { type: 'object', additionalProperties: false, required: ['job', 'why'], properties: { job: S, why: S } } },
+    },
   },
 }
 
@@ -144,7 +150,7 @@ export function dueAt(s: string, tz: string): number {
     keeps it, due as ISO, new steps by Add playbook's rules. A playbook and a key both empty keep the form's choice.
     A due that is not a date keeps the form's. Nothing is dropped silently: each problem goes into why, the session's
     own after the checks' */
-export function checkForm(out: unknown, o: { ws: string; form: BuildForm; PB: Record<string, Playbook>; prj: string[]; tz: string; taken?: (k: string) => boolean }): BuildForm {
+export function checkForm(out: unknown, o: { ws: string; form: BuildForm; PB: Record<string, Playbook>; prj: string[]; tz: string; taken?: (k: string) => boolean; jobs?: Job[] }): BuildForm {
   const a = obj(out), why: string[] = [], { form, PB, ws } = o
   const np = obj(a.newPlaybook), own = form.npb ? form.pb : null
   let pb = str(a.playbook).trim(), npb: BuildForm['npb'] = null
@@ -180,7 +186,22 @@ export function checkForm(out: unknown, o: { ws: string; form: BuildForm; PB: Re
     else { why.push(`Due “${due}” is not a date.`); due = form.due }
   }
   for (const p of arr(a.problems)) if (typeof p === 'string' && p.trim()) why.push(p.trim())
-  return { t: str(a.title).trim(), key: str(a.key).trim(), prj, pb, d, ctx, due, npb, why }
+  let bl: BlockerForm | undefined
+  if (form.bl) {
+    const b = obj(a.blocker), all = o.jobs ?? [], w = all.find((j) => j.id === form.bl!.j)
+    let step = str(b.step).trim() || form.bl.step
+    if (w && !T.steps({ PB, TPL: {} }, w.pb).some((s) => s.id === step)) { why.push(`Step ${step} is not one of ${w.id}'s.`); step = form.bl.step }
+    const lk = obj(b.link), lj = str(lk.job).trim(), t = all.find((j) => j.id === lj)
+    let link: BlockerForm['link'] = null
+    if (lj) {
+      const no = !t || T.isClosed(t) ? 'there is no such open job' : lj === form.bl.j ? 'it is the waiting job'
+        : reaches((i) => all.find((j) => j.id === i), lj, form.bl.j) ? `it already waits for ${form.bl.j}` : ''
+      if (no) why.push(`Job ${lj} cannot be linked: ${no}.`)
+      else link = { j: lj, why: str(lk.why).trim() }
+    }
+    bl = { j: form.bl.j, step, plan: str(b.plan).trim() || form.bl.plan, link }
+  }
+  return { t: str(a.title).trim(), key: str(a.key).trim(), prj, pb, d, ctx, due, npb, why, ...(bl ? { bl } : {}) }
 }
 
 /* ===== the prompt ===== */
@@ -198,7 +219,8 @@ Answer with the whole form. A field the user's words do not touch keeps its valu
 - description: Markdown, in English: what the job is for, what done looks like, and what the user said that a run will need. No attachments and no copies of the context items: those go in context.
 - context: what every LLM run of the job reads. When the chosen playbook says what its jobs need, give that; otherwise choose what the job needs. Kinds: work (a work item by its id; n = its newest comments, 10 by default, at most 20), chat (by its id; n = its newest messages, 10 by default, at most 50), mail (by its id, read whole), note (a knowledge note by its id, read whole). name: how the item reads to the user, such as a chat's name. A note whose playbooks list the chosen playbook reaches every run already. Take ids from source_list, the note index or the user's words; never invent one.
 - due: only when the user named a deadline: ISO 8601 with the home zone's offset, a day without a time meaning 18:00 that day; otherwise the form's.
-- problems: what you could not settle, a few words each; empty when nothing.`
+- problems: what you could not settle, a few words each; empty when nothing.
+- blocker: only when the prompt has a "# Blocker" section: the user wants a job that a step of the waiting job waits for. step: the waiting job's step it blocks, the one the user named, else the one the section names. plan: a sentence or two on what that step does with the blocker's outcome, from the user's words, such as "if Imre confirms, set the connection string; if not, ask him for the secret name". link: when an open job already does what the user asks, its id and why, and leave the rest of the form as it is. Otherwise pick the catalog playbook that fits the kind of blocker, or write newPlaybook with once false, so the next blocker of that kind reuses it. A message the blocker sends goes into a step's messages; the user reviews and sends it.`
 
 const offText = (off: number) => {
   const m = Math.round(off / 60000), a = Math.abs(m)
@@ -220,6 +242,7 @@ export function formOut(f: BuildForm, tz: string) {
     ...(f.npb && file ? { newPlaybook: { once: f.npb.once, key: f.pb, name: file.name, description: file.description ?? '', ...(file.needs ? { needs: file.needs } : {}), phases: file.phases } } : {}),
     description: f.d, context: f.ctx.map((c) => ({ k: c.k, id: c.id, n: c.n, ...(c.name ? { name: c.name } : {}) })),
     due: Number.isFinite(t) ? zoneIso(t, tz) : f.due,
+    ...(f.bl ? { blocker: { step: f.bl.step, plan: f.bl.plan, ...(f.bl.link ? { link: { job: f.bl.link.j, why: f.bl.link.why } } : {}) } } : {}),
   }
 }
 
@@ -232,9 +255,33 @@ const catLine = (k: string, pb: Playbook, TPL: Record<string, Tpl[]>) => [
 ].join('\n')
 const noteLine = (n: NoteIndex) => `- ${n.id}: ${n.title}${n.tags.length ? ` · tags ${n.tags.join(', ')}` : ''}${n.playbooks.length ? ` · read by every run of ${n.playbooks.join(', ')}` : ''}`
 
+export const OPEN_MAX = 60
+const clip = (t: string, n: number) => (t.length > n ? t.slice(0, n) + '…' : t)
+/** the waiting job, its steps, the step the new job blocks, its draft and what the user asked in the reply */
+function blockerLines(x: T.Ctx, w: Job, bl: BlockerForm): string[] {
+  const f = w.flow[bl.step], s = T.stepOf(x, w, bl.step)
+  return [
+    '# Blocker',
+    `The new job blocks ${w.id} “${w.t}” (playbook ${x.PB[w.pb]?.n ?? w.pb}): one of its steps waits for the new job to close, then goes on with its outcome.`,
+    `Steps of ${w.id}: ${T.steps(x, w.pb).map((t) => `${t.id} “${t.t}” (${w.flow[t.id]?.s ?? 'fut'})`).join('; ')}`,
+    `The step it blocks now: ${bl.step}${s ? ` “${s.t}”` : ''}`,
+    ...(f?.dr ? ["The step's draft:", '```', clip(f.dr.t, 4000), '```'] : []),
+    ...(f?.bb ? [`What the user asked in the reply: ${f.bb.say}`] : []),
+    '',
+  ]
+}
+/** the workspace's open jobs but the waiting one, newest first, with what each already holds */
+function openLines(x: T.Ctx, w: Job, all: Job[]): string[] {
+  const open = all.filter((j) => !T.isClosed(j) && j.id !== w.id).sort((a, b) => b.ts - a.ts).slice(0, OPEN_MAX)
+  return ['# Open jobs (newest first)', ...(open.length ? open.map((j) => {
+    const h = holdsOf(all, j.id).map((r) => `${r.job.id}/${r.step}`), d = j.d ? one(j.d.split('\n')[0], 100) : ''
+    return `- ${j.id}: ${j.t} · ${x.PB[j.pb]?.n ?? j.pb} · ${j.st}${d ? ` · ${d}` : ''}${h.length ? ` · holds ${h.join(', ')}` : ''}`
+  }) : ['none']), '']
+}
+
 /** the prompt: the workspace, now in the home zone, the catalog with what each playbook's jobs need, the note
     index, whether sources can be read, the form, then every say */
-export function buildPrompt(o: { page: WorkspacePage; PB: Record<string, Playbook>; TPL?: Record<string, Tpl[]>; notes: NoteIndex[]; form: BuildForm; say: string[]; now: Date; tz: string; sources: boolean }): string {
+export function buildPrompt(o: { page: WorkspacePage; PB: Record<string, Playbook>; TPL?: Record<string, Tpl[]>; notes: NoteIndex[]; form: BuildForm; say: string[]; now: Date; tz: string; sources: boolean; blocker?: { waiter: Job; all: Job[] } }): string {
   const { page, PB } = o, p = page.pack
   const cat = Object.keys(PB).filter((k) => offered(PB, k, page.id))
   return [
@@ -254,6 +301,7 @@ export function buildPrompt(o: { page: WorkspacePage; PB: Record<string, Playboo
     '# Sources',
     o.sources ? 'source_list lists the work items, chats and mail with their ids; source_get reads one.' : 'This workspace has no sources to read: context can name notes, and ids the user said.',
     '',
+    ...(o.blocker && o.form.bl ? [...blockerLines({ PB, TPL: o.TPL ?? {} }, o.blocker.waiter, o.form.bl), ...openLines({ PB, TPL: o.TPL ?? {} }, o.blocker.waiter, o.blocker.all)] : []),
     '# The form now',
     '```json', JSON.stringify(formOut(o.form, o.tz), null, 2), '```',
     '',
@@ -333,6 +381,8 @@ export interface BuilderOpts {
   /** none = a workspace without a gateway: no source tools */
   source: SourceReader | null
   ctx(): T.Ctx; bus: Bus
+  /** the workspace's jobs, for blocker mode */
+  jobs?: () => Promise<Job[]>
   /** where the session runs; default a folder of its own in the temp dir */
   cwd?: string; timeoutMs?: number; now?: () => Date
 }
@@ -346,7 +396,10 @@ export function builder(o: BuilderOpts): Build {
     if (signal?.aborted) throw new HttpError(499, 'aborted', 'the page dropped the request')
     const { PB, TPL } = o.ctx()
     const notes = await o.notes.list().catch(() => [])
-    const prompt = buildPrompt({ page: o.page, PB, TPL, notes, form: b.form, say: b.say, now: o.now?.() ?? new Date(), tz, sources: !!o.source })
+    const all = b.form.bl && o.jobs ? (await o.jobs()).filter((j) => j.ws === o.ws) : undefined
+    const waiter = b.form.bl ? all?.find((j) => j.id === b.form.bl!.j) : undefined
+    if (b.form.bl && all && !waiter) throw new HttpError(400, 'bad_args', `no job ${b.form.bl.j} in this workspace`)
+    const prompt = buildPrompt({ page: o.page, PB, TPL, notes, form: b.form, say: b.say, now: o.now?.() ?? new Date(), tz, sources: !!o.source, blocker: waiter && all ? { waiter, all } : undefined })
     const tools = buildTools({ ws: o.ws, notes: o.notes, source: o.source, me: o.page.me, key: (id) => o.page.board.key(id) })
     const cwd = o.cwd ?? join(tmpdir(), 'work-console-build')
     mkdirSync(cwd, { recursive: true })
@@ -365,7 +418,7 @@ export function builder(o: BuilderOpts): Build {
       error = (e as Error).message || String(e)
     } finally { clearTimeout(timer); signal?.removeEventListener('abort', stop) }
     // an answer that came in before an abort is still the answer
-    if (out !== undefined) return checkForm(out, { ws: o.ws, form: b.form, PB, prj: o.page.pack.prj, tz, taken })
+    if (out !== undefined) return checkForm(out, { ws: o.ws, form: b.form, PB, prj: o.page.pack.prj, tz, taken, jobs: all })
     if (signal?.aborted) throw new HttpError(499, 'aborted', 'the page dropped the request')
     if (abort.signal.aborted) throw new HttpError(504, 'timeout', `the builder did not answer in ${Math.round(ms / 1000)} s`)
     if (error.startsWith('signin_required')) throw new HttpError(503, 'signin_required', error)

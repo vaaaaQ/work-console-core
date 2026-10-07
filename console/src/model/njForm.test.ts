@@ -130,3 +130,14 @@ test('due: the field shows and takes the home zone’s wall time', () => {
   for (const x of ['', 'nope']) assert.equal(dueWall(x), '')
   for (const x of ['', '2026-10-05', '18:00']) assert.equal(wallDue(x), '')
 })
+
+test('buildForm carries the blocker; mergeBuild keeps a plan edited during the build and takes the link', () => {
+  const bl = { j: 'A-6', step: 'tr', plan: '', link: null }
+  const f0: Nj = { ...start(), bl }
+  const sent = buildForm(f0)
+  assert.deepEqual(sent.bl, bl)
+  const got = { ...sent, bl: { j: 'A-6', step: 'dr', plan: 'from the builder', link: { j: 'A-7', why: 'same' } } }
+  assert.deepEqual(mergeBuild(f0, sent, got, { say: ['x'], pbs: ['action'], prjs: ['ops'] }).bl, got.bl)
+  const edited = { ...f0, bl: { ...bl, plan: 'mine' } }
+  assert.deepEqual(mergeBuild(edited, sent, got, { say: ['x'], pbs: ['action'], prjs: ['ops'] }).bl, { ...bl, plan: 'mine', link: { j: 'A-7', why: 'same' } })
+})

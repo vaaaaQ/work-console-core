@@ -8,13 +8,19 @@ import type { CtxItem, CtxKind, NjDraft, Playbook, Tpl, Ws } from './types.ts'
 /* The New job form as plain data, so the page, the backend's builder and the tests share its rules. The builder
    reads the form as a BuildForm and answers with one; mergeBuild folds the answer into the form as it is by then. */
 
+/** blocker mode: the job and step the new job blocks, what that step does with its outcome, and an open job the
+    builder found that already does it (link instead of create) */
+export interface BlockerForm { j: string; step: string; plan: string; link: { j: string; why: string } | null }
+
 /** the New job form as the builder reads and fills it. pb = a catalog playbook's key, or the key npb is saved
     under; npb = steps the builder wrote, saved before the job is created (once = steps for this job only);
-    due = ISO or empty; why = what the builder could not settle, in words */
+    due = ISO or empty; why = what the builder could not settle, in words;
+    bl = blocker mode */
 export interface BuildForm {
   t: string; key: string; prj: string; pb: string; d: string; ctx: CtxItem[]; due: string
   npb: { once: boolean; file: PbFile } | null
   why: string[]
+  bl?: BlockerForm
 }
 
 /** steps the builder wrote, under the key Create job saves them with */
@@ -22,12 +28,13 @@ export interface NjSteps { key: string; once: boolean; file: PbFile }
 /** the form on the page. pb = the picked playbook: a catalog key, or npb's key while its steps are picked (npb
     stays when a catalog playbook is picked, so the user can switch back); ctx null = what the key and chat
     imply, until the list is changed; say = the says the form was built from; why = the builder's problems;
-    src, chat, chatName, mail, ev = what the job comes from */
+    src, chat, chatName, mail, ev = what the job comes from; bl = blocker mode */
 export interface Nj {
   ws: Ws; t: string; key: string; prj: string; pb: string; d: string; due: string; ctx: CtxItem[] | null
   npb: NjSteps | null
   src?: string; chat?: string; chatName?: string; mail?: string; ev?: string
   say: string[]; why: string[]
+  bl?: BlockerForm
 }
 
 /** pbs = the catalog playbooks the workspace offers, prjs = its projects */
@@ -47,7 +54,7 @@ export const shownCtx = (f: Nj): CtxItem[] => f.ctx ?? ctxDefaults(f.ws, f.key.t
 
 export function buildForm(f: Nj): BuildForm {
   const s = stepsOn(f) ? f.npb! : null
-  return { t: f.t, key: f.key, prj: f.prj, pb: f.pb, d: f.d, ctx: shownCtx(f), due: f.due, npb: s && { once: s.once, file: s.file }, why: [] }
+  return { t: f.t, key: f.key, prj: f.prj, pb: f.pb, d: f.d, ctx: shownCtx(f), due: f.due, npb: s && { once: s.once, file: s.file }, why: [], ...(f.bl ? { bl: f.bl } : {}) }
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
@@ -68,6 +75,8 @@ export function mergeBuild(cur: Nj, sent: BuildForm, got: BuildForm, o: { say: s
     if (got.npb) { f.npb = { key: got.pb, once: got.npb.once, file: got.npb.file }; f.pb = got.pb }
     else if (o.pbs.includes(got.pb)) f.pb = got.pb
   }
+  // the user's step and plan win over the answer's, the link is the builder's alone
+  if (cur.bl && got.bl) f.bl = same(now.bl, sent.bl) ? got.bl : { ...cur.bl, link: got.bl.link }
   return f
 }
 
