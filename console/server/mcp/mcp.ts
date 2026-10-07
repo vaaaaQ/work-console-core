@@ -67,7 +67,7 @@ export function detail(x: T.Ctx, j: Job, ws: string, runs: RunRec[] = [], all: J
           id: s.id, title: s.t, who: s.m, state: f.s, doneWhen: s.x, meta: f.m || undefined,
           notes: f.b.length ? f.b.map((b, i) => ({ i, kind: b.k, text: b.t, open: !!b.o, answer: b.r || undefined })) : undefined,
           draft: f.dr ? clip(f.dr.t) : undefined, output: f.out ? clip(f.out) : undefined, running: f.run ? true : undefined,
-          waitsFor: f.w?.length ? f.w.map((l) => ({ job: l.j, title: all.find((x) => x.id === l.j)?.t ?? l.t, state: l.st, plan: l.plan, outcome: l.out ? clip(l.out) : undefined })) : undefined,
+          waitsFor: f.w?.length ? f.w.map((l) => ({ job: l.j, title: all.find((o) => o.id === l.j)?.t ?? l.t, state: l.st, plan: l.plan, outcome: l.out ? clip(l.out) : undefined })) : undefined,
           blockerAsked: f.bb?.say,
           conversation: talk.some((r) => r.parent) ? talk.map((r) => ({ q: clip(r.q), intent: r.intent, state: r.state, a: r.a ? clip(r.a) : undefined })) : undefined,
           artifacts: f.arts.length ? f.arts.map((a) => a.n + (a.ok ? '' : ' (planned)')) : undefined,
@@ -137,7 +137,7 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
     },
     {
       name: 'get_job', description: 'One job in full: every step with its state, notes, draft, output, artifacts and planned messages, and the replies to its draft once there are any; '
-        + 'waitsFor and holds (the steps of other jobs that wait for this one), past rounds; the last 10 journal entries.',
+        + 'waitsFor (the blockers of a step: job, title, state open|done|cancelled, plan, outcome once closed), blockerAsked (a blocker the user asked for, not yet linked) and holds (the steps of other jobs that wait for this one), past rounds; the last 10 journal entries.',
       inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'job id, e.g. J-0412' } }, required: ['id'] },
       async run(a) { const { sp, j } = await get(a.id); return detail(sp.ctx(), j, sp.id, await sp.runner.all(), await sp.jobs.all()) },
     },
@@ -148,8 +148,8 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
         + 'acceptDraft {step, text?: edited text}; noteAdd {step, k: q question|c contradiction|d design note|p problem, t}; noteAnswer {step, i, r}; noteReopen {step, i}; '
         + 'sent {step, i: planned message index, t: the text you sent, to: channel} (record only, send it yourself first); vote {step, n: reviewer, v}; '
         + 'nudged {to}; replied {subj}; returnTo {step, why}; describe {d: the description, Markdown in English, the user\'s part of every LLM run; empty removes it}. '
-        + 'waitAdd {step, j: an open job of the same workspace the step waits for, plan?: what the step does with its outcome}; waitDel {step, j}; blockerDrop {step}; '
-        + 'stepDone and acceptDraft take force: true to finish a step whose blockers are still open (they are removed). '
+        + 'waitAdd {step, j: an open job of the same workspace the step waits for, plan?: what the step does with its outcome; another workspace, a closed job or a cycle is refused bad_args}; waitDel {step, j}; blockerDrop {step}; '
+        + 'stepDone and acceptDraft take force: true to finish a step whose blockers are still open (the open links are dropped). '
         + 'A step is its id or exact title.',
       inputSchema: {
         type: 'object', required: ['id', 'op'],
