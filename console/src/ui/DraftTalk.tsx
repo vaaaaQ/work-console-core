@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { failText } from '../actions/flow.tsx'
+import { newBlocker } from '../actions/newjob.tsx'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
 import { thread } from '../model/thread.ts'
@@ -40,7 +41,9 @@ export function DraftTalk({ job, step, last }: { job: Job; step: string; last?: 
       {all.some((r) => r.session)
         ? !f.run && <div className="talk-box">
             <VoiceField value={t} onChange={setT} target="llm" ctx={f.dr.t} intent={intent} onIntent={setIntent} rows={3} placeholder="Reply to the draft: what to change, or a question" />
-            <div className="row"><button type="button" className="btn sm pri" disabled={!t.trim() || sending} onClick={() => void send()}><Ic n="send" sm />{SEND_L[intent]}</button></div>
+            <div className="row"><button type="button" className="btn sm pri" disabled={!t.trim() || sending} onClick={() => void send()}><Ic n="send" sm />{SEND_L[intent]}</button>
+              <button type="button" className="btn sm" disabled={sending} title="Make or link a job this step waits for"
+                onClick={() => { const say = t.trim(); setT(''); newBlocker({ job: job.id, step, ...(say ? { say } : {}) }) }}><Ic n="hourglass" sm />Blocker</button></div>
           </div>
         : <div className="hint">This draft has no LLM session to continue; Reject with a reason starts a new one.</div>}
     </div>

@@ -6,10 +6,12 @@ import { hm, initials, tfmt } from '../lib/util.ts'
 import { S, TPL, byId, chName, isClosed, isLive, phaseOf, rvState, stepOf } from '../model/world.ts'
 import { actOf } from '../model/home.ts'
 import type { Flow, Job, Step } from '../model/types.ts'
-import { closeDrawer } from '../actions/nav.tsx'
+import { waitsFor } from '../actions/blockers.tsx'
+import { closeDrawer, go } from '../actions/nav.tsx'
+import { newBlocker } from '../actions/newjob.tsx'
 import { isWide, toggleWide } from '../actions/wide.ts'
 import {
-  acceptDraft, askLlm, bAdd, bAnswer, bReopen, editDraft, llmCancel, nudge, rejectDraft, rvOpen, rvVote, stepDoneHere, stepReopen,
+  acceptDraft, askLlm, doCmd, bAdd, bAnswer, bReopen, editDraft, llmCancel, nudge, rejectDraft, rvOpen, rvVote, stepDoneHere, stepReopen,
   stepResume, stepSkip, stepWait, tplSend,
 } from '../actions/flow.tsx'
 import { LIVE } from '../live/api.ts'
@@ -98,6 +100,29 @@ function BadgeSec({ j, f }: P) {
   )
 }
 
+const LAMP = { open: 'wait', done: 'ok', cancelled: 'bad' } as const
+function WaitsSec({ j, s, f }: P) {
+  const w = f.w ?? [], can = !isClosed(j) && isLive(f) && !f.run
+  if (!w.length && !f.bb && !can) return null
+  return (
+    <section className="sec"><div className="row"><div className="eyebrow">Waits for</div><span className="fsp" />
+      {can ? <button className="btn sm ghost" onClick={() => waitsFor(j, s.id)}><Ic n="hourglass" sm />Waits for…</button> : null}</div>
+      {f.bb ? <div className="bb"><p><Ic n="bot" sm /> Asked for a blocker: {f.bb.say}</p>
+        <div className="row"><button className="btn sm pri" onClick={() => newBlocker({ job: j.id, step: s.id, say: f.bb!.say })}>Open builder</button>
+          <button className="btn sm ghost" onClick={() => void doCmd(j.id, { op: 'blockerDrop', step: s.id }, 'Dismissed')}>Dismiss</button></div></div> : null}
+      {w.length ? <div className="bl">{w.map((l) => (
+        <div key={l.j} className="bi"><span className={'lamp ' + LAMP[l.st]} />
+          <div><div className="why">{l.st}{l.plan ? ` · plan: ${l.plan}` : ''}</div>
+            <p><a href={`#job=${l.j}`} onClick={(e) => { e.preventDefault(); go('job', l.j) }}>{l.j}</a> {byId(l.j)?.t ?? l.t}</p>
+            {l.out ? <p className="res-t">{l.out}</p> : null}</div>
+          {!isClosed(j) ? <div className="acts"><button className="iconbtn" aria-label={`Stop waiting for ${l.j}`}
+            onClick={() => void doCmd(j.id, { op: 'waitDel', step: s.id, j: l.j }, `No longer waits for ${l.j}`)}><Ic n="x" sm /></button></div> : null}
+        </div>))}</div>
+        : f.bb ? null : <p className="hint" style={{ margin: 0 }}>Nothing; it goes on when you say so.</p>}
+    </section>
+  )
+}
+
 /** a step the console does itself: its button, and why it cannot yet. actOf knows the core's acts and the workspaces';
     an act nobody knows shows no button */
 function ConsoleSec({ j, s, f }: P) {
@@ -143,7 +168,7 @@ function DrawerBody({ j, sid }: { j: Job; sid: string }) {
     <div className="dr-b">
       <dl className="kv"><dt>Who does it</dt><dd><Ic n={MODES[s.m].i} sm /> {MODES[s.m].l}<div className="why">{EXEC[s.m]}</div></dd>
         <dt>Done when</dt><dd>{s.x}</dd>{s.a ? <><dt>Produces</dt><dd>{s.a.join(', ')}</dd></> : null}{f.m ? <><dt>Note</dt><dd>{f.m}</dd></> : null}</dl>
-      <ConsoleSec {...p} /><LlmSec {...p} />{s.rv ? <ReviewSec {...p} /> : null}<TplSec {...p} /><BadgeSec {...p} />
+      <ConsoleSec {...p} /><LlmSec {...p} /><WaitsSec {...p} />{s.rv ? <ReviewSec {...p} /> : null}<TplSec {...p} /><BadgeSec {...p} />
     </div>
     <div className="dr-f"><StepActs {...p} /></div>
   </>

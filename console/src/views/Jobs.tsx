@@ -1,7 +1,8 @@
 import * as React from 'react'
 import { GROUPS } from '../data/ui.ts'
 import { ago } from '../lib/util.ts'
-import { PB, S, W, isClosed, needsYou, wsJobs } from '../model/world.ts'
+import { holdsOf, openOf } from '../model/blockers.ts'
+import { JOBS, PB, S, W, isClosed, isLive, needsYou, wsJobs } from '../model/world.ts'
 import type { Job } from '../model/types.ts'
 import { commit } from '../store.ts'
 import { LIVE, missingParts } from '../live/api.ts'
@@ -16,7 +17,7 @@ function inGroup(j: Job, g: string) {
   if (isClosed(j)) return false
   const n = needsYou(j)
   return g === 'needs' ? !!n : g === 'waiting' ? (j.st === 'waiting-external' || j.st === 'review') && !n : g === 'progress' ? j.st === 'active' && !n
-    : g === 'drafts' ? j.st === 'draft' : g === 'recurring' ? j.st === 'recurring' : false
+    : g === 'drafts' ? j.st === 'draft' : g === 'recurring' ? j.st === 'recurring' : g === 'blockers' ? holdsOf(JOBS, j.id).length > 0 : false
 }
 /** what needs you first, closed jobs last, newest first within each */
 const rank = (j: Job) => isClosed(j) ? 3 : needsYou(j) ? 0 : j.st === 'draft' ? 2 : 1
@@ -26,7 +27,10 @@ function Row({ j }: { j: Job }) {
   return (
     <tr className={cls || undefined} onClick={() => go('job', j.id)}>
       <td><button className="lnk key">{j.key}</button></td>
-      <td><div className="topic"><span className="t">{j.t}</span><span className="sub"><span className="tag">{j.prj}</span>{PB[j.pb].n} · {j.id}</span></div></td>
+      <td><div className="topic"><span className="t">{j.t}</span><span className="sub"><span className="tag">{j.prj}</span>{PB[j.pb].n} · {j.id}{(() => {
+          const h = holdsOf(JOBS, j.id).length, w = [...new Set(Object.values(j.flow).filter(isLive).flatMap((f) => openOf(f).map((l) => l.j)))]
+          return h ? ` · holds ${h}` : w.length ? ` · waits for ${w.join(', ')}` : null
+        })()}</span></div></td>
       <td><Pill st={j.st} /></td><td><Chips j={j} /></td><td><NextCell j={j} /></td><td className="why num">{ago(j.ts)}</td>
     </tr>
   )

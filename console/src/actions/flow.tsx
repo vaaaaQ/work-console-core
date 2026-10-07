@@ -9,6 +9,7 @@ import {
   S, TPL, allSent, applyLocal, byId, chName, clearNew, ctxRows, isLive, keyShort, llmText, plainT, postToChat, putJob,
   restore, rvState, snap, stepOf, steps,
 } from '../model/world.ts'
+import { openOf } from '../model/blockers.ts'
 import { askText } from '../model/transitions.ts'
 import type { BadgeKind, Cmd, Job, JobStatus, RunRec } from '../model/types.ts'
 import { commit } from '../store.ts'
@@ -17,6 +18,7 @@ import { CancelBtn } from '../ui/bits.tsx'
 import { closeModal, modal } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
 import { VoiceField } from '../ui/VoiceField.tsx'
+import { confirmForce } from './blockers.tsx'
 import { go } from './nav.tsx'
 
 /* Step and job actions. Every change to a job is a command (model/transitions.ts): the demo applies it
@@ -94,9 +96,10 @@ export async function sendVia(k: string, target: string, text: string, jobId?: s
 export function selStep(sid: string) { commit(() => { S.sel = sid; S.focusB = null }) }
 export function selBadge(sid: string, i: number) { commit(() => { S.sel = sid; S.focusB = i }) }
 
-export async function stepDone(j: Job, sid: string) {
+export async function stepDone(j: Job, sid: string, force = false) {
+  if (!force && openOf(j.flow[sid]).length) { confirmForce(j, sid, () => void stepDone(j, sid, true)); return }
   const s = stepOf(j, sid)!, id = j.id
-  const r = await doCmd(id, { op: 'stepDone', step: sid }, null, { moveSel: true })
+  const r = await doCmd(id, { op: 'stepDone', step: sid, ...(force ? { force } : {}) }, null, { moveSel: true })
   if (!r) return
   if (!r.nx && r.job.st !== 'recurring') toast('All steps are done.', 'Close as done', () => { void closeJob(id, 'done', '') })
   else toast(`Done · ${s.t}`, 'Undo', r.undo)
@@ -186,10 +189,11 @@ export async function llmResume(runId: string) {
   try { const { run } = await api.resumeRun(runId); commit(() => { LIVE.runs[run.id] = run }) } catch (e) { toast(failText(e)) }
 }
 
-export function acceptDraft(id: string, sid: string, text?: string) {
+export function acceptDraft(id: string, sid: string, text?: string, force = false) {
   const j = byId(id), f = j?.flow[sid]
   if (!j || !f || !f.dr) return
-  void doCmd(id, { op: 'acceptDraft', step: sid, ...(text != null ? { text } : {}) }, `Accepted · ${stepOf(j, sid)!.t}`, { moveSel: true })
+  if (!force && openOf(f).length) { confirmForce(j, sid, () => acceptDraft(id, sid, text, true)); return }
+  void doCmd(id, { op: 'acceptDraft', step: sid, ...(text != null ? { text } : {}), ...(force ? { force } : {}) }, `Accepted · ${stepOf(j, sid)!.t}`, { moveSel: true })
 }
 
 /** with a reason, live, the LLM redoes the step in a new session */

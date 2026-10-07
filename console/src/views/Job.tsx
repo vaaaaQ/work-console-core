@@ -2,7 +2,8 @@ import * as React from 'react'
 import { BK, MODES, NODE } from '../data/core.ts'
 import { G } from '../data/ui.ts'
 import { ago, artIc, tfmt } from '../lib/util.ts'
-import { PB, S, byId, isClosed, phState, steps } from '../model/world.ts'
+import { openOf, holdsOf } from '../model/blockers.ts'
+import { JOBS, PB, S, byId, isClosed, phState, steps } from '../model/world.ts'
 import type { Job, JournalEntry, NodeState, Step } from '../model/types.ts'
 import { LIVE } from '../live/api.ts'
 import { go } from '../actions/nav.tsx'
@@ -32,7 +33,7 @@ function Node({ j, s, prior }: { j: Job; s: Step; prior: boolean }) {
     <div ref={ref} className={`node n-${st}${S.sel === s.id ? ' on' : ''}${f.nw ? ' new' : ''}${prior ? ' prior' : ''}`}>
       <button className="hit" id={'h-' + s.id} aria-label={`${s.t}: ${NODE[st][1]}`} onClick={() => selStep(s.id)} />
       <span className="g">{g ? <Ic n={g} /> : null}</span><span className="n-t">{s.t}</span>
-      <span className="n-m"><Ic n={MODES[s.m].i} sm />{f.m || MODES[s.m].l}{s.msg ? <> <span className="msgs"><Ic n="message" sm />{s.msg}</span></> : null}</span>
+      <span className="n-m"><Ic n={MODES[s.m].i} sm />{openOf(f).length ? `⏳ ${openOf(f).map((l) => l.j).join(' ')}` : f.m || MODES[s.m].l}{s.msg ? <> <span className="msgs"><Ic n="message" sm />{s.msg}</span></> : null}</span>
       {f.run ? <span key="run" className="n-tag run"><span className="spin" />LLM working</span>
         : f.dr ? <span key="dr" className={'n-tag' + (f.dr.nw ? ' new' : '')}><Ic n="bot" sm />LLM draft to review</span> : null}
       {f.arts.length ? <div className="arts">{f.arts.map((a, i) => <span key={i} className={`art${a.ok ? '' : ' gh'}${a.nw ? ' new' : ''}`}><Ic n={artIc(a.n)} sm />{a.n}</span>)}</div> : null}
@@ -69,11 +70,12 @@ const Je = ({ e }: { e: JournalEntry }) => (
 export function JobView() {
   const j = S.job ? byId(S.job) : undefined
   if (!j) return <div className="empty">Job not found. <button className="lnk" onClick={() => go('jobs')}>Back to jobs</button></div>
+  const holds = holdsOf(JOBS, j.id)
   const pb = PB[j.pb], arts = steps(j.pb).flatMap((s) => j.flow[s.id].arts.map((a) => ({ ...a, s })))
   return <>
     <div className="jh"><button className="back" onClick={() => go('jobs')}><Ic n="arrow-left" sm />Jobs</button>
       <div className="jh-row"><span className="key">{j.key}</span><h1>{j.t}</h1><Pill st={j.st} /><span className="fsp" /><JobActs j={j} /></div>
-      <div className="meta"><span>Playbook <b>{pb.n}</b>{pb.ws ? '' : ' · core'}</span><span>Project <b>{j.prj}</b></span><span>Updated <b>{ago(j.ts)}</b></span><span className="mono">{j.id} · {j.slug}</span></div></div>
+      <div className="meta"><span>Playbook <b>{pb.n}</b>{pb.ws ? '' : ' · core'}</span><span>Project <b>{j.prj}</b></span><span>Updated <b>{ago(j.ts)}</b></span>{holds.length ? <span>Holds {holds.map((h, i) => <React.Fragment key={h.job.id + h.step}>{i ? ', ' : ''}<a href={`#job=${h.job.id}`} onClick={(e) => { e.preventDefault(); go('job', h.job.id) }}><b>{h.job.id}</b> · {h.job.t}</a></React.Fragment>)}</span> : null}<span className="mono">{j.id} · {j.slug}</span></div></div>
     <TrackerPanels j={j} />
     <div className="toolbar"><div className="legend">{LEGEND.map((k) => <span key={k}><i className={'chip s-' + k} />{NODE[k][1]}</span>)}</div><span className="fsp" />
       {j.rounds?.length ? <span className="rd-cur">Round {j.rounds.length + 1}</span> : null}<span className="hint">Click a step to work on it</span></div>
