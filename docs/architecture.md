@@ -341,6 +341,10 @@ only one workspace is registered.
 - `draft_reply {id, step, text, intent, wait?}` replies to a draft as the page does. With `wait` (at
   most 50 s) it returns the answer or the new draft; without it, the run id.
 - `job_command rejectDraft` takes `why` as the page does. A reply or redo it starts is signed Claude Code.
+- `job_command waitAdd {step, j, plan?}` makes a step wait for another open job of the workspace, `waitDel {step, j}`
+  removes the link and `blockerDrop {step}` dismisses a blocker a reply asked for. `stepDone` and `acceptDraft` take
+  `force: true` to finish a step whose blockers are still open. `get_job` shows each step's `waitsFor` and, on the
+  blocker, `holds`, the steps of other jobs that wait for it; `holds` is read from every job of the workspace.
 
 ## Notifications
 
