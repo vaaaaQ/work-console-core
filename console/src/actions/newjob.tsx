@@ -7,11 +7,11 @@ import { LIVE } from '../live/api.ts'
 import { buildFeed } from '../live/boot.ts'
 import { KINDS, ctxLabel } from '../model/context.ts'
 import { buildForm, ctxAdd, ctxDel, ctxSet, dueWall, mergeBuild, njJob, njOnce, njPlaybook, njStart, njSteps, shownCtx, stepsOn, wallDue } from '../model/njForm.ts'
-import type { Nj } from '../model/njForm.ts'
+import type { BlockerForm, Nj } from '../model/njForm.ts'
 import { freeKey } from '../model/pbFormat.ts'
 import type { PbFile } from '../model/pbFormat.ts'
 import * as T from '../model/transitions.ts'
-import { CHATS, CTX, MAIL, PB, S, TPL, createJob, pbs, putJob, steps } from '../model/world.ts'
+import { CHATS, CTX, MAIL, byId, PB, S, TPL, createJob, pbs, putJob, steps } from '../model/world.ts'
 import type { CtxItem, CtxKind, Job, Mail, NjDraft } from '../model/types.ts'
 import { commit, useWorld } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
@@ -20,6 +20,7 @@ import { closeModal, modal, modalForm } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
 import { canRecord, micError, Recorder } from '../ui/voice.ts'
 import { VoiceField } from '../ui/VoiceField.tsx'
+import { doCmd } from './flow.tsx'
 import { go, setHash } from './nav.tsx'
 import { pbAdd } from './playbooks.tsx'
 
@@ -68,6 +69,16 @@ export function newJob(pre: NjDraft = {}) {
   B = BAR0; saved = null
   open()
 }
+/** New job in blocker mode: what it builds blocks job's step; say, when given, is built at once */
+export function newBlocker(o: { job: string; step: string; say?: string }) {
+  const w = byId(o.job)
+  if (!w) return
+  stopAll()
+  F = { ...njStart(w.ws, {}, pbs(w.ws), PACKS[w.ws].prj, PB), prj: w.prj, bl: { j: w.id, step: o.step, plan: '', link: null } }
+  B = BAR0; saved = null
+  open()
+  if (o.say?.trim()) void say(o.say.trim())
+}
 /** back to the form a dialog opened over it: with the playbook it added picked, or with the steps as edited */
 export function reopenNewJob(o: { pb?: string; steps?: PbFile } = {}) {
   if (!F) { newJob(); return }
@@ -84,7 +95,7 @@ export function stashNewJob() {
 
 function open() {
   modal({
-    title: 'New job', cls: 'wide', form: 'newjob',
+    title: F?.bl ? 'New blocker' : 'New job', cls: 'wide', form: 'newjob',
     body: <NewJobBody />,
     foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="plus" sm />Create job</button></>,
     onSubmit: () => { void create() },
@@ -159,12 +170,25 @@ function send() {
 }
 
 /* ===== creating it ===== */
+/** the waiting step waits for id; a failed link leaves the new job and says so */
+async function linkBlocker(bl: BlockerForm, id: string, msg: string | null): Promise<boolean> {
+  const plan = bl.plan.trim()
+  const r = await doCmd(bl.j, { op: 'waitAdd', step: bl.step, j: id, ...(plan ? { plan } : {}) }, msg)
+  return !!r
+}
+async function linkExisting() {
+  const bl = F?.bl
+  if (!bl?.link || creating) return
+  if (await linkBlocker(bl, bl.link.j, `${bl.j} waits for ${bl.link.j}`)) { F = null; saved = null; closeModal() }
+}
+
 async function create() {
   if (!F || creating) return
   if (!F.t.trim()) { setB({ tried: true }); document.querySelector<HTMLInputElement>('#scrim [name=t]')?.focus(); return }
   creating = true
   try {
     let f = F
+    const bl = f.bl
     if (stepsOn(f)) {
       const s = f.npb!
       // another playbook took the key since the steps got it
@@ -190,9 +214,10 @@ async function create() {
     F = null; saved = null
     closeModal()
     // from a meeting the calendar stays, so its new chip shows
-    const j = commit(() => { const j = made ?? createJob(o); if (made) putJob(made); if (!o.ev) { S.view = 'jobs'; S.f = 'all' } S.flash = j.id; return j })
+    const j = commit(() => { const j = made ?? createJob(o); if (made) putJob(made); if (!o.ev && !bl) { S.view = 'jobs'; S.f = 'all' } S.flash = j.id; return j })
     setHash()
-    toast(<>Created <b>{j.id}</b> · {o.t}</>, 'Open', () => go('job', j.id))
+    if (bl && !(await linkBlocker(bl, j.id, null))) toast(<>Created <b>{j.id}</b>, but {bl.j} does not wait for it yet; link it from the step's Waits for…</>)
+    else toast(<>Created <b>{j.id}</b> · {o.t}{bl ? <> · {bl.j} waits for it</> : null}</>, 'Open', () => go('job', j.id))
   } finally { creating = false }
 }
 
@@ -327,6 +352,24 @@ function CtxList({ f }: { f: Nj }) {
   </div>
 }
 
+const stepsOf = (j: Job | undefined) => (j ? T.steps(CTX, j.pb) : [])
+
+function BlockerBox({ bl }: { bl: BlockerForm }) {
+  const put2 = (p: Partial<BlockerForm>) => { if (F) put({ ...F, bl: { ...bl, ...p } }) }
+  return <div className="nj-bl">
+    <div className="row"><b>Blocks</b><span className="mono">{bl.j}</span><span>· {byId(bl.j)?.t}</span><span className="fsp" />
+      <select className="sel" aria-label="Step it blocks" value={bl.step} onChange={(e) => put2({ step: e.currentTarget.value })}>
+        {stepsOf(byId(bl.j)).map((s) => <option key={s.id} value={s.id}>{s.t}</option>)}
+      </select></div>
+    <label className="field"><span>Plan</span>
+      <textarea className="inp" name="plan" rows={2} value={bl.plan} placeholder="What the step does with the outcome"
+        onChange={(e) => put2({ plan: e.currentTarget.value })} /></label>
+    {bl.link ? <div className="nj-link"><span>Same as <b>{bl.link.j}</b> · {byId(bl.link.j)?.t}</span>
+      {bl.link.why ? <div className="why">{bl.link.why}</div> : null}
+      <button type="button" className="btn sm pri" onClick={() => void linkExisting()}><Ic n="check" sm />Link</button></div> : null}
+  </div>
+}
+
 function NewJobBody() {
   useWorld(); useNj()
   // closed, not covered by a dialog that comes back: nothing keeps running
@@ -337,6 +380,7 @@ function NewJobBody() {
   const set = (p: Partial<Nj>) => { if (F) put({ ...F, ...p }) }
   return <>
     {LIVE.on ? <VoiceBar f={f} /> : null}
+    {f.bl ? <BlockerBox bl={f.bl} /> : null}
     <label className="field"><span>Title</span><input className="inp" name="t" value={f.t} onChange={(e) => set({ t: e.currentTarget.value })}
       placeholder="What needs doing" aria-invalid={B.tried && !f.t.trim() ? true : undefined} data-autofocus /></label>
     <div className="f2"><label className="field"><span>Key</span><input className="inp" value={f.key} onChange={(e) => set({ key: e.currentTarget.value })} placeholder={w.keyPh} /></label>

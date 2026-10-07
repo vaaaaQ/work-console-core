@@ -284,6 +284,9 @@ p.cx-t{font-family:var(--font)}
 .nj-st{margin:0;display:flex;align-items:center;gap:7px;min-height:18px;font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
 .nj-err{color:var(--bad)}
 .nj-why{margin:0;padding-left:18px;font-size:12.5px;color:var(--wait)}
+.nj-bl{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r)}
+.nj-bl .row{align-items:center;gap:8px}
+.nj-link{display:grid;gap:6px;justify-items:start;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r);background:var(--sunken)}
 .nj-said{margin:6px 0 0;padding-left:18px}
 /* a long field that also takes speech */
 .vf{display:grid;gap:6px}
