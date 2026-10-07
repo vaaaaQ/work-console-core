@@ -13,7 +13,7 @@ import type { Store } from '../store/port.ts'
 export type Who = 'page' | 'runner' | 'session' | 'console' | 'run'
 /** a saved command: who sent it, the job before it and the job as saved */
 export type CmdEv = { who: Who; cmd: Cmd; prev: Job; job: Job }
-const ALLOWED: Partial<Record<Who, Set<string>>> = { page: new Set(PAGE_OPS), session: new Set(SESSION_OPS), console: new Set(['noteAdd', 'reopen', 'stepDone', 'artifact', 'journal']), run: new Set(['start']) }
+const ALLOWED: Partial<Record<Who, Set<string>>> = { page: new Set(PAGE_OPS), session: new Set(SESSION_OPS), console: new Set(['noteAdd', 'reopen', 'stepDone', 'artifact', 'journal', 'blockerClosed']), run: new Set(['start']) }
 const BY: Partial<Record<Who, string>> = { session: 'Claude Code', console: 'console', run: 'LLM' }
 
 export class Jobs {
@@ -58,20 +58,31 @@ export class Jobs {
       const cur = await this.store.job(id)
       if (!cur) throw new HttpError(404, 'not_found', `no job ${id}`)
       if (who !== 'runner' && expectV != null && cur.v !== expectV) throw new HttpError(409, 'conflict', 'the job changed elsewhere')
+      // a link checks its blocker and walks the links for a cycle, so it reads the other jobs as they are now
+      const others = c.op === 'waitAdd' ? new Map((await this.store.jobs()).map((j) => [j.id, j])) : null
       let r: { job: Job; nx: string | null }
-      try { r = T.apply({ ...this.ctx(), by: BY[as ?? who] }, cur, c) } catch (e) {
+      try { r = T.apply({ ...this.ctx(), by: BY[as ?? who], ...(others ? { jobOf: (i: string) => others.get(i) } : {}) }, cur, c) } catch (e) {
         if (e instanceof T.CmdError) throw new HttpError(400, e.code, e.message)
         throw e
       }
       try {
         const job = await this.put(cur, r.job, cur.v ?? null)
         for (const f of this.cmdf) { try { f({ who, cmd: c, prev: cur, job }) } catch (e) { console.error(`a listener of ${c.op} on ${id} failed:`, (e as Error).message) } }
+        if (c.op === 'waitAdd' || c.op === 'waitDel') await this.mirror(c, job)
         return { job, prev: cur, nx: r.nx }
       } catch (e) {
         if ((who === 'runner' || who === 'console') && e instanceof HttpError && e.status === 409 && n < 5) continue
         throw e
       }
     }
+  }
+
+  /** the blocker's journal says which step waits for it; best-effort, the link stands either way */
+  private async mirror(c: Extract<Cmd, { op: 'waitAdd' | 'waitDel' }>, w: Job) {
+    const s = T.stepOf(this.ctx(), w, c.step)?.t ?? c.step, add = c.op === 'waitAdd'
+    const o = add ? `Holds ${w.id} “${w.t}”: step “${s}” waits for this job.` : `No longer holds ${w.id} “${w.t}” (step “${s}”).`
+    try { await this.cmd(c.j, { op: 'journal', o, c: add ? 'that step goes on when this job closes.' : 'nothing there waits for this job now.', n: '-', a: 'console' }, undefined, 'console') }
+    catch (e) { console.error(`journaling ${c.op} on ${c.j} failed:`, (e as Error).message) }
   }
 
   async create(o: T.NewJob, who: Who = 'page'): Promise<Job> {
