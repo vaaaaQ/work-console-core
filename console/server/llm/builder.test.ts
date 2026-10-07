@@ -13,7 +13,7 @@ import { Bus, HttpError } from '../events.ts'
 import type { Ev } from '../events.ts'
 import { notesStore } from '../knowledge/notes.ts'
 import { acme, demoCtx } from '../testkit.ts'
-import { FORM_SCHEMA, SYSTEM, buildIn, buildPrompt, buildTools, builder, checkForm, dueAt, formIn, formOut, nowLine, toolLine } from './builder.ts'
+import { FORM_SCHEMA, OPEN_MAX, SYSTEM, buildIn, buildPrompt, buildTools, builder, checkForm, dueAt, formIn, formOut, nowLine, toolLine } from './builder.ts'
 import type { BuildForm, BuilderOpts, SourceReader } from './builder.ts'
 import type { AskEvent, AskTool, Sdk } from './sdk.ts'
 
@@ -452,4 +452,48 @@ test('the schema and formOut carry the blocker', () => {
   assert.deepEqual(formOut(empty({ bl: { ...BL, plan: 'p', link: { j: 'A-7', why: 'w' } } }), HOME).blocker, { step: S0, plan: 'p', link: { job: 'A-7', why: 'w' } })
   assert.equal('blocker' in formOut(empty(), HOME), false)
   assert.match(SYSTEM, /blocker:/)
+})
+
+/* ===== blocker mode, a whole build ===== */
+const BLANS = (link?: { job: string; why: string }, step = S1) => ({ ...ANS, blocker: { step, plan: 'p', ...(link ? { link } : {}) } })
+const BB = { id: 'b2', say: ['wait for Imre'], form: empty({ bl: BL }) }
+
+test('a blocker build lists only the workspace\'s jobs: a link to another workspace\'s job is refused', async () => {
+  const { calls, sdk } = askSdk(async function* () { yield { k: 'result', ok: true, out: BLANS({ job: 'A-7', why: 'w' }) } })
+  const foreign = { ...job('A-7', 'Ask Imre'), ws: 'other' }
+  const f = await setup(sdk, { jobs: async () => [W, foreign] }).build(BB, { tz: HOME })
+  assert.match(calls[0].prompt, /# Blocker/)
+  assert.doesNotMatch(calls[0].prompt, /A-7/)
+  assert.equal(f.bl!.link, null); assert.ok(f.why.some((w) => w.includes('A-7')))
+})
+
+test('a blocker build for a job that is not in the workspace is refused before the session starts', async () => {
+  const { calls, sdk } = askSdk(async function* () { yield { k: 'result', ok: true, out: BLANS() } })
+  await assert.rejects(setup(sdk, { jobs: async () => [] }).build(BB, { tz: HOME }), refused(400, 'bad_args'))
+  assert.equal(calls.length, 0)
+})
+
+test('a blocker build keeps a link to an open job of the workspace', async () => {
+  const { sdk } = askSdk(async function* () { yield { k: 'result', ok: true, out: BLANS({ job: 'A-7', why: 'asks Imre already' }) } })
+  const f = await setup(sdk, { jobs: async () => [W, job('A-7', 'Ask Imre')] }).build(BB, { tz: HOME })
+  assert.deepEqual(f.bl, { j: 'A-6', step: S1, plan: 'p', link: { j: 'A-7', why: 'asks Imre already' } })
+})
+
+test("a blocker build for a job on its own steps shows them and accepts one of them", async () => {
+  const once = T.freshJob(BX, 'A-6', { t: 'Fix login', key: 'NEW', pb: 'once-fix-login', prj: 'ops', ws: 'acme' })
+  const { calls, sdk } = askSdk(async function* () { yield { k: 'result', ok: true, out: BLANS(undefined, 'f1') } })
+  const f = await setup(sdk, { jobs: async () => [once] }).build({ ...BB, form: empty({ bl: { ...BL, step: 'f1' } }) }, { tz: HOME })
+  assert.match(calls[0].prompt, /Steps of A-6: f1 “Fix it”/)
+  assert.deepEqual(f.bl, { j: 'A-6', step: 'f1', plan: 'p', link: null })
+  assert.equal(f.why.length, 0)
+})
+
+test('the open jobs come newest first and at most OPEN_MAX', () => {
+  const many = Array.from({ length: OPEN_MAX + 1 }, (_, i) => { const j = job(`X-${i}`, `Job ${i}`); j.ts = 1000 + i; return j })
+  const old = job('X-old', 'Old'); old.ts = 1
+  const p = buildPrompt({ page: acme, PB, notes: [], form: empty({ bl: BL }), say: ['x'], now: NOW, tz: HOME, sources: false, blocker: { waiter: W, all: [W, old, ...many] } })
+  const ids = [...p.matchAll(/^- (X-[\w]+):/gm)].map((m) => m[1])
+  assert.equal(ids.length, OPEN_MAX)
+  assert.equal(ids[0], `X-${OPEN_MAX}`); assert.equal(ids[OPEN_MAX - 1], 'X-1')
+  assert.ok(!ids.includes('X-0') && !ids.includes('X-old'))
 })
