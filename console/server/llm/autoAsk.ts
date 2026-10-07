@@ -9,9 +9,10 @@ import type { Runner } from './runner.ts'
 /** the changes that move a job forward onto its next step */
 const MOVES = new Set<Cmd['op']>(['start', 'stepDone', 'stepSkip', 'acceptDraft'])
 
-/** the steps this command made current: a forward move onto a step not reached yet, or a return */
+/** the steps this command made current: a forward move onto a step not reached yet, a return, or a blocker closing */
 export function madeCurrent(cmd: Cmd, prev: Job, job: Job): string[] {
   if (cmd.op === 'returnTo') return job.flow[cmd.step]?.s === 'cur' ? [cmd.step] : []
+  if (cmd.op === 'blockerClosed') return prev.flow[cmd.step]?.s !== 'cur' && job.flow[cmd.step]?.s === 'cur' ? [cmd.step] : []
   if (!MOVES.has(cmd.op)) return []
   return Object.keys(job.flow).filter((sid) => job.flow[sid].s === 'cur' && (prev.flow[sid]?.s === 'fut' || prev.flow[sid]?.s === 'tpl'))
 }

@@ -4,7 +4,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as T from '../../src/model/transitions.ts'
-import type { Cmd } from '../../src/model/types.ts'
+import type { Cmd, Job } from '../../src/model/types.ts'
 import { Bus } from '../events.ts'
 import { Jobs } from '../jobs/jobs.ts'
 import { fileStore } from '../store/file.ts'
@@ -126,4 +126,29 @@ test('an ask by hand during the wait, or closing the job, means no run of its ow
   await tick(250)
   assert.deepEqual((await s.runner.all()).map((r) => [r.job, r.q]), [[a.id, 'mine']])
   s.off()
+})
+
+test('madeCurrent counts a blockerClosed that turned the step current', () => {
+  const at = (s: string) => ({ flow: { tr: { s } } }) as unknown as Job
+  const c: Cmd = { op: 'blockerClosed', step: 'tr', j: 'J-2', st: 'done' }
+  assert.deepEqual(madeCurrent(c, at('wait'), at('cur')), ['tr'])
+  assert.deepEqual(madeCurrent(c, at('wait'), at('wait')), [])
+  assert.deepEqual(madeCurrent(c, at('cur'), at('cur')), [])
+})
+
+test('a woken llm step is asked; a woken you step is not', async () => {
+  const store = fileStore(join(mkdtempSync(join(tmpdir(), 'wc-aab-')), 's.json'), demoSeed)
+  const jobs = new Jobs({ store, bus: new Bus(), ctx: demoCtx, gate: () => true }), asked: string[] = []
+  const off = autoAsk({ jobs, runner: { ask: async (_id: string, sid: string) => { asked.push(sid) } } as unknown as Runner, ctx: demoCtx, delay: 0 })
+  const mk = async (t: string) => { const j = await jobs.create({ t, key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' }); return (await jobs.cmd(j.id, { op: 'start' }, j.v)).job }
+  const a = await mk('waits on tr'), c = await mk('waits on sn'), b = await mk('blocker')
+  await jobs.cmd(a.id, { op: 'waitAdd', step: 'tr', j: b.id })
+  await jobs.cmd(c.id, { op: 'waitAdd', step: 'sn', j: b.id })
+  await jobs.cmd(c.id, { op: 'stepDone', step: 'tr' }); await jobs.cmd(c.id, { op: 'stepDone', step: 'dr' })
+  asked.length = 0
+  await jobs.cmd(a.id, { op: 'blockerClosed', step: 'tr', j: b.id, st: 'done' }, undefined, 'console')
+  await jobs.cmd(c.id, { op: 'blockerClosed', step: 'sn', j: b.id, st: 'done' }, undefined, 'console')
+  await new Promise((r) => setTimeout(r, 30))
+  off()
+  assert.deepEqual(asked, ['tr'])
 })
