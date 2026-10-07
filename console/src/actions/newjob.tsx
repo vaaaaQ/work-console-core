@@ -11,7 +11,7 @@ import type { BlockerForm, Nj } from '../model/njForm.ts'
 import { freeKey } from '../model/pbFormat.ts'
 import type { PbFile } from '../model/pbFormat.ts'
 import * as T from '../model/transitions.ts'
-import { CHATS, CTX, MAIL, byId, PB, S, TPL, createJob, pbs, putJob, steps } from '../model/world.ts'
+import { CHATS, CTX, MAIL, byId, isLive, PB, S, TPL, createJob, pbs, putJob, steps } from '../model/world.ts'
 import type { CtxItem, CtxKind, Job, Mail, NjDraft } from '../model/types.ts'
 import { commit, useWorld } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
@@ -179,7 +179,8 @@ async function linkBlocker(bl: BlockerForm, id: string, msg: string | null): Pro
 async function linkExisting() {
   const bl = F?.bl
   if (!bl?.link || creating) return
-  if (await linkBlocker(bl, bl.link.j, `${bl.j} waits for ${bl.link.j}`)) { F = null; saved = null; closeModal() }
+  creating = true
+  try { if (await linkBlocker(bl, bl.link.j, `${bl.j} waits for ${bl.link.j}`)) { F = null; saved = null; closeModal() } } finally { creating = false }
 }
 
 async function create() {
@@ -352,18 +353,19 @@ function CtxList({ f }: { f: Nj }) {
   </div>
 }
 
-const stepsOf = (j: Job | undefined) => (j ? T.steps(CTX, j.pb) : [])
+/** the steps a blocker can hold: not done or skipped, and the one picked */
+const blockable = (j: Job | undefined, picked: string) => (j ? steps(j.pb).filter((s) => s.id === picked || (j.flow[s.id] && isLive(j.flow[s.id]))) : [])
 
 function BlockerBox({ bl }: { bl: BlockerForm }) {
-  const put2 = (p: Partial<BlockerForm>) => { if (F) put({ ...F, bl: { ...bl, ...p } }) }
+  const setBl = (p: Partial<BlockerForm>) => { if (F) put({ ...F, bl: { ...bl, ...p } }) }
   return <div className="nj-bl">
     <div className="row"><b>Blocks</b><span className="mono">{bl.j}</span><span>· {byId(bl.j)?.t}</span><span className="fsp" />
-      <select className="sel" aria-label="Step it blocks" value={bl.step} onChange={(e) => put2({ step: e.currentTarget.value })}>
-        {stepsOf(byId(bl.j)).map((s) => <option key={s.id} value={s.id}>{s.t}</option>)}
+      <select className="sel" aria-label="Step it blocks" value={bl.step} onChange={(e) => setBl({ step: e.currentTarget.value })}>
+        {blockable(byId(bl.j), bl.step).map((s) => <option key={s.id} value={s.id}>{s.t}</option>)}
       </select></div>
     <label className="field"><span>Plan</span>
       <textarea className="inp" name="plan" rows={2} value={bl.plan} placeholder="What the step does with the outcome"
-        onChange={(e) => put2({ plan: e.currentTarget.value })} /></label>
+        onChange={(e) => setBl({ plan: e.currentTarget.value })} /></label>
     {bl.link ? <div className="nj-link"><span>Same as <b>{bl.link.j}</b> · {byId(bl.link.j)?.t}</span>
       {bl.link.why ? <div className="why">{bl.link.why}</div> : null}
       <button type="button" className="btn sm pri" onClick={() => void linkExisting()}><Ic n="check" sm />Link</button></div> : null}
