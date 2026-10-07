@@ -113,7 +113,7 @@ function WaitsSec({ j, s, f }: P) {
       {w.length ? <div className="bl">{w.map((l) => (
         <div key={l.j} className="bi"><span className={'lamp ' + LAMP[l.st]} />
           <div><div className="why">{l.st}{l.plan ? ` · plan: ${l.plan}` : ''}</div>
-            <p><a href={`#job=${l.j}`} onClick={(e) => { e.preventDefault(); go('job', l.j) }}>{l.j}</a> {byId(l.j)?.t ?? l.t}</p>
+            <p><a href={`#${l.j}`} onClick={(e) => { e.preventDefault(); go('job', l.j) }}>{l.j}</a> {byId(l.j)?.t ?? l.t}</p>
             {l.out ? <p className="res-t">{l.out}</p> : null}</div>
           {!isClosed(j) ? <div className="acts"><button className="iconbtn" aria-label={`Stop waiting for ${l.j}`}
             onClick={() => void doCmd(j.id, { op: 'waitDel', step: s.id, j: l.j }, `No longer waits for ${l.j}`)}><Ic n="x" sm /></button></div> : null}

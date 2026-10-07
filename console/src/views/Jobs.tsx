@@ -29,7 +29,7 @@ function Row({ j }: { j: Job }) {
       <td><button className="lnk key">{j.key}</button></td>
       <td><div className="topic"><span className="t">{j.t}</span><span className="sub"><span className="tag">{j.prj}</span>{PB[j.pb].n} · {j.id}{(() => {
           const h = holdsOf(JOBS, j.id).length, w = [...new Set(Object.values(j.flow).filter(isLive).flatMap((f) => openOf(f).map((l) => l.j)))]
-          return h ? ` · holds ${h}` : w.length ? ` · waits for ${w.join(', ')}` : null
+          return h ? ` · holds ${h}` : w.length && !isClosed(j) ? ` · waits for ${w.join(', ')}` : null
         })()}</span></div></td>
       <td><Pill st={j.st} /></td><td><Chips j={j} /></td><td><NextCell j={j} /></td><td className="why num">{ago(j.ts)}</td>
     </tr>

@@ -42,8 +42,8 @@ export function confirmForce(j: Job, sid: string, go: () => void) {
   const f = j.flow[sid]
   modal({
     title: 'Blockers still open',
-    body: <p>“{stepOf(j, sid)?.t}” {waitsM(f)}. Mark it done anyway? The open blockers are removed from the step.</p>,
+    body: <p>“{stepOf(j, sid)?.t}” {waitsM(f)}. Go on anyway? The open blockers are removed from the step.</p>,
     foot: <><button type="button" className="btn" onClick={closeModal}>Cancel</button>
-      <button type="button" className="btn pri" onClick={() => { closeModal(); go() }}>Mark done anyway</button></>,
+      <button type="button" className="btn pri" onClick={() => { closeModal(); go() }}>Go on anyway</button></>,
   })
 }
