@@ -9,8 +9,8 @@ import { newBlocker } from './newjob.tsx'
 
 /* Waits for…: an open job of this workspace the step waits for, or a new blocker through the builder. */
 
-/** the jobs a step may wait for: open, this workspace's, not this job, and not waiting for it already */
-export const candidates = (j: Job) => JOBS.filter((b) => b.ws === j.ws && b.id !== j.id && !isClosed(b) && !reaches(byId, b.id, j.id))
+/** the jobs a step may wait for: open and not recurring, this workspace's, not this job, and not waiting for it already */
+export const candidates = (j: Job) => JOBS.filter((b) => b.ws === j.ws && b.id !== j.id && !isClosed(b) && b.st !== 'recurring' && !reaches(byId, b.id, j.id))
 
 function Pick({ j, step }: { j: Job; step: string }) {
   const [q, setQ] = React.useState(''), [plan, setPlan] = React.useState('')

@@ -191,10 +191,11 @@ export function checkForm(out: unknown, o: { ws: string; form: BuildForm; PB: Re
     const b = obj(a.blocker), all = o.jobs ?? [], w = all.find((j) => j.id === form.bl!.j)
     let step = str(b.step).trim() || form.bl.step
     if (w && !T.steps({ PB, TPL: {} }, w.pb).some((s) => s.id === step)) { why.push(`Step ${step} is not one of ${w.id}'s.`); step = form.bl.step }
+    else if (w && w.flow[step] && !T.isLive(w.flow[step])) { why.push(`Step ${step} of ${w.id} is ${w.flow[step].s === 'done' ? 'done' : 'skipped'}.`); step = form.bl.step }
     const lk = obj(b.link), lj = str(lk.job).trim(), t = all.find((j) => j.id === lj)
     let link: BlockerForm['link'] = null
     if (lj) {
-      const no = !t || T.isClosed(t) ? 'there is no such open job' : lj === form.bl.j ? 'it is the waiting job'
+      const no = !t || T.isClosed(t) ? 'there is no such open job' : lj === form.bl.j ? 'it is the waiting job' : t.st === 'recurring' ? 'a recurring job never closes'
         : reaches((i) => all.find((j) => j.id === i), lj, form.bl.j) ? `it already waits for ${form.bl.j}` : ''
       if (no) why.push(`Job ${lj} cannot be linked: ${no}.`)
       else link = { j: lj, why: str(lk.why).trim() }
@@ -270,9 +271,9 @@ function blockerLines(x: T.Ctx, w: Job, bl: BlockerForm): string[] {
     '',
   ]
 }
-/** the workspace's open jobs but the waiting one, newest first, with what each already holds */
+/** the workspace's open jobs but the waiting one and the recurring ones, newest first, with what each already holds */
 function openLines(x: T.Ctx, w: Job, all: Job[]): string[] {
-  const open = all.filter((j) => !T.isClosed(j) && j.id !== w.id).sort((a, b) => b.ts - a.ts).slice(0, OPEN_MAX)
+  const open = all.filter((j) => !T.isClosed(j) && j.st !== 'recurring' && j.id !== w.id).sort((a, b) => b.ts - a.ts).slice(0, OPEN_MAX)
   return ['# Open jobs (newest first)', ...(open.length ? open.map((j) => {
     const h = holdsOf(all, j.id).map((r) => `${r.job.id}/${r.step}`), d = j.d ? one(j.d.split('\n')[0], 100) : ''
     return `- ${j.id}: ${j.t} · ${x.PB[j.pb]?.n ?? j.pb} · ${j.st}${d ? ` · ${d}` : ''}${h.length ? ` · holds ${h.join(', ')}` : ''}`

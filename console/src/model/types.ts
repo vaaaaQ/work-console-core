@@ -130,10 +130,10 @@ export type RunState = 'queued' | 'running' | 'draft' | 'answered' | 'failed' | 
 /** one LLM ask; session = the Claude Code session id, for Resume and hand-over;
     ar = auto-resume: due = it resumes by itself after the next comeback, used = it did once or no longer can;
     parent = the run this replies to, intent = what the reply asks for, a = an ask reply's answer,
-    via = who replied when it was not the user */
+    via = who replied when it was not the user: a Claude Code session, or the console itself */
 export interface RunRec {
   id: string; job: string; step: string; q: string; state: RunState; session?: string; reason?: string; at: string; ended?: string
-  ar?: 'due' | 'used'; parent?: string; intent?: RunIntent; a?: string; via?: 'session'
+  ar?: 'due' | 'used'; parent?: string; intent?: RunIntent; a?: string; via?: 'session' | 'console'
 }
 
 /** at = time of day; ts = the journal entry's ISO time, which Home orders logs that span days by (the demo's seeded rows have none) */

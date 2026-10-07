@@ -144,3 +144,28 @@ test('a cancelled blocker that is reopened gets the failure wording in the waite
   const e = (await s.get(a.id)).jr[0]
   assert.match(e.c, /cancelled outcome/); assert.doesNotMatch(e.c, /went on/)
 })
+
+test('a skipped waiter reopened after its blocker closed goes on at once', async () => {
+  const s = setup(), a = await s.mk('Local stand'), b = await s.mk('Ask Imre')
+  await s.jobs.cmd(a.id, { op: 'waitAdd', step: 'tr', j: b.id })
+  await s.jobs.cmd(a.id, { op: 'stepSkip', step: 'tr' })
+  await s.jobs.cmd(b.id, { op: 'close', st: 'done', note: 'yes' })
+  await s.b().reconcile()
+  assert.equal((await s.get(a.id)).flow.tr.w![0].st, 'open') // a skipped step is left alone
+  await s.jobs.cmd(a.id, { op: 'stepReopen', step: 'tr' })
+  await until(async () => (await s.get(a.id)).flow.tr.s === 'cur')
+  assert.equal((await s.get(a.id)).flow.tr.w![0].out, 'yes')
+  assert.deepEqual(s.pushes.map((p) => p.title), [`${a.id} goes on`])
+})
+
+test('any command to a job whose link outlived its closed blocker settles the link', async () => {
+  const s = setup(false), a = await s.mk('Local stand'), b = await s.mk('Ask Imre')
+  await s.jobs.cmd(a.id, { op: 'waitAdd', step: 'tr', j: b.id })
+  await s.jobs.cmd(b.id, { op: 'close', st: 'done', note: 'yes' })
+  s.attach()
+  await s.jobs.cmd(a.id, { op: 'noteAdd', step: 'tr', k: 'q', t: 'anything new?' })
+  await until(async () => (await s.get(a.id)).flow.tr.s === 'cur')
+  await s.b().reconcile()
+  assert.equal(s.pushes.length, 1)
+  assert.equal((await s.get(a.id)).jr.filter((e) => e.o.startsWith(`Blocker ${b.id}`)).length, 1)
+})

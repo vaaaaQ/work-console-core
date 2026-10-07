@@ -29,7 +29,8 @@ export const isClosed = (j: Job) => j.st === 'done' || j.st === 'cancelled'
 export const isLive = (f: Flow) => f.s !== 'done' && f.s !== 'skip'
 export const flows = (j: Job) => Object.values(j.flow)
 export const atOf = (x: Ctx, j: Job) => { const s = steps(x, j.pb).find((s) => j.flow[s.id] && isLive(j.flow[s.id])); return s ? s.id : null }
-export const hasDraft = (j: Job) => flows(j).some((f) => f.dr)
+/** a draft to review: one whose step still waits for an open blocker is not yet */
+export const hasDraft = (j: Job) => flows(j).some((f) => f.dr && !openOf(f).length)
 /** the current step still has a planned message you have not sent */
 export const unsentAt = (x: Ctx, j: Job) => {
   if (j.st === 'draft') return false
@@ -55,7 +56,7 @@ export function syncStatus(x: Ctx, j: Job) {
   if (isClosed(j) || ['draft', 'ready', 'recurring'].includes(j.st)) return
   const id = atOf(x, j); if (!id) return
   const f = j.flow[id], s = stepOf(x, j, id)!, unsent = (x.TPL[id] || []).some((_, i) => !f.sent[i])
-  j.st = f.run ? 'active' : f.dr ? 'waiting-user' : f.s === 'wait' ? (s.rv ? 'review' : 'waiting-external') : (f.s === 'cur' && unsent) ? 'waiting-user' : 'active'
+  j.st = f.run ? 'active' : f.s === 'wait' && openOf(f).length ? 'waiting-external' : f.dr ? 'waiting-user' : f.s === 'wait' ? (s.rv ? 'review' : 'waiting-external') : (f.s === 'cur' && unsent) ? 'waiting-user' : 'active'
 }
 export function rvState(j: Job, f: Flow) {
   const w = PACKS[j.ws], r = f.rv || { v: [], need: 2 }
@@ -201,6 +202,7 @@ function settle(f: Flow): boolean {
   const was = f.s
   f.s = g
   if (g === 'wait' && openOf(f).length) f.m = waitsM(f)
+  else if (g === 'wait' && f.m.startsWith('waits for ')) f.m = ''
   else if (g === 'bad') f.m = `blocker ${(f.w || []).filter((l) => l.st === 'cancelled').map((l) => l.j).join(', ')} cancelled`
   else if (g === 'cur' && was !== 'cur') f.m = ''
   if (was !== g) f.nw = 1
@@ -217,7 +219,7 @@ function advance(x: Ctx, j: Job, sid: string, state: NodeState) {
   const nx = atOf(x, j)
   if (nx) { const g = j.flow[nx]; if (g.s === 'fut' || g.s === 'tpl') onto(g) }
   else if (j.st === 'recurring') {
-    steps(x, j.pb).forEach((s) => { const g = j.flow[s.id]; g.s = s.msg ? 'tpl' : 'fut'; g.out = null; g.sent = {}; g.m = ''; g.arts.forEach((a) => { a.ok = false; delete a.link }) })
+    steps(x, j.pb).forEach((s) => { const g = j.flow[s.id]; g.s = s.msg ? 'tpl' : 'fut'; g.out = null; g.sent = {}; g.m = ''; delete g.w; delete g.bb; g.arts.forEach((a) => { a.ok = false; delete a.link }) })
     const first = steps(x, j.pb)[0]; j.flow[first.id].s = 'cur'
     if (j.due && j.every === 'month') j.due = nextMonth(j.due)
     jr(x, j, 'Period complete.', `all steps done; the flow starts again${j.due && j.every ? `, due ${tfmt(j.due)}` : ''}.`, `next period: “${first.t}”.`, by(x), 'ok')
@@ -519,6 +521,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       const b = x.jobOf?.(bid)
       if (!b || b.ws !== j.ws) throw new CmdError('bad_args', `no job ${bid} in this workspace`)
       if (isClosed(b)) throw new CmdError('bad_state', `${bid} is closed`)
+      if (b.st === 'recurring') throw new CmdError('bad_state', `${bid} is recurring; a recurring job never closes`)
       if (openOf(F).some((l) => l.j === bid)) throw new CmdError('bad_state', `“${S.t}” already waits for ${bid}`)
       if (reaches(x.jobOf!, bid, j.id)) throw new CmdError('bad_args', `${bid} already waits for ${j.id}; that would be a cycle`)
       F.w = [...(F.w || []).filter((l) => l.j !== bid), { j: bid, t: b.t, st: 'open', ...(plan ? { plan } : {}) }]
@@ -544,10 +547,10 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       l.st = cmd.st; l.at = nowOf(x).toISOString()
       if (cmd.out) l.out = cmd.out; else delete l.out
       if (cmd.st === 'cancelled') F.b = [...F.b, { k: 'p', t: `Blocker ${cmd.j} “${l.t ?? cmd.j}” was cancelled; remove it or link another.`, o: 1, nw: 1 }]
-      const on = settle(F)
+      const on = settle(F), fromDraft = !on && F.s === 'wait' && !!F.dr && !openOf(F).length
       if (on) nx = sid
       jr(x, j, `Blocker ${cmd.j} of “${S.t}” ${cmd.st === 'done' ? 'is done' : 'was cancelled'}.`, cmd.out ? `outcome: ${line(cmd.out)}` : 'no outcome.',
-        on ? `“${S.t}” goes on.` : F.s === 'bad' ? 'remove the blocker or link another.' : openOf(F).length ? `still ${waitsM(F)}.` : nextTxt(x, j, atOf(x, j)),
+        on ? `“${S.t}” goes on.` : fromDraft ? `“${S.t}” goes on from its draft.` : F.s === 'bad' ? 'remove the blocker or link another.' : openOf(F).length ? `still ${waitsM(F)}.` : nextTxt(x, j, atOf(x, j)),
         by(x), cmd.st === 'done' ? 'ok' : 'bad')
       syncStatus(x, j)
       break

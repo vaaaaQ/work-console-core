@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import * as T from '../../src/model/transitions.ts'
 import type { Cmd, Job } from '../../src/model/types.ts'
 import { Bus } from '../events.ts'
+import { Blockers } from '../jobs/blockers.ts'
 import { Jobs } from '../jobs/jobs.ts'
 import { fileStore } from '../store/file.ts'
 import { demoCtx, demoSeed, fakeSdk } from '../testkit.ts'
@@ -151,4 +152,55 @@ test('a woken llm step is asked; a woken you step is not', async () => {
   await new Promise((r) => setTimeout(r, 30))
   off()
   assert.deepEqual(asked, ['tr'])
+})
+
+test('a drafted waiter whose blocker closes: one goes-on push, the note clears, and its session revises the draft with the outcome', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wc-wake-'))
+  const store = fileStore(join(dir, 's.json'), demoSeed), bus = new Bus()
+  const jobs = new Jobs({ store, bus, ctx: demoCtx, gate: () => true })
+  const { sdk, sessions } = fakeSdk()
+  const runner = new Runner({ store, jobs, bus, sdk, cwd: dir, gate: () => true, artifactsDir: join(dir, 'arts'), ctx: demoCtx })
+  const off = autoAsk({ jobs, runner, ctx: demoCtx, delay: 0 })
+  const pushes: string[] = [], generic: string[] = []
+  const blockers = new Blockers({ jobs, ctx: demoCtx, push: async (t) => { pushes.push(t) } })
+  jobs.onNeedsYou((j) => { if (!blockers.handling(j.id)) generic.push(j.id) })
+  const get = async (id: string) => (await jobs.get(id))!
+
+  // the waiter's first step gets a draft, then a reply asks for a blocker
+  const a0 = await jobs.create({ t: 'Local stand', key: 'K-1', pb: 'action', prj: 'p', ws: 'acme' })
+  await jobs.cmd(a0.id, { op: 'start' }, a0.v)
+  await until(() => sessions.length === 1)
+  sessions[0].push({ k: 'session', id: 'S1' })
+  await sessions[0].tools.submitDraft('v1'); sessions[0].end()
+  await until(async () => (await runner.all()).every((r) => r.ended))
+  const b = await jobs.create({ t: 'Ask Imre', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
+  const rr = await runner.reply(a0.id, 'tr', 'wait for Imre to confirm the secret', 'revise')
+  await until(() => sessions.length === 2)
+  await sessions[1].tools.openBlocker!('wait for Imre to confirm the secret'); sessions[1].end()
+  await until(async () => (await runner.get(rr.id))?.ended != null)
+  await jobs.cmd(a0.id, { op: 'waitAdd', step: 'tr', j: b.id, plan: 'if he confirms, keep kv-1' })
+
+  let a = await get(a0.id)
+  assert.equal(a.flow.tr.s, 'wait'); assert.equal(a.flow.tr.dr!.t, 'v1'); assert.equal(a.flow.tr.m, `waits for ${b.id}`)
+  assert.equal(a.st, 'waiting-external'); assert.equal(T.needsYou(X, a), false)
+
+  generic.length = 0
+  await jobs.cmd(b.id, { op: 'close', st: 'done', note: 'Imre confirmed kv-1' })
+  await until(() => sessions.length === 3)
+  a = await get(a0.id)
+  const line = a.jr.find((e) => e.o === `Blocker ${b.id} of “Understand the request” is done.`)!
+  assert.equal(line.a, 'console'); assert.equal(line.c, 'outcome: Imre confirmed kv-1')
+  assert.deepEqual(pushes, [`${a0.id} goes on`])
+  assert.doesNotMatch(a.flow.tr.m, /waits for/)
+  assert.deepEqual(generic, [])
+  const rev = (await runner.all()).find((r) => r.parent && r.via === 'console')!
+  assert.equal(rev.intent, 'revise'); assert.match(rev.q, /Outcome: Imre confirmed kv-1/); assert.match(rev.q, /Plan: if he confirms, keep kv-1/)
+  assert.equal(sessions[2].resume, 'S1'); assert.match(sessions[2].prompt, /Imre confirmed kv-1/)
+  assert.equal(a.jr[0].a, 'console'); assert.match(a.jr[0].o, /^Replied to the LLM draft/)
+
+  await sessions[2].tools.submitDraft('v2'); sessions[2].end()
+  await until(async () => (await get(a0.id)).flow.tr.dr?.t === 'v2')
+  assert.equal((await get(a0.id)).st, 'waiting-user')
+  assert.deepEqual(pushes, [`${a0.id} goes on`])
+  off(); blockers.stop()
 })

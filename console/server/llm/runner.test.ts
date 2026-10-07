@@ -704,6 +704,19 @@ test('an accept that cannot be saved leaves the revised draft waiting and pushes
   assert.equal((await s.jobs.get(d.job))!.flow[d.step].dr!.t, 'v2')
 })
 
+test('an accept reply on a blocked step keeps the revised draft and journals why it was not accepted', async () => {
+  const s = setup(), d = await withDraft(s)
+  const b = await s.jobs.create({ t: 'Ask Imre', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
+  await s.jobs.cmd(d.job, { op: 'waitAdd', step: d.step, j: b.id })
+  const r = await s.runner.reply(d.job, d.step, 'fine as it is', 'accept')
+  await until(() => s.sessions.length === 2)
+  await s.sessions[1].tools.submitDraft('v2'); s.sessions[1].end()
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  const j = (await s.jobs.get(d.job))!, e = j.jr.find((x) => x.o.startsWith('Did not accept the revised draft'))!
+  assert.equal(j.flow[d.step].dr!.t, 'v2'); assert.equal(j.flow[d.step].s, 'wait')
+  assert.equal(e.a, 'console'); assert.match(e.c, new RegExp(`waits for ${b.id}`))
+})
+
 test("a reply waits until the draft's session has wound down", async () => {
   const s = setup(), d = await withDraft(s)
   const r = await s.runner.reply(d.job, d.step, 'shorter', 'revise')

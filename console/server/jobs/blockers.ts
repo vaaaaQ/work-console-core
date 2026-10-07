@@ -3,13 +3,16 @@ import * as T from '../../src/model/transitions.ts'
 import type { Job } from '../../src/model/types.ts'
 import type { Jobs } from './jobs.ts'
 
-/* A step that waits for a job goes on when that job closes. The close only wakes this; each blockerClosed is
-   decided from the blocker as stored now, so a repeat, or a close missed while the console was off, ends the same.
+/* A step that waits for a job goes on when that job closes. The close, or a command to the waiting job, only wakes
+   this; each blockerClosed is decided from the blocker as stored now, so a repeat, a link revived after its blocker
+   closed, or a close missed while the console was off, ends the same.
    One per workspace; the work runs one change at a time. */
 
 type Push = (title: string, body: string, url: string) => Promise<void>
 const url = (id: string) => `/?job=${encodeURIComponent(id)}`
 const first = (t: string) => t.split('\n').map((s) => s.trim()).find(Boolean) ?? ''
+/** the job still waits on a live step: a command to it may have revived a link whose blocker already closed */
+const waits = (j: Job) => !T.isClosed(j) && Object.values(j.flow).some((f) => T.isLive(f) && openOf(f).length > 0)
 
 /** a closed job's outcome: the out of its last step that has one, else its close note, else empty */
 export function outcomeOf(x: T.Ctx, b: Job): string {
@@ -27,7 +30,9 @@ export class Blockers {
     this.jobs = o.jobs; this.ctx = o.ctx; this.push = o.push
     this.off = o.jobs.onCmd(({ cmd, job }) => {
       if (cmd.op === 'close') void this.run(() => this.sweep({ blocker: job.id }))
-      else if (cmd.op === 'reopen') void this.run(async () => { await this.reopened(job); await this.sweep({ waiter: job.id }) })
+      else if (cmd.op === 'reopen') void this.run(() => this.reopened(job))
+      // blockerClosed is this reactor's own, and a journal line revives nothing
+      if (cmd.op !== 'blockerClosed' && cmd.op !== 'journal' && waits(job)) void this.run(() => this.sweep({ waiter: job.id }))
     })
   }
 
@@ -64,8 +69,10 @@ export class Blockers {
     this.busy.add(w.id)
     try {
       const r = await this.jobs.cmd(w.id, { op: 'blockerClosed', step, j: bid, st, ...(out ? { out } : {}) }, undefined, 'console')
+      const g = r.job.flow[step]
       if (st === 'cancelled') await this.push(`${w.id} ${w.t}: blocker ${bid} cancelled`, first(out) || 'remove it or link another', url(w.id))
-      else if (r.job.flow[step]?.s === 'cur') await this.push(`${w.id} goes on`, `${bid} done${first(out) ? `: ${first(out).slice(0, 160)}` : ''}`, url(w.id))
+      // current, or waiting only for its draft's review
+      else if (g && (g.s === 'cur' || g.s === 'wait') && !openOf(g).length) await this.push(`${w.id} goes on`, `${bid} done${first(out) ? `: ${first(out).slice(0, 160)}` : ''}`, url(w.id))
     } catch (e) {
       console.error(`waking ${w.id} for ${bid} failed:`, (e as Error).message)
     } finally { this.busy.delete(w.id) }

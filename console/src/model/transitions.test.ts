@@ -455,6 +455,39 @@ test('a draft keeps the step waiting after the last blocker closes', () => {
   w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' })
   const { job, nx } = w.run('A-1', { op: 'blockerClosed', step: 'tr', j: 'A-2', st: 'done', out: 'ok' })
   assert.equal(job.flow.tr.s, 'wait'); assert.equal(nx, null); assert.equal(job.flow.tr.dr!.t, 'the draft')
+  assert.equal(job.flow.tr.m, '', 'the waits-for note goes with the last open link')
+  assert.equal(job.st, 'waiting-user'); assert.ok(needsYou(w.x, job))
+  assert.equal(job.jr[0].n, '“Understand the request” goes on from its draft.')
+})
+
+test('a drafted step that waits for a blocker is waiting-external and does not need you', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'))
+  withDraftOn(w, 'A-1', 'tr')
+  const { job } = w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' })
+  assert.equal(job.flow.tr.s, 'wait'); assert.equal(job.flow.tr.m, 'waits for A-2')
+  assert.equal(job.st, 'waiting-external'); assert.equal(needsYou(w.x, job), false)
+})
+
+test('waitAdd refuses a recurring blocker', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'))
+  w.run('A-2', { op: 'schedule', due: '2026-11-02T12:00:00.000Z', every: 'month' })
+  assert.throws(() => w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' }), (e: unknown) => e instanceof CmdError && e.code === 'bad_state' && /never closes/.test(e.message))
+})
+
+test('a new period of a recurring job drops every link and blocker request', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'), mkJ('A-3'))
+  w.run('A-1', { op: 'schedule', due: '2026-11-02T12:00:00.000Z', every: 'month' })
+  w.run('A-1', { op: 'stepDone', step: 'tr' })
+  w.run('A-1', { op: 'waitAdd', step: 'dr', j: 'A-2' })
+  w.run('A-1', { op: 'blockerClosed', step: 'dr', j: 'A-2', st: 'done', out: 'last month' })
+  w.run('A-1', { op: 'stepDone', step: 'dr' })
+  w.run('A-1', { op: 'waitAdd', step: 'sn', j: 'A-3' })
+  const before = w.get('A-1')
+  assert.equal(before.flow.dr.w![0].st, 'done'); assert.equal(before.flow.sn.w![0].st, 'open')
+  const g = clone(before); g.flow.tr.bb = { say: 'x', at: T0.toISOString() }
+  const { job } = apply(w.x, g, { op: 'stepSkip', step: 'sn' })
+  assert.equal(job.flow.tr.s, 'cur')
+  for (const f of Object.values(job.flow)) { assert.equal(f.w, undefined); assert.equal(f.bb, undefined) }
 })
 
 test('stepDone and acceptDraft are refused while a blocker is open; force drops the open links and journals it', () => {

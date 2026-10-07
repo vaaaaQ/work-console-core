@@ -428,6 +428,16 @@ test('checkForm: blocker step, plan and a link checked against the open jobs', (
   assert.equal(checkForm(ANS, opts()).bl, undefined)
 })
 
+test('checkForm keeps the form step over a done one, and refuses a link to a recurring job; the open jobs leave it out', () => {
+  const w = job('A-6', 'Local stand'); w.flow[S1].s = 'done'
+  const r = job('A-7', 'Monthly report', 'recurring'), all = [w, r]
+  const f = checkForm({ ...ANS, blocker: { step: S1, plan: '', link: { job: 'A-7', why: '' } } }, opts({ form: empty({ bl: BL }), jobs: all }))
+  assert.equal(f.bl!.step, S0); assert.ok(f.why.some((y) => y.includes(`Step ${S1} of A-6 is done`)))
+  assert.equal(f.bl!.link, null); assert.ok(f.why.some((y) => y.includes('A-7') && y.includes('recurring')))
+  const p = buildPrompt({ page: acme, PB, notes: [], form: empty({ bl: BL }), say: ['x'], now: NOW, tz: HOME, sources: false, blocker: { waiter: w, all } })
+  assert.doesNotMatch(p, /- A-7:/)
+})
+
 test('a link that would make a cycle is refused', () => {
   const b = job('A-7', 'Ask Imre'); b.flow[S0].w = [{ j: 'A-6', st: 'open' }]
   const f = checkForm({ ...ANS, blocker: { step: S0, plan: '', link: { job: 'A-7', why: '' } } }, opts({ form: empty({ bl: BL }), jobs: [W, b] }))

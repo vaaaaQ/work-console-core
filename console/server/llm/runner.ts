@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { copyFile, mkdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { openOf, waitsM } from '../../src/model/blockers.ts'
 import * as T from '../../src/model/transitions.ts'
 import { thread } from '../../src/model/thread.ts'
 import { INTENTS } from '../../src/model/types.ts'
@@ -90,8 +91,16 @@ export class Runner {
   }
 
   /** as = whose word it is (an accept reply's); false when it was not saved */
-  private async jobCmd(r: RunRec, c: Cmd, as?: 'page' | 'session') {
+  private async jobCmd(r: RunRec, c: Cmd, as?: 'page' | 'session' | 'console') {
     try { await this.jobs.cmd(r.job, c, undefined, 'runner', as); return true } catch (e) { console.error(`run ${r.id}: ${c.op} on ${r.job} failed`, (e as Error).message); return false }
+  }
+
+  /** an accept reply whose accept an open blocker refused says why in the journal */
+  private async notAccepted(rec: RunRec) {
+    const j = await this.jobs.get(rec.job), f = j?.flow[rec.step]
+    if (!j || !f || !openOf(f).length) return
+    const t = T.stepOf(this.ctx(), j, rec.step)?.t ?? rec.step
+    await this.jobCmd(rec, { op: 'journal', o: `Did not accept the revised draft for “${t}”.`, c: `“${t}” ${waitsM(f)}.`, n: 'accept it when they close, or go on anyway.', a: 'console' })
   }
 
   private async hasRun(job: string, step: string): Promise<Job> {
@@ -121,8 +130,8 @@ export class Runner {
     return { head: t.at(-1), session: t.findLast((r) => r.session)?.session }
   }
 
-  /** a reply to the step's draft in its own session; via = who replied when not the user */
-  async reply(job: string, step: string, t: string, intent: RunIntent, o: { via?: 'session' } = {}): Promise<RunRec> {
+  /** a reply to the step's draft in its own session; via = who replied when not the user: a session, or the console itself */
+  async reply(job: string, step: string, t: string, intent: RunIntent, o: { via?: 'session' | 'console' } = {}): Promise<RunRec> {
     if (!this.gate()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; the reply was not sent')
     if (!t || !t.trim()) throw new HttpError(400, 'bad_args', 'the reply is empty')
     if (!INTENTS.includes(intent)) throw new HttpError(400, 'bad_args', `intent is one of ${INTENTS.join(', ')}`)
@@ -331,6 +340,7 @@ export class Runner {
         r = { ...r!, state: 'draft' }
         // an accept turn accepts at once, before anyone can act on the draft; it pushes only if that fails
         const accepted = rec.intent === 'accept' && await this.jobCmd(rec, { op: 'acceptDraft', step: rec.step, said: true }, rec.via ?? 'page')
+        if (rec.intent === 'accept' && !accepted) await this.notAccepted(rec)
         await this.save(r, !accepted)
       },
       addArtifact: (n: string, content: string) => keep(safeName(n), (f) => writeFile(f, content, 'utf8')),

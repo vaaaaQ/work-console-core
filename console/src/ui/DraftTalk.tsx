@@ -43,7 +43,7 @@ export function DraftTalk({ job, step, last }: { job: Job; step: string; last?: 
             <VoiceField value={t} onChange={setT} target="llm" ctx={f.dr.t} intent={intent} onIntent={setIntent} rows={3} placeholder="Reply to the draft: what to change, or a question" />
             <div className="row"><button type="button" className="btn sm pri" disabled={!t.trim() || sending} onClick={() => void send()}><Ic n="send" sm />{SEND_L[intent]}</button>
               <button type="button" className="btn sm" disabled={sending} title="Make or link a job this step waits for"
-                onClick={() => { const say = t.trim(); setT(''); newBlocker({ job: job.id, step, ...(say ? { say } : {}) }) }}><Ic n="hourglass" sm />Blocker</button></div>
+                onClick={() => { const say = t.trim(); newBlocker({ job: job.id, step, ...(say ? { say } : {}) }) }}><Ic n="hourglass" sm />Blocker</button></div>
           </div>
         : <div className="hint">This draft has no LLM session to continue; Reject with a reason starts a new one.</div>}
     </div>
@@ -53,7 +53,7 @@ export function DraftTalk({ job, step, last }: { job: Job; step: string; last?: 
 function Turn({ r }: { r: RunRec }) {
   // a run still going, or stopped short, shows as the inspector shows a run: its feed, Cancel or Resume
   if (r.state === 'queued' || r.state === 'running' || r.state === 'interrupted' || r.state === 'failed') return <RunFeed run={r} />
-  const who = r.via === 'session' ? 'Claude Code' : 'You'
+  const who = r.via === 'session' ? 'Claude Code' : r.via === 'console' ? 'Console' : 'You'
   return (
     <div className="turn">
       <div className="turn-q"><b>{who} · {r.intent}</b> {r.q}</div>
