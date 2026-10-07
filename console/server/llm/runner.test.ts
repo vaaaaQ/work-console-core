@@ -704,6 +704,19 @@ test('an accept that cannot be saved leaves the revised draft waiting and pushes
   assert.equal((await s.jobs.get(d.job))!.flow[d.step].dr!.t, 'v2')
 })
 
+test('an accept reply on a blocked step keeps the revised draft and journals why it was not accepted', async () => {
+  const s = setup(), d = await withDraft(s)
+  const b = await s.jobs.create({ t: 'Ask Imre', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
+  await s.jobs.cmd(d.job, { op: 'waitAdd', step: d.step, j: b.id })
+  const r = await s.runner.reply(d.job, d.step, 'fine as it is', 'accept')
+  await until(() => s.sessions.length === 2)
+  await s.sessions[1].tools.submitDraft('v2'); s.sessions[1].end()
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  const j = (await s.jobs.get(d.job))!, e = j.jr.find((x) => x.o.startsWith('Did not accept the revised draft'))!
+  assert.equal(j.flow[d.step].dr!.t, 'v2'); assert.equal(j.flow[d.step].s, 'wait')
+  assert.equal(e.a, 'console'); assert.match(e.c, new RegExp(`waits for ${b.id}`))
+})
+
 test("a reply waits until the draft's session has wound down", async () => {
   const s = setup(), d = await withDraft(s)
   const r = await s.runner.reply(d.job, d.step, 'shorter', 'revise')
@@ -766,4 +779,58 @@ test('settle waits for the end, or returns the record as it is at the timeout', 
   const p = s.runner.settle(r.id, 2000)
   s.sessions[1].end(true, undefined, 'Y.')
   assert.equal((await p).state, 'answered')
+})
+
+test('a reply run can open the blocker builder: the run is answered, the draft stays, the step asks the user', async () => {
+  const s = setup(), d = await withDraft(s)
+  const r = await s.runner.reply(d.job, d.step, 'wait for Imre to confirm', 'revise')
+  await until(() => s.sessions.length === 2)
+  assert.match(s.sessions[1].prompt, /open_blocker/)
+  assert.ok(s.sessions[1].tools.openBlocker)
+  await s.sessions[1].tools.openBlocker!('wait for Imre to confirm'); s.sessions[1].end()
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  const rec = (await s.runner.get(r.id))!, j = (await s.jobs.get(d.job))!
+  assert.equal(rec.state, 'answered'); assert.equal(rec.a, 'Opened the blocker builder: wait for Imre to confirm')
+  assert.equal(j.flow[d.step].bb!.say, 'wait for Imre to confirm'); assert.equal(j.flow[d.step].dr!.t, 'v1')
+  assert.equal(j.flow[d.step].run ?? null, null)
+})
+
+test('a first run has no open_blocker', async () => {
+  const s = setup(), j = await started(s.jobs)
+  await s.runner.ask(j.id, T.atOf(demoCtx(), j)!, 'go')
+  await until(() => s.sessions.length === 1)
+  assert.equal(s.sessions[0].tools.openBlocker, undefined)
+  s.sessions[0].end()
+})
+
+test('a reply that ends in text without a draft is an answer', async () => {
+  const s = setup(), d = await withDraft(s)
+  const r = await s.runner.reply(d.job, d.step, 'make a blocker', 'revise')
+  await until(() => s.sessions.length === 2)
+  s.sessions[1].end(true, undefined, 'Which step should wait, and for whom?')
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  const rec = (await s.runner.get(r.id))!
+  assert.equal(rec.state, 'answered'); assert.equal(rec.a, 'Which step should wait, and for whom?')
+  assert.equal((await s.jobs.get(d.job))!.flow[d.step].dr!.t, 'v1')
+})
+
+test('open_blocker after submit_draft is refused: the run stays a draft and no blocker is made', async () => {
+  const s = setup(), d = await withDraft(s)
+  const r = await s.runner.reply(d.job, d.step, 'wait for Imre to confirm', 'revise')
+  await until(() => s.sessions.length === 2)
+  await s.sessions[1].tools.submitDraft('v2')
+  await assert.rejects(() => s.sessions[1].tools.openBlocker!('wait for Imre'), /draft was already submitted/)
+  s.sessions[1].end()
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  const rec = (await s.runner.get(r.id))!, j = (await s.jobs.get(d.job))!
+  assert.equal(rec.state, 'draft'); assert.equal(j.flow[d.step].bb, undefined)
+})
+
+test('a second open_blocker in one run is refused', async () => {
+  const s = setup(), d = await withDraft(s)
+  await s.runner.reply(d.job, d.step, 'wait for Imre to confirm', 'revise')
+  await until(() => s.sessions.length === 2)
+  await s.sessions[1].tools.openBlocker!('wait for Imre')
+  await assert.rejects(() => s.sessions[1].tools.openBlocker!('again'), /already opened/)
+  s.sessions[1].end()
 })

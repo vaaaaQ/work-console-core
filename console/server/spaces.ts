@@ -13,6 +13,7 @@ import { shoot } from './llm/shot.ts'
 import { builder } from './llm/builder.ts'
 import type { Build } from './llm/builder.ts'
 import { Bus, HttpError } from './events.ts'
+import { Blockers } from './jobs/blockers.ts'
 import { Jobs } from './jobs/jobs.ts'
 import { notesStore } from './knowledge/notes.ts'
 import type { Notes } from './knowledge/notes.ts'
@@ -154,7 +155,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   })
   const offAuto = cfg.autoAsk === true ? autoAsk({ jobs, runner, ctx, delay: o.askDelay }) : () => {}
   // a workspace without a gateway gives the builder no sources to read
-  const build = builder({ ws: id, page: w.page, sdk, notes, source: w.llm?.bridge === false ? null : source, ctx, bus })
+  const build = builder({ ws: id, page: w.page, sdk, notes, source: w.llm?.bridge === false ? null : source, ctx, bus, jobs: () => jobs.all() })
   const offInterrupt = bus.on((e) => {
     if (e.kind === 'bridge' && e.state === 'unavailable')
       void runner.interruptAll('the bridge went away').catch((err) => console.error(`interrupting the runs of ${id}:`, (err as Error).message))
@@ -183,6 +184,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     bus, jobs, ctx, push, key: (i) => w.page.board.key(i),
     read: async () => { const r = (await source.read(['board'])).board; return r && READY.has(r.status) && Array.isArray(r.items) ? (r.items as { id: string }[]) : null },
   })
+  const blockers = new Blockers({ jobs, ctx, push })
 
   let recovered = false
   const stopLoading = onBridgeBack(bus, async () => {
@@ -193,6 +195,8 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     await runner.recover(recovered ? 'the bridge went away' : 'the console restarted')
     recovered = true
     await runner.resumeDue()
+    // a blocker closed while the console was off is seen here
+    await blockers.reconcile()
   })
 
   return {
@@ -200,9 +204,9 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     putPlaybook: async (pid, pb, tpl) => { await store.putPlaybook(pid, pb, tpl); await loadPbs() },
     start: startItem({ jobs, ctx, bridge: source, page: w.page }),
     plugins: w.plugins?.({ id, cfg, home: o.home, jobs, source, artifactsDir: o.artifactsDir }) ?? [],
-    // a QA return pushes its own message; the reopen and note it makes would push a second one
-    onNeedsYou: (f) => jobs.onNeedsYou((j) => { if (!returns.handling(j.id)) f(j) }),
+    // a QA return or a woken blocker pushes its own message; the generic one would say it again
+    onNeedsYou: (f) => jobs.onNeedsYou((j) => { if (!returns.handling(j.id) && !blockers.handling(j.id)) f(j) }),
     // the source going away on close is no reason to interrupt the runs
-    async close() { stopLoading(); offInterrupt(); offAuto(); source.stop(); await fake?.close() },
+    async close() { stopLoading(); offInterrupt(); offAuto(); blockers.stop(); source.stop(); await fake?.close() },
   }
 }

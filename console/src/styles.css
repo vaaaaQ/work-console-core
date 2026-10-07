@@ -284,6 +284,9 @@ p.cx-t{font-family:var(--font)}
 .nj-st{margin:0;display:flex;align-items:center;gap:7px;min-height:18px;font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
 .nj-err{color:var(--bad)}
 .nj-why{margin:0;padding-left:18px;font-size:12.5px;color:var(--wait)}
+.nj-bl{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r)}
+.nj-bl .row{align-items:center;gap:8px}
+.nj-link{display:grid;gap:6px;justify-items:start;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r);background:var(--sunken)}
 .nj-said{margin:6px 0 0;padding-left:18px}
 /* a long field that also takes speech */
 .vf{display:grid;gap:6px}
@@ -479,6 +482,13 @@ p.cx-t{font-family:var(--font)}
 .pk .r1>:last-child{margin-left:auto}
 .ctx{display:flex;flex-wrap:wrap;gap:4px}
 .hint{font-size:12px;color:var(--faint)}
+/* Waits for: the banner asking for a blocker, and the dialog's job list */
+.bb{display:flex;flex-direction:column;gap:8px;margin-bottom:8px;padding:10px 12px;border:1px solid var(--wait);border-radius:var(--r);background:var(--raised);box-shadow:inset 3px 0 0 var(--wait)}
+.bb p{margin:0;overflow-wrap:anywhere}
+.wf textarea.inp{height:auto;padding:6px 10px;resize:vertical}
+.wf-list{display:flex;flex-direction:column;gap:4px;max-height:320px;overflow:auto}
+.wf-row{display:block;cursor:pointer;text-align:left;padding:7px 10px;border:1px solid var(--line);border-radius:var(--r);background:var(--raised);overflow-wrap:anywhere}
+.wf-row:hover{border-color:var(--cur)}
 .lbl{font-size:12px;color:var(--muted);font-weight:500}
 .modal.wide{width:min(900px,100%)}
 .prev{grid-template-columns:minmax(0,1fr)}

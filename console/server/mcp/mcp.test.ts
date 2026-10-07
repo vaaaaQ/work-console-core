@@ -460,3 +460,56 @@ test('job_command rejectDraft with why redoes the step, signed Claude Code; with
   const plain = (await s.call('job_command', { id: d.j.id, op: 'rejectDraft', step: d.at })).json()
   assert.equal('run' in plain, false); assert.equal(s.sessions.length, 2)
 })
+
+test('job_command links a blocker; get_job shows waitsFor on the step and holds on the blocker', async (t) => {
+  const s = await setup(t)
+  const mk = async (title: string) => { const j = await s.jobs.create({ t: title, key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' }); return (await s.jobs.cmd(j.id, { op: 'start' }, j.v)).job }
+  const a = await mk('Local stand'), b = await mk('Ask Imre')
+  const r = await s.call('job_command', { id: a.id, op: 'waitAdd', step: 'tr', j: b.id, plan: 'if yes, go on' })
+  assert.equal(r.err, false, r.text)
+  const ga = (await s.call('get_job', { id: a.id })).json() as { phases: { steps: { id: string; waitsFor?: unknown }[] }[] }
+  assert.deepEqual(ga.phases.flatMap((p) => p.steps).find((x) => x.id === 'tr')!.waitsFor, [{ job: b.id, title: 'Ask Imre', state: 'open', plan: 'if yes, go on' }])
+  assert.deepEqual((await s.call('get_job', { id: b.id })).json().holds, [{ job: a.id, title: 'Local stand', step: 'tr' }])
+  assert.match((await s.call('job_command', { id: a.id, op: 'stepDone', step: 'tr' })).text, /^bad_state/)
+  assert.equal((await s.call('job_command', { id: a.id, op: 'stepDone', step: 'tr', force: true })).err, false)
+})
+
+const mkJob = async (s: Awaited<ReturnType<typeof setup>>, title: string) => {
+  const j = await s.jobs.create({ t: title, key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
+  return (await s.jobs.cmd(j.id, { op: 'start' }, j.v)).job
+}
+
+test('job_command waitDel unlinks a blocker: waitsFor is gone and the step is back in progress', async (t) => {
+  const s = await setup(t), a = await mkJob(s, 'Local stand'), b = await mkJob(s, 'Ask Imre')
+  assert.equal((await s.call('job_command', { id: a.id, op: 'waitAdd', step: 'tr', j: b.id })).err, false)
+  assert.equal(stepOf((await s.call('get_job', { id: a.id })).json(), 'tr').state, 'wait')
+  const r = await s.call('job_command', { id: a.id, op: 'waitDel', step: 'tr', j: b.id })
+  assert.equal(r.err, false, r.text)
+  const tr = stepOf((await s.call('get_job', { id: a.id })).json(), 'tr')
+  assert.equal(tr.state, 'cur'); assert.equal('waitsFor' in tr, false)
+  assert.equal('holds' in (await s.call('get_job', { id: b.id })).json(), false)
+})
+
+test('job_command blockerDrop dismisses a blocker the LLM asked for; get_job shows blockerAsked until then', async (t) => {
+  const s = await setup(t), j = await openJob(s.jobs), at = T.atOf(demoCtx(), j)!
+  await s.runner.ask(j.id, at, 'go')
+  await until(() => s.sessions.length === 1)
+  await s.jobs.cmd(j.id, { op: 'runBlocker', step: at, say: 'ask Imre first' }, undefined, 'runner')
+  s.sessions[0].end()
+  await until(async () => !(await s.jobs.get(j.id))!.flow[at].run)
+  assert.equal(stepOf((await s.call('get_job', { id: j.id })).json(), at).blockerAsked, 'ask Imre first')
+  const r = await s.call('job_command', { id: j.id, op: 'blockerDrop', step: at })
+  assert.equal(r.err, false, r.text)
+  assert.equal('blockerAsked' in stepOf((await s.call('get_job', { id: j.id })).json(), at), false)
+})
+
+test('job_command acceptDraft with an open blocker is refused bad_state; force accepts and drops the link', async (t) => {
+  const s = await setup(t), d = await drafted(s), b = await mkJob(s, 'Ask Imre')
+  assert.equal((await s.call('job_command', { id: d.j.id, op: 'waitAdd', step: d.at, j: b.id })).err, false)
+  const no = await s.call('job_command', { id: d.j.id, op: 'acceptDraft', step: d.at })
+  assert.equal(no.err, true); assert.match(no.text, /^bad_state/)
+  const ok = await s.call('job_command', { id: d.j.id, op: 'acceptDraft', step: d.at, force: true })
+  assert.equal(ok.err, false, ok.text)
+  const st = stepOf((await s.call('get_job', { id: d.j.id })).json(), d.at)
+  assert.equal(st.state, 'done'); assert.equal('waitsFor' in st, false)
+})

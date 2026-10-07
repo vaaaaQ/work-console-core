@@ -108,7 +108,7 @@ export function putJob(j: Job) {
 export function applyLocal(id: string, cmd: Cmd) {
   const j = byId(id)
   if (!j) throw new T.CmdError('bad_args', `no job ${id}`)
-  const r = T.apply(CTX, j, cmd)
+  const r = T.apply({ ...CTX, jobOf: byId }, j, cmd)
   r.job.v = (j.v || 0) + 1
   putJob(r.job)
   return { job: r.job, nx: r.nx }

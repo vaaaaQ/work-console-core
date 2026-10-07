@@ -133,3 +133,32 @@ test('a run may create a job, signed LLM, and start one; nothing else', async ()
   await assert.rejects(jobs.cmd(j.id, { op: 'close', st: 'done' }, undefined, 'run'), code(400, 'bad_args'))
   await assert.rejects(jobs.cmd(j.id, { op: 'noteAdd', step: T.atOf(demoCtx(), s.job)!, k: 'q', t: 'x' }, undefined, 'run'), code(400, 'bad_args'))
 })
+
+async function two() {
+  const store = fileStore(join(mkdtempSync(join(tmpdir(), 'wc-bl-')), 's.json'), demoSeed)
+  const jobs = new Jobs({ store, bus: new Bus(), ctx: demoCtx, gate: () => true })
+  const mk = async (t: string) => { const j = await jobs.create({ t, key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' }); return (await jobs.cmd(j.id, { op: 'start' }, j.v)).job }
+  return { jobs, a: await mk('Local stand'), b: await mk('Ask Imre') }
+}
+
+test('waitAdd looks the blocker up in the store and journals on it; waitDel too', async () => {
+  const { jobs, a, b } = await two()
+  const r = await jobs.cmd(a.id, { op: 'waitAdd', step: 'tr', j: b.id, plan: 'go on' })
+  assert.equal(r.job.flow.tr.s, 'wait')
+  assert.match((await jobs.get(b.id))!.jr[0].o, new RegExp(`^Holds ${a.id} “Local stand”: step “.+” waits for this job\.$`))
+  await jobs.cmd(a.id, { op: 'waitDel', step: 'tr', j: b.id })
+  assert.match((await jobs.get(b.id))!.jr[0].o, new RegExp(`^No longer holds ${a.id}`))
+})
+
+test('waitAdd to an unknown job is a 400 bad_args', async () => {
+  const { jobs, a } = await two()
+  await assert.rejects(jobs.cmd(a.id, { op: 'waitAdd', step: 'tr', j: 'J-9999' }), (e: unknown) => e instanceof HttpError && e.status === 400 && e.code === 'bad_args')
+})
+
+test('the console may send blockerClosed; the page may not', async () => {
+  const { jobs, a, b } = await two()
+  await jobs.cmd(a.id, { op: 'waitAdd', step: 'tr', j: b.id })
+  await assert.rejects(jobs.cmd(a.id, { op: 'blockerClosed', step: 'tr', j: b.id, st: 'done' }), (e: unknown) => e instanceof HttpError && e.status === 400)
+  const r = await jobs.cmd(a.id, { op: 'blockerClosed', step: 'tr', j: b.id, st: 'done', out: 'yes' }, undefined, 'console')
+  assert.equal(r.job.flow.tr.s, 'cur')
+})

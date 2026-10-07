@@ -246,6 +246,7 @@ A person still accepts, edits or rejects every draft.
 | When | What |
 |---|---|
 | A step becomes current | on Start, on accept, Mark done or Skip of the step before, and on Return to. 6 s later, if the step is still current with no run and no draft, it is asked with the Ask modal's default text, signed `console` |
+| A blocker closes | the step it freed is asked as above if that made it current. A step that keeps a draft gets a revise reply in the draft's session instead, carrying each closed blocker's outcome and plan, signed `console` |
 | Not a trigger | Reject, Cancel, Reopen step, Resume of a waiting step, a recurring job's new period, a step that was already current, and anything a run does |
 | A run is interrupted | it resumes once by itself when the bridge or the console comes back: its session if it has one, else afresh. Not if its job closed, its step moved on or a newer run took its place. A second interruption, and every failed run, waits for a person |
 
@@ -341,6 +342,10 @@ only one workspace is registered.
 - `draft_reply {id, step, text, intent, wait?}` replies to a draft as the page does. With `wait` (at
   most 50 s) it returns the answer or the new draft; without it, the run id.
 - `job_command rejectDraft` takes `why` as the page does. A reply or redo it starts is signed Claude Code.
+- `job_command waitAdd {step, j, plan?}` makes a step wait for another open job of the workspace, `waitDel {step, j}`
+  removes the link and `blockerDrop {step}` dismisses a blocker a reply asked for. `stepDone` and `acceptDraft` take
+  `force: true` to finish a step whose blockers are still open. `get_job` shows each step's `waitsFor` and, on the
+  blocker, `holds`, the steps of other jobs that wait for it; `holds` is read from every job of the workspace.
 
 ## Notifications
 

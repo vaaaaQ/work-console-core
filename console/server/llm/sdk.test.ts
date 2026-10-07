@@ -137,3 +137,12 @@ test('a run reads nothing of the console home: its tokens, its config and the da
   const deny = permissions([]).disallowedTools
   for (const d of ['Read(~/.work-console/**)', 'Read(**/.work-console/**)', 'Bash(*.work-console*)', 'PowerShell(*.work-console*)']) assert.ok(deny.includes(d), d)
 })
+
+test('open_blocker is offered only when given, and is allowed', () => {
+  const none = async () => {}
+  const base = { submitDraft: none, addArtifact: none, addArtifactFile: none, journal: none }
+  assert.equal(runToolDefs(base).some((d) => d.name === 'open_blocker'), false)
+  const defs = runToolDefs({ ...base, openBlocker: none })
+  assert.ok(defs.some((d) => d.name === 'open_blocker'))
+  for (const d of defs) assert.ok(ALLOW.includes(`mcp__run__${d.name}`), d.name)
+})
