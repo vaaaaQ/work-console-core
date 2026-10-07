@@ -30,8 +30,10 @@ export interface Pack {
   people: { po?: string }
 }
 
-/** [source, channel, text]; {var} fills from the job, the pack or an earlier step */
-export type Tpl = [string, string, string]
+/** [source, channel, text, head]; {var} fills from the job, the pack or an earlier step. A mail with a channel is a
+    new mail: the channel is its To addresses, head its CC and subject; a mail without one replies to the job's mail */
+export type Tpl = [string, string, string, MsgHead?]
+export interface MsgHead { cc?: string; subject?: string }
 
 /** link = where the artifact lives, when an LLM run wrote it to disk */
 export interface Art extends New { n: string; ok: boolean; link?: string }

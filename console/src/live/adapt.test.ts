@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { actFor, adapt, when } from './adapt.ts'
+import { actFor, adapt, isAddr, when } from './adapt.ts'
 
 const now = new Date('2026-09-30T15:00:00Z') // 12:00 at home (UTC−3)
 
@@ -57,4 +57,11 @@ test('actFor maps a send channel to its bridge action', () => {
   assert.deepEqual(actFor('work', 'ACME-512', 't'), { action: 'work.comment', args: { id: 'ACME-512', text: 't' } })
   assert.deepEqual(actFor('mail', 'm2', 't'), { action: 'mail.send', args: { replyTo: 'm2', text: 't' } })
   assert.equal(actFor('pr', 'x', 't'), null)
+})
+
+test('actFor sends a new mail with its head: addresses split on commas, semicolons or spaces, no cc when empty', () => {
+  assert.deepEqual(actFor('mail', 'ignored', 'body', { to: 'a@x.example; b@x.example', cc: 'c@x.example', subject: 'Hi' }),
+    { action: 'mail.send', args: { to: ['a@x.example', 'b@x.example'], cc: ['c@x.example'], subject: 'Hi', text: 'body' } })
+  assert.deepEqual(actFor('mail', '', 'body', { to: 'a@x.example', cc: ' ', subject: 'Hi' })?.args, { to: ['a@x.example'], subject: 'Hi', text: 'body' })
+  assert.deepEqual([isAddr('a@x.example'), isAddr('Sam Rivera'), isAddr('a@')], [true, false, false])
 })

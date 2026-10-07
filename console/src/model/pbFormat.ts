@@ -1,10 +1,18 @@
 import { slugify } from '../lib/util.ts'
-import type { Mode, Playbook, Step, Tpl, Ws } from './types.ts'
+import type { Mode, MsgHead, Playbook, Step, Tpl, Ws } from './types.ts'
 
 /* ===== the playbook file: what Download writes and Add playbook reads =====
    Plain functions over plain data, so the backend checks the builder's steps by the rules Add playbook uses. */
 export const FMT = 'work-console/playbook@1'
-export interface PbMsgFile { via?: string; to?: string; text: string }
+/** a mail with to is a new mail: to and cc are its addresses, comma separated */
+export interface PbMsgFile { via?: string; to?: string; cc?: string; subject?: string; text: string }
+/** a message's CC and subject, when it has any */
+export const headOf = (m: { cc?: unknown; subject?: unknown }): MsgHead | null => {
+  const cc = typeof m.cc === 'string' ? m.cc.trim() : '', subject = typeof m.subject === 'string' ? m.subject.trim() : ''
+  return cc || subject ? { ...(cc ? { cc } : {}), ...(subject ? { subject } : {}) } : null
+}
+/** a planned message as the playbook file writes it */
+export const msgFile = ([via, to, text, head]: Tpl): PbMsgFile => ({ via, to, text, ...(head?.cc ? { cc: head.cc } : {}), ...(head?.subject ? { subject: head.subject } : {}) })
 export interface PbStepFile {
   id: string; title: string; who: Mode; doneWhen: string
   produces?: string[]; messages?: PbMsgFile[]; review?: boolean; output?: string
@@ -26,7 +34,7 @@ export function toInternal(o: PbFile, k: string) {
       c: String(ph.code).toUpperCase(), n: ph.name.trim(), s: ph.steps.map((s) => {
         const id = k + '/' + s.id, st: Step = { id, fid: s.id, t: s.title.trim(), m: s.who, x: s.doneWhen.trim() }
         if (s.produces && s.produces.length) st.a = s.produces.slice()
-        if (s.messages && s.messages.length) { st.msg = s.messages.length; tpl[id] = s.messages.map((m) => [m.via || 'chat', m.to || '', m.text]) }
+        if (s.messages && s.messages.length) { st.msg = s.messages.length; tpl[id] = s.messages.map((m) => { const h = headOf(m); return h ? [m.via || 'chat', m.to || '', m.text, h] : [m.via || 'chat', m.to || '', m.text] }) }
         if (s.review) st.rv = 1
         if (s.output) st.out = s.output
         if (s.act) st.act = s.act
@@ -64,6 +72,8 @@ export function checkPb(o: unknown): string[] {
       if (s.produces != null && !(Array.isArray(s.produces) && s.produces.every(str))) e.push(`${sa}: produces must be a list of names.`)
       if (s.messages != null && !(Array.isArray(s.messages) && s.messages.every((m: any) => m && str(m.text) && (m.via == null || ['chat', 'work', 'mail'].includes(m.via)))))
         e.push(`${sa}: each message needs a text, and via must be chat, work or mail.`)
+      else if (Array.isArray(s.messages) && s.messages.some((m: any) => (m.cc != null || m.subject != null) && !(m.via === 'mail' && str(m.to))))
+        e.push(`${sa}: only a mail with to has cc or a subject.`)
       if (s.review != null && typeof s.review !== 'boolean') e.push(`${sa}: review must be true or false.`)
       if (s.act !== undefined && !str(s.act)) e.push(`${sa}: act must be the name of a console action.`)
     })

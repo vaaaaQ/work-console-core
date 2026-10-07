@@ -4,7 +4,7 @@ import { PRI } from '../data/demo.ts'
 import { PACKS } from '../data/packs.ts'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
-import { actFor } from '../live/adapt.ts'
+import { actFor, addrs, isAddr } from '../live/adapt.ts'
 import {
   S, TPL, allSent, applyLocal, byId, chName, clearNew, ctxRows, isLive, keyShort, llmText, plainT, postToChat, putJob,
   restore, rvState, snap, stepOf, steps,
@@ -75,9 +75,9 @@ export async function doCmd(id: string, c: Cmd, msg: string | null, o: { moveSel
 }
 
 /** live mode: a message goes out through the bridge first and is recorded only once the bridge says ok */
-export async function sendVia(k: string, target: string, text: string, jobId?: string) {
+export async function sendVia(k: string, target: string, text: string, jobId?: string, mail?: { to: string; cc?: string; subject: string }) {
   if (!LIVE.on) return true
-  const a = actFor(k, target, text)
+  const a = actFor(k, target, text, mail)
   if (!a) { toast(`Nothing sends to ${k} yet.`); return false }
   // the job's workspace sends; a message from a source view goes out through the one on screen
   const ws = (jobId && byId(jobId)?.ws) || S.ws
@@ -233,11 +233,18 @@ const targetOf = (j: Job, k: string, lbl: string) => k === 'work' ? keyShort(j) 
 export function tplSend(id: string, sid: string, i: number) {
   const j0 = byId(id)
   if (!j0) return
-  const [k, lbl, t0] = TPL[sid][i], txt = plainT(j0, t0), unk = [...txt.matchAll(/\{(\w+)\}/g)].map((m) => m[1])
+  const [k, lbl, t0, head] = TPL[sid][i], txt = plainT(j0, t0), unk = [...txt.matchAll(/\{(\w+)\}/g)].map((m) => m[1])
+  // a mail with To is a new mail: its head is checked and sent with it
+  const nm = k === 'mail' && !!lbl
   modal({
     title: 'Review and send', form: 'tpl',
     body: <>
-      <div className="src"><Ic n={k === 'work' ? 'file' : 'message'} sm /> {chName(j0, k, lbl)}</div>
+      <div className="src"><Ic n={k === 'work' ? 'file' : k === 'mail' ? 'mail' : 'message'} sm /> {nm ? `${PACKS[j0.ws].src.mail?.n || 'mail'} · new mail` : chName(j0, k, lbl)}</div>
+      {nm ? <>
+        <label className="field"><span>To</span><input className="inp" name="to" required defaultValue={plainT(j0, lbl)} /></label>
+        <label className="field"><span>CC</span><input className="inp" name="cc" defaultValue={plainT(j0, head?.cc || '')} /></label>
+        <label className="field"><span>Subject</span><input className="inp" name="subject" required defaultValue={plainT(j0, head?.subject || '')} /></label>
+      </> : null}
       <label className="field"><span>Message</span><VoiceField name="t" target="people" rows={6} autoFocus defaultValue={txt} ctx={txt} /></label>
       {unk.length ? <p className="why" style={{ margin: 0, color: 'var(--wait)' }}><Ic n="warn" sm /> Fill in {unk.map((u) => '{' + u + '}').join(', ')} before sending.</p> : null}
       <p className="hint" style={{ margin: 0 }}>{LIVE.on ? 'Sends through the bridge; recorded here once it went out.' : 'Demo: sending only records it here.'}</p>
@@ -246,10 +253,16 @@ export function tplSend(id: string, sid: string, i: number) {
     onSubmit: async (fd) => {
       const j = byId(id), t = String(fd.get('t') || '').trim()
       if (!j || !t) return
-      if (/\{\w+\}/.test(t)) { toast('Fill in the {placeholders} first.'); return }
-      if (!(await sendVia(k, targetOf(j, k, lbl), t, id))) return
+      const mail = nm ? { to: String(fd.get('to') || '').trim(), cc: String(fd.get('cc') || '').trim(), subject: String(fd.get('subject') || '').trim() } : undefined
+      if (/\{\w+\}/.test(t) || (mail && /\{\w+\}/.test(mail.to + mail.cc + mail.subject))) { toast('Fill in the {placeholders} first.'); return }
+      if (mail) {
+        const bad = [...addrs(mail.to), ...addrs(mail.cc)].filter((a) => !isAddr(a))
+        if (!addrs(mail.to).length || !mail.subject) { toast('A new mail needs To and a subject.'); return }
+        if (bad.length) { toast(`Not a mail address: ${bad.join(', ')}`); return }
+      }
+      if (!(await sendVia(k, targetOf(j, k, lbl), t, id, mail))) return
       closeModal()
-      const to = chName(j, k, lbl)
+      const to = mail ? chName(j, k, addrs(mail.to).join(', ') + (addrs(mail.cc).length ? `; cc ${addrs(mail.cc).join(', ')}` : '')) : chName(j, k, lbl)
       const r = await doCmd(id, { op: 'sent', step: sid, i, t, to }, null)
       if (!r) return
       if (!LIVE.on) commit(() => postToChat(r.job, k, lbl, t))

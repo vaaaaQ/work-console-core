@@ -131,15 +131,16 @@ function pbOf(v: unknown): Playbook | null {
     throw new HttpError(400, 'bad_args', 'pb must be a playbook: a name n and phases ph, each with steps s that have an id')
   return p
 }
-/** a saved playbook's planned messages: [via, to, text] lists, each under one of its own steps */
+const isHead = (h: unknown) => !!h && typeof h === 'object' && !Array.isArray(h) && Object.entries(h).every(([k, v]) => (k === 'cc' || k === 'subject') && typeof v === 'string')
+/** a saved playbook's planned messages: [via, to, text] lists, a mail's with its head, each under one of its own steps */
 function tplOf(pb: Playbook, v: unknown): Record<string, Tpl[]> | undefined {
   if (v == null) return undefined
   if (typeof v !== 'object' || Array.isArray(v)) throw new HttpError(400, 'bad_args', 'tpl must map step ids to messages')
   const ids = new Set(pb.ph.flatMap((h) => h.s.map((s) => s.id)))
   for (const [sid, list] of Object.entries(v)) {
     if (!ids.has(sid)) throw new HttpError(400, 'bad_args', `tpl names step ${sid}, which the playbook does not have`)
-    if (!Array.isArray(list) || !list.every((m) => Array.isArray(m) && m.length === 3 && m.every((x) => typeof x === 'string')))
-      throw new HttpError(400, 'bad_args', `tpl ${sid} must be a list of [via, to, text]`)
+    if (!Array.isArray(list) || !list.every((m) => Array.isArray(m) && (m.length === 3 || (m.length === 4 && m[0] === 'mail' && isHead(m[3]))) && m.slice(0, 3).every((x) => typeof x === 'string')))
+      throw new HttpError(400, 'bad_args', `tpl ${sid} must be a list of [via, to, text], a mail's with {cc, subject}`)
   }
   return v as Record<string, Tpl[]>
 }

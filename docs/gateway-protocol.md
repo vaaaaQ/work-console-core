@@ -62,7 +62,8 @@ Every endpoint except `/api/events` and `/api/snapshot` answers `200` with one r
 
 Actions the backend knows: `chat.post`, `mail.send`, `review.vote`, `review.comment`,
 `work.setState`, `work.comment`, `work.start` and `time.fill`. `actionId` is unique per
-confirmation, and the gateway should drop a repeat.
+confirmation, and the gateway should drop a repeat. `mail.send` replies with `{replyTo, text}` or
+sends a new mail with `{to, cc?, subject, text}`, `to` and `cc` being lists of addresses.
 
 A work get may list its pictures in `images`, at most 20, each `{ref, name, from}`. Its text names
 each one `[image N]`, N being its place in that list. The list puts the description's, the repro

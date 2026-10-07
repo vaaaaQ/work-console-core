@@ -8,7 +8,7 @@ import { FMT, freeKey, stepProblems } from '../../src/model/pbFormat.ts'
 import type { PbFile, PbStepFile } from '../../src/model/pbFormat.ts'
 import type { BuildForm } from '../../src/model/njForm.ts'
 import * as T from '../../src/model/transitions.ts'
-import type { CtxItem, CtxKind, Mode, Playbook } from '../../src/model/types.ts'
+import type { CtxItem, CtxKind, Mode, Playbook, Tpl } from '../../src/model/types.ts'
 import type { WorkspacePage } from '../../src/workspace.ts'
 import { READY } from '../bridge/wire.ts'
 import type { ConceptReply } from '../bridge/wire.ts'
@@ -84,7 +84,7 @@ const STEP = {
     produces: { type: 'array', items: S }, output: S, review: { type: 'boolean' },
     messages: {
       type: 'array',
-      items: { type: 'object', additionalProperties: false, required: ['via', 'text'], properties: { via: { type: 'string', enum: ['chat', 'work', 'mail'] }, to: S, text: S } },
+      items: { type: 'object', additionalProperties: false, required: ['via', 'text'], properties: { via: { type: 'string', enum: ['chat', 'work', 'mail'] }, to: S, cc: S, subject: S, text: S } },
     },
   },
 }
@@ -118,7 +118,7 @@ const offered = (PB: Record<string, Playbook>, k: string, ws: string) => Object.
 
 function stepOf(s: Record<string, unknown>): PbStepFile {
   const produces = arr(s.produces).filter((p): p is string => typeof p === 'string' && !!p.trim()).map((p) => p.trim())
-  const messages = arr(s.messages).map((m) => { const x = obj(m), to = str(x.to).trim(); return { via: str(x.via) || 'chat', ...(to ? { to } : {}), text: str(x.text) } })
+  const messages = arr(s.messages).map((m) => { const x = obj(m), to = str(x.to).trim(), cc = str(x.cc).trim(), subject = str(x.subject).trim(); return { via: str(x.via) || 'chat', ...(to ? { to } : {}), ...(cc ? { cc } : {}), ...(subject ? { subject } : {}), text: str(x.text) } })
   const output = str(s.output).trim()
   return {
     id: str(s.id).trim(), title: str(s.title).trim(), who: s.who as Mode, doneWhen: str(s.doneWhen).trim(),
@@ -193,7 +193,8 @@ Answer with the whole form. A field the user's words do not touch keeps its valu
 - key: the key of the work item the job is about when the user names one, written as the workspace writes keys; otherwise a short slug of the title, such as weekly-report.
 - project: one of the workspace's projects.
 - playbook: the key of the catalog playbook that fits the job. When none fits, leave it empty and write newPlaybook. Leave both empty to keep the form's choice.
-- newPlaybook: steps for a job no catalog playbook fits. once: true for steps of this job only, false when such jobs will recur and the steps should be saved as a playbook. key: a short slug. Each phase has a code of 1 to 4 letters or digits, a name and at least one step. Each step has an id (letters, digits and dashes, unique), a title, who ("you" for the user, "llm" for an LLM run) and doneWhen. An llm step that drafts a text names its output, one word such as reply; a step that sends it carries messages whose text is "{reply}", via chat (the job's chat), work (a comment on its work item) or mail. The user reviews and sends every message.
+- newPlaybook: steps for a job no catalog playbook fits. once: true for steps of this job only, false when such jobs will recur and the steps should be saved as a playbook. key: a short slug. Each phase has a code of 1 to 4 letters or digits, a name and at least one step. Each step has an id (letters, digits and dashes, unique), a title, who ("you" for the user, "llm" for an LLM run) and doneWhen. An llm step that drafts a text names its output, one word such as reply; a step that sends it carries messages whose text is "{reply}", via chat (the job's chat), work (a comment on its work item) or mail. A mail without to replies to the job's mail; a new mail has to and cc, mail addresses separated by commas, and a subject, and its drafted text is the body alone. The user reviews and sends every message.
+- A job whose result is a new mail needs a step that sends one: a catalog playbook whose send step does not, gets newPlaybook instead. Take the addresses from the sources or the user's words; a person whose address you could not find goes in problems.
 - description: Markdown, in English: what the job is for, what done looks like, and what the user said that a run will need. No attachments and no copies of the context items: those go in context.
 - context: what every LLM run of the job reads. When the chosen playbook says what its jobs need, give that; otherwise choose what the job needs. Kinds: work (a work item by its id; n = its newest comments, 10 by default, at most 20), chat (by its id; n = its newest messages, 10 by default, at most 50), mail (by its id, read whole), note (a knowledge note by its id, read whole). name: how the item reads to the user, such as a chat's name. A note whose playbooks list the chosen playbook reaches every run already. Take ids from source_list, the note index or the user's words; never invent one.
 - due: only when the user named a deadline: ISO 8601 with the home zone's offset, a day without a time meaning 18:00 that day; otherwise the form's.
@@ -222,16 +223,18 @@ export function formOut(f: BuildForm, tz: string) {
   }
 }
 
-const catLine = (k: string, pb: Playbook) => [
+/** where a planned message goes, as the catalog says it */
+const sendsTo = ([via, to]: Tpl) => (via === 'mail' ? (to ? 'a new mail' : "a reply to the job's mail") : via === 'work' ? 'a work item comment' : 'chat')
+const catLine = (k: string, pb: Playbook, TPL: Record<string, Tpl[]>) => [
   `- ${k}: ${pb.n}${pb.d ? ` — ${pb.d}` : ''}`,
   ...(pb.needs ? [`  needs: ${pb.needs}`] : []),
-  ...pb.ph.map((h) => `  ${h.c} ${h.n}: ${h.s.map((s) => `${s.t} (${s.m === 'llm' ? 'LLM' : 'you'})`).join('; ')}`),
+  ...pb.ph.map((h) => `  ${h.c} ${h.n}: ${h.s.map((s) => `${s.t} (${s.m === 'llm' ? 'LLM' : 'you'}${TPL[s.id]?.length ? `; sends ${[...new Set(TPL[s.id].map(sendsTo))].join(', ')}` : ''})`).join('; ')}`),
 ].join('\n')
 const noteLine = (n: NoteIndex) => `- ${n.id}: ${n.title}${n.tags.length ? ` · tags ${n.tags.join(', ')}` : ''}${n.playbooks.length ? ` · read by every run of ${n.playbooks.join(', ')}` : ''}`
 
 /** the prompt: the workspace, now in the home zone, the catalog with what each playbook's jobs need, the note
     index, whether sources can be read, the form, then every say */
-export function buildPrompt(o: { page: WorkspacePage; PB: Record<string, Playbook>; notes: NoteIndex[]; form: BuildForm; say: string[]; now: Date; tz: string; sources: boolean }): string {
+export function buildPrompt(o: { page: WorkspacePage; PB: Record<string, Playbook>; TPL?: Record<string, Tpl[]>; notes: NoteIndex[]; form: BuildForm; say: string[]; now: Date; tz: string; sources: boolean }): string {
   const { page, PB } = o, p = page.pack
   const cat = Object.keys(PB).filter((k) => offered(PB, k, page.id))
   return [
@@ -243,7 +246,7 @@ export function buildPrompt(o: { page: WorkspacePage; PB: Record<string, Playboo
     `Now: ${nowLine(o.now, o.tz)}`,
     '',
     '# Playbooks',
-    ...(cat.length ? cat.map((k) => catLine(k, PB[k])) : ['none']),
+    ...(cat.length ? cat.map((k) => catLine(k, PB[k], o.TPL ?? {})) : ['none']),
     '',
     '# Knowledge notes',
     ...(o.notes.length ? o.notes.map(noteLine) : ['none']),
@@ -341,9 +344,9 @@ export function builder(o: BuilderOpts): Build {
   return async (b, { tz, signal, taken }) => {
     if (!o.sdk.ask) throw new HttpError(501, 'no_builder', 'this console cannot run the builder')
     if (signal?.aborted) throw new HttpError(499, 'aborted', 'the page dropped the request')
-    const { PB } = o.ctx()
+    const { PB, TPL } = o.ctx()
     const notes = await o.notes.list().catch(() => [])
-    const prompt = buildPrompt({ page: o.page, PB, notes, form: b.form, say: b.say, now: o.now?.() ?? new Date(), tz, sources: !!o.source })
+    const prompt = buildPrompt({ page: o.page, PB, TPL, notes, form: b.form, say: b.say, now: o.now?.() ?? new Date(), tz, sources: !!o.source })
     const tools = buildTools({ ws: o.ws, notes: o.notes, source: o.source, me: o.page.me, key: (id) => o.page.board.key(id) })
     const cwd = o.cwd ?? join(tmpdir(), 'work-console-build')
     mkdirSync(cwd, { recursive: true })

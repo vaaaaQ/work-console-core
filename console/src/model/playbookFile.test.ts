@@ -85,3 +85,16 @@ test("pbMsgs gives a playbook's planned messages by step id, as the backend keep
   try { assert.deepEqual(pbMsgs('mx'), { 'mx/tell': [['chat', 'team chat', 'hi all,\n{key} is done.']] }) }
   finally { delete PB.mx; delete TPL['mx/tell'] }
 })
+
+test('a new mail keeps its cc and subject through re-add and download; only a mail with to may have them', () => {
+  const f = blankFile()
+  f.phases[1].steps[0].messages = [{ via: 'mail', to: 'a@x.example', cc: 'b@x.example', subject: '{key} is done', text: '{key} is done.' }]
+  assert.deepEqual(checkPb(f), [])
+  assert.deepEqual(toInternal(f, 'mailer').tpl['mailer/tell'], [['mail', 'a@x.example', '{key} is done.', { cc: 'b@x.example', subject: '{key} is done' }]])
+  addPb({ ...f, key: 'mailer' })
+  try {
+    assert.deepEqual(pbToFile('mailer').phases[1].steps[0].messages, f.phases[1].steps[0].messages)
+  } finally { for (const s of PB.mailer.ph.flatMap((h) => h.s)) delete TPL[s.id]; delete PB.mailer }
+  f.phases[1].steps[0].messages = [{ via: 'chat', to: 'team chat', subject: 'x', text: 'hi' }]
+  assert.ok(checkPb(f).some((e) => e.includes('only a mail with to has cc or a subject')))
+})

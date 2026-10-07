@@ -50,6 +50,9 @@ new round.*
 - A playbook added in the page, or made by the job builder, is stored with its planned messages, as
   the state document `{pb, tpl}`. The backend's templates are the core's, the workspace page's and
   every stored playbook's, so a planned message can be marked sent on any playbook.
+- A planned message is `[via, to, text]`: a chat by name, a comment on the job's work item, or a mail.
+  A mail without `to` replies to the job's mail; one with `to` is a new mail, `to` its addresses and a
+  fourth element `{cc, subject}` its head. The send dialog shows To, CC and Subject for the user to check.
 - `needs` says in plain words what context a playbook's jobs need. A playbook with `once: 1` holds
   one job's own steps: no playbook list, the builder's catalog or `list_playbooks` shows it.
 - The transition rules (start, done, skip, return, block, rounds) are in `console/src/model/transitions.ts`.

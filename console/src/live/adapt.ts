@@ -59,9 +59,18 @@ export const adapt = {
   },
 }
 
-export function actFor(k: string, target: string, text: string): { action: string; args: Record<string, unknown> } | null {
+/** a list of mail addresses as people write it: commas, semicolons or spaces between */
+export const addrs = (s: string) => s.split(/[\s,;]+/).filter(Boolean)
+export const isAddr = (s: string) => /^[^@\s]+@[^@\s]+$/.test(s)
+
+/** mail = a new mail's head; without it a mail replies to target */
+export function actFor(k: string, target: string, text: string, mail?: { to: string; cc?: string; subject: string }): { action: string; args: Record<string, unknown> } | null {
   if (k === 'chat') return { action: 'chat.post', args: { chatName: target, text } }
   if (k === 'work') return { action: 'work.comment', args: { id: target, text } }
+  if (k === 'mail' && mail) {
+    const cc = addrs(mail.cc || '')
+    return { action: 'mail.send', args: { to: addrs(mail.to), ...(cc.length ? { cc } : {}), subject: mail.subject, text } }
+  }
   if (k === 'mail') return { action: 'mail.send', args: { replyTo: target, text } }
   return null
 }

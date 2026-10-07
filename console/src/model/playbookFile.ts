@@ -1,6 +1,6 @@
 import { MODES } from '../data/core.ts'
 import { store } from '../lib/util.ts'
-import { FMT, checkPb, toInternal } from './pbFormat.ts'
+import { FMT, checkPb, msgFile, toInternal } from './pbFormat.ts'
 import type { PbFile, PbStepFile } from './pbFormat.ts'
 import { PB, S, TPL, steps } from './world.ts'
 import type { Mode, Tpl } from './types.ts'
@@ -17,7 +17,7 @@ export function pbToFile(k: string): PbFile {
       code: ph.c, name: ph.n, steps: ph.s.map((s) => {
         const o: PbStepFile = { id: s.fid || s.id, title: s.t, who: s.m, doneWhen: s.x }
         if (s.a) o.produces = s.a.slice()
-        if (TPL[s.id]) o.messages = TPL[s.id].map(([via, to, text]) => ({ via, to, text }))
+        if (TPL[s.id]) o.messages = TPL[s.id].map(msgFile)
         if (s.rv) o.review = true
         if (s.out) o.output = s.out
         if (s.act) o.act = s.act

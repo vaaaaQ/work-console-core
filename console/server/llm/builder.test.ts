@@ -395,3 +395,12 @@ test('the ends of a build: no ask, a page gone before or during it, too slow, si
   await assert.rejects(setup(askSdk(async function* () { /* nothing */ }).sdk).build(B, { tz: HOME }), /the builder ended without a form/)
   await assert.rejects(setup(askSdk(async function* () { throw new Error('spawn failed') }).sdk).build(B, { tz: HOME }), (x: unknown) => refused(502, 'build_failed')(x) && /spawn failed/.test((x as Error).message))
 })
+
+test('the catalog says where each step sends, so a mail job does not land on a chat-only playbook', () => {
+  const T = { ...demoCtx().TPL }
+  const chat = buildPrompt({ page: acme, PB, TPL: T, notes: [], form: empty(), say: ['x'], now: NOW, tz: HOME, sources: false })
+  assert.ok(chat.split('\n').includes('  SN Send: Send it (you; sends chat)'), chat)
+  const mail = buildPrompt({ page: acme, PB, TPL: { ...T, sn: [['mail', 'a@x.example', '{draft}', { subject: 'Hi' }], ['mail', '', '{draft}']] }, notes: [], form: empty(), say: ['x'], now: NOW, tz: HOME, sources: false })
+  assert.ok(mail.split('\n').includes("  SN Send: Send it (you; sends a new mail, a reply to the job's mail)"), mail)
+  assert.ok(SYSTEM.includes('A job whose result is a new mail needs a step that sends one'))
+})
