@@ -460,3 +460,16 @@ test('job_command rejectDraft with why redoes the step, signed Claude Code; with
   const plain = (await s.call('job_command', { id: d.j.id, op: 'rejectDraft', step: d.at })).json()
   assert.equal('run' in plain, false); assert.equal(s.sessions.length, 2)
 })
+
+test('job_command links a blocker; get_job shows waitsFor on the step and holds on the blocker', async (t) => {
+  const s = await setup(t)
+  const mk = async (title: string) => { const j = await s.jobs.create({ t: title, key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' }); return (await s.jobs.cmd(j.id, { op: 'start' }, j.v)).job }
+  const a = await mk('Local stand'), b = await mk('Ask Imre')
+  const r = await s.call('job_command', { id: a.id, op: 'waitAdd', step: 'tr', j: b.id, plan: 'if yes, go on' })
+  assert.equal(r.err, false, r.text)
+  const ga = (await s.call('get_job', { id: a.id })).json() as { phases: { steps: { id: string; waitsFor?: unknown }[] }[] }
+  assert.deepEqual(ga.phases.flatMap((p) => p.steps).find((x) => x.id === 'tr')!.waitsFor, [{ job: b.id, title: 'Ask Imre', state: 'open', plan: 'if yes, go on' }])
+  assert.deepEqual((await s.call('get_job', { id: b.id })).json().holds, [{ job: a.id, title: 'Local stand', step: 'tr' }])
+  assert.match((await s.call('job_command', { id: a.id, op: 'stepDone', step: 'tr' })).text, /^bad_state/)
+  assert.equal((await s.call('job_command', { id: a.id, op: 'stepDone', step: 'tr', force: true })).err, false)
+})

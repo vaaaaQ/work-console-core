@@ -3,6 +3,7 @@ import { existsSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { columns } from '../../src/data/board.ts'
 import { KINDS, ctxOf, parseWorkId } from '../../src/model/context.ts'
+import { holdsOf } from '../../src/model/blockers.ts'
 import { thread } from '../../src/model/thread.ts'
 import * as T from '../../src/model/transitions.ts'
 import { INTENTS, SESSION_OPS } from '../../src/model/types.ts'
@@ -53,7 +54,7 @@ export function brief(x: T.Ctx, j: Job, ws: string) {
 }
 
 /** runs = the space's, for each step's conversation: there only once a reply has been made */
-export function detail(x: T.Ctx, j: Job, ws: string, runs: RunRec[] = []) {
+export function detail(x: T.Ctx, j: Job, ws: string, runs: RunRec[] = [], all: Job[] = []) {
   const at = T.atOf(x, j)
   return {
     ...brief(x, j, ws), v: j.v, current: at, roundFrom: j.rf ?? null, chat: j.chat, mail: j.mail, description: j.d,
@@ -66,12 +67,15 @@ export function detail(x: T.Ctx, j: Job, ws: string, runs: RunRec[] = []) {
           id: s.id, title: s.t, who: s.m, state: f.s, doneWhen: s.x, meta: f.m || undefined,
           notes: f.b.length ? f.b.map((b, i) => ({ i, kind: b.k, text: b.t, open: !!b.o, answer: b.r || undefined })) : undefined,
           draft: f.dr ? clip(f.dr.t) : undefined, output: f.out ? clip(f.out) : undefined, running: f.run ? true : undefined,
+          waitsFor: f.w?.length ? f.w.map((l) => ({ job: l.j, title: all.find((x) => x.id === l.j)?.t ?? l.t, state: l.st, plan: l.plan, outcome: l.out ? clip(l.out) : undefined })) : undefined,
+          blockerAsked: f.bb?.say,
           conversation: talk.some((r) => r.parent) ? talk.map((r) => ({ q: clip(r.q), intent: r.intent, state: r.state, a: r.a ? clip(r.a) : undefined })) : undefined,
           artifacts: f.arts.length ? f.arts.map((a) => a.n + (a.ok ? '' : ' (planned)')) : undefined,
           plannedMessages: (x.TPL[s.id] || []).length ? (x.TPL[s.id] || []).map((_, i) => (f.sent[i] ? `${i}: sent` : `${i}: not sent`)) : undefined,
         }
       }),
     })),
+    holds: (() => { const h = holdsOf(all, j.id); return h.length ? h.map((r) => ({ job: r.job.id, title: r.job.t, step: r.step })) : undefined })(),
     rounds: j.rounds?.length ? j.rounds.map((r) => ({ n: r.n, from: r.from, ended: r.at, by: r.by, why: r.why })) : undefined,
     journal: j.jr.slice(0, 10).map((e) => `${e.ts} ${e.a}: ${e.o} ${e.c} Next: ${e.n}`),
   }
@@ -133,9 +137,9 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
     },
     {
       name: 'get_job', description: 'One job in full: every step with its state, notes, draft, output, artifacts and planned messages, and the replies to its draft once there are any; '
-        + 'past rounds; the last 10 journal entries.',
+        + 'waitsFor and holds (the steps of other jobs that wait for this one), past rounds; the last 10 journal entries.',
       inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'job id, e.g. J-0412' } }, required: ['id'] },
-      async run(a) { const { sp, j } = await get(a.id); return detail(sp.ctx(), j, sp.id, await sp.runner.all()) },
+      async run(a) { const { sp, j } = await get(a.id); return detail(sp.ctx(), j, sp.id, await sp.runner.all(), await sp.jobs.all()) },
     },
     {
       name: 'job_command',
@@ -144,6 +148,8 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
         + 'acceptDraft {step, text?: edited text}; noteAdd {step, k: q question|c contradiction|d design note|p problem, t}; noteAnswer {step, i, r}; noteReopen {step, i}; '
         + 'sent {step, i: planned message index, t: the text you sent, to: channel} (record only, send it yourself first); vote {step, n: reviewer, v}; '
         + 'nudged {to}; replied {subj}; returnTo {step, why}; describe {d: the description, Markdown in English, the user\'s part of every LLM run; empty removes it}. '
+        + 'waitAdd {step, j: an open job of the same workspace the step waits for, plan?: what the step does with its outcome}; waitDel {step, j}; blockerDrop {step}; '
+        + 'stepDone and acceptDraft take force: true to finish a step whose blockers are still open (they are removed). '
         + 'A step is its id or exact title.',
       inputSchema: {
         type: 'object', required: ['id', 'op'],
@@ -151,7 +157,7 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
           id: { type: 'string' }, op: { type: 'string', enum: SESSION_OPS.filter((o) => !o.startsWith('ctx')) }, step: { type: 'string' }, why: { type: 'string' }, m: { type: 'string' },
           text: { type: 'string' }, k: { type: 'string', enum: ['q', 'c', 'd', 'p'] }, t: { type: 'string' }, i: { type: 'integer' }, r: { type: 'string' },
           n: { type: 'string' }, v: { type: 'integer' }, st: { type: 'string', enum: ['done', 'cancelled'] }, note: { type: 'string' }, to: { type: 'string' }, subj: { type: 'string' },
-          d: { type: 'string' },
+          d: { type: 'string' }, j: { type: 'string' }, plan: { type: 'string' }, force: { type: 'boolean' },
         },
       },
       async run(a, s) { const { id, ...c } = a; return command(s, id, c) },
