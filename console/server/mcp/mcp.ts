@@ -148,7 +148,7 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
         + 'acceptDraft {step, text?: edited text}; noteAdd {step, k: q question|c contradiction|d design note|p problem, t}; noteAnswer {step, i, r}; noteReopen {step, i}; '
         + 'sent {step, i: planned message index, t: the text you sent, to: channel} (record only, send it yourself first); vote {step, n: reviewer, v}; '
         + 'nudged {to}; replied {subj}; returnTo {step, why}; describe {d: the description, Markdown in English, the user\'s part of every LLM run; empty removes it}. '
-        + 'waitAdd {step, j: an open job of the same workspace the step waits for, plan?: what the step does with its outcome; another workspace, a closed job or a cycle is refused bad_args}; waitDel {step, j}; blockerDrop {step}; '
+        + 'waitAdd {step, j: an open job of the same workspace the step waits for, plan?: what the step does with its outcome; another workspace or a cycle is refused bad_args, a closed job bad_state}; waitDel {step, j}; blockerDrop {step}; '
         + 'stepDone and acceptDraft take force: true to finish a step whose blockers are still open (the open links are dropped). '
         + 'A step is its id or exact title.',
       inputSchema: {
