@@ -377,6 +377,7 @@ export class Runner {
       ...(rec.parent ? {
         openBlocker: async (say: string) => {
           if (l.blocked != null) throw new Error('the blocker builder was already opened')
+          if (l.drafted) throw new Error('a draft was already submitted; the blocker builder cannot open')
           await this.jobs.cmd(rec.job, { op: 'runBlocker', step: rec.step, say }, undefined, 'runner')
           l.blocked = say
         },
