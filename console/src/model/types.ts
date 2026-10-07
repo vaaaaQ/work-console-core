@@ -45,9 +45,14 @@ export interface Draft extends New { t: string; at: string; q?: string }
 /** id = the backend's run record; absent in the demo; reply = it continues the draft's session, so the draft stays */
 export interface Run { q: string; at: number; id?: string; reply?: 1 }
 export interface Sent { at: string; t: string }
+/** a step's blocker: j = the job it waits for, t = its title when linked, st = its state as last seen,
+    plan = what to do with its outcome, out = its outcome, copied in when it closed, at = when it closed */
+export interface WaitLink { j: string; t?: string; st: 'open' | 'done' | 'cancelled'; plan?: string; out?: string; at?: string }
+/** w = the jobs this step waits for; bb = a blocker the user asked for in a reply, waiting for the builder */
 export interface Flow extends New {
   s: NodeState; m: string; arts: Art[]; b: Badge[]; rv: Review | null; dr: Draft | null
   out: string | null; run: Run | null; sent: Record<number, Sent>
+  w?: WaitLink[]; bb?: { say: string; at: string }
 }
 export type StepOverride = Partial<Pick<Flow, 's' | 'm' | 'arts' | 'b' | 'rv' | 'dr' | 'out'>>
 
@@ -77,12 +82,14 @@ export interface Job extends JobSeed { flow: Record<string, Flow>; ts: number; j
 /** a job change; the backend-only ops come from the LLM runner */
 export type Cmd =
   | { op: 'start' } | { op: 'close'; st: 'done' | 'cancelled'; note?: string } | { op: 'reopen' }
-  | { op: 'stepDone' | 'stepSkip' | 'stepResume' | 'stepReopen'; step: string }
+  /** force = done although blockers are open; they are removed */
+  | { op: 'stepDone'; step: string; force?: boolean }
+  | { op: 'stepSkip' | 'stepResume' | 'stepReopen'; step: string }
   /** why = the reason; with one the backend redoes the step in a fresh session */
   | { op: 'rejectDraft'; step: string; why?: string }
   | { op: 'stepWait'; step: string; m: string }
-  /** said = accepted on the replier's word, by an accept reply */
-  | { op: 'acceptDraft'; step: string; text?: string; said?: boolean }
+  /** said = accepted on the replier's word, by an accept reply; force as for stepDone */
+  | { op: 'acceptDraft'; step: string; text?: string; said?: boolean; force?: boolean }
   | { op: 'noteAdd'; step: string; k: BadgeKind; t: string }
   | { op: 'noteAnswer'; step: string; i: number; r: string } | { op: 'noteReopen'; step: string; i: number }
   | { op: 'sent'; step: string; i: number; t: string; to: string }
@@ -103,9 +110,16 @@ export type Cmd =
   | { op: 'ctxAdd'; k: CtxKind; id: string; n?: number; name?: string }
   | { op: 'ctxSet'; k: CtxKind; id: string; n: number } | { op: 'ctxDel'; k: CtxKind; id: string }
   | { op: 'describe'; d: string }
+  /** j = the job of this workspace the step waits for; plan = what to do with its outcome */
+  | { op: 'waitAdd'; step: string; j: string; plan?: string } | { op: 'waitDel'; step: string; j: string }
+  /** the console, when a blocker closed: out = its outcome */
+  | { op: 'blockerClosed'; step: string; j: string; st: 'done' | 'cancelled'; out?: string }
+  /** a reply run asked for a blocker: the run ends, the draft stays, say waits for the builder */
+  | { op: 'runBlocker'; step: string; say: string } | { op: 'blockerDrop'; step: string }
 /** ops the page may send; the rest belong to the LLM runner */
 export const PAGE_OPS = ['start', 'close', 'reopen', 'stepDone', 'stepSkip', 'stepResume', 'stepReopen', 'rejectDraft', 'stepWait',
-  'acceptDraft', 'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'nudged', 'replied', 'schedule', 'ctxAdd', 'ctxSet', 'ctxDel', 'describe'] as const
+  'acceptDraft', 'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'nudged', 'replied', 'schedule', 'ctxAdd', 'ctxSet', 'ctxDel', 'describe',
+  'waitAdd', 'waitDel', 'blockerDrop'] as const
 /** ops a Claude Code session may send through the console's MCP: the page's, plus returning to a passed step */
 export const SESSION_OPS = [...PAGE_OPS, 'returnTo'] as const
 

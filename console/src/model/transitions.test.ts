@@ -366,3 +366,147 @@ test('rejectDraft with why journals the reason; acceptDraft said journals the wo
   const a = apply({ ...X, by: 'Claude Code' }, j, { op: 'acceptDraft', step: at, said: true }).job
   assert.match(a.jr[0].o, /as said in the reply/); assert.equal(a.jr[0].a, 'Claude Code')
 })
+
+/* ===== blockers ===== */
+const mkJ = (id: string, t = `job ${id}`): Job => apply(X, freshJob(X, id, { t, key: 'NEW', pb: 'action', prj: '', ws: 'acme' }), { op: 'start' }).job
+function world(...js: Job[]) {
+  const m = new Map(js.map((j) => [j.id, j]))
+  const x: Ctx = { ...X, jobOf: (id) => m.get(id) }
+  const run = (id: string, c: Parameters<typeof apply>[2]) => { const r = apply(x, m.get(id)!, c); m.set(id, r.job); return r }
+  return { x, run, get: (id: string) => m.get(id)! }
+}
+const withDraftOn = (w: ReturnType<typeof world>, id: string, step: string) => {
+  w.run(id, { op: 'runStart', step, q: 'go', id: 'R1' }); w.run(id, { op: 'runDraft', step, t: 'the draft' })
+}
+
+test('waitAdd on the current step makes it wait, names the blocker and journals', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2', 'Ask Imre'))
+  const { job } = w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2', plan: 'if yes, go on' })
+  assert.equal(job.flow.tr.s, 'wait')
+  assert.equal(job.flow.tr.m, 'waits for A-2')
+  assert.deepEqual(job.flow.tr.w, [{ j: 'A-2', t: 'Ask Imre', st: 'open', plan: 'if yes, go on' }])
+  assert.equal(job.st, 'waiting-external')
+  assert.match(job.jr[0].o, /waits for A-2 “Ask Imre”/)
+})
+
+test('waitAdd refuses itself, unknown jobs, other workspaces, closed jobs, duplicates, done steps and steps with a run', () => {
+  const other = mkJ('B-1'); other.ws = 'beta'
+  const closed = mkJ('A-3'); closed.st = 'done'
+  const w = world(mkJ('A-1'), mkJ('A-2'), other, closed)
+  code(() => w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-1' }), 'bad_args')
+  code(() => w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-404' }), 'bad_args')
+  code(() => w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'B-1' }), 'bad_args')
+  code(() => w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-3' }), 'bad_state')
+  w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' })
+  code(() => w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' }), 'bad_state')
+  const v = world(mkJ('A-1'), mkJ('A-2'))
+  v.run('A-1', { op: 'stepDone', step: 'tr' })
+  code(() => v.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' }), 'bad_state')
+  v.run('A-1', { op: 'runStart', step: 'dr', q: 'go', id: 'R1' })
+  code(() => v.run('A-1', { op: 'waitAdd', step: 'dr', j: 'A-2' }), 'bad_state')
+})
+
+test('waitAdd refuses a cycle, also through a third job', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'), mkJ('A-3'))
+  w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' })
+  code(() => w.run('A-2', { op: 'waitAdd', step: 'tr', j: 'A-1' }), 'bad_args')
+  w.run('A-2', { op: 'waitAdd', step: 'tr', j: 'A-3' })
+  code(() => w.run('A-3', { op: 'waitAdd', step: 'dr', j: 'A-1' }), 'bad_args')
+})
+
+test('a future step only keeps the link; moving onto it lands on wait', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'))
+  let { job } = w.run('A-1', { op: 'waitAdd', step: 'dr', j: 'A-2' })
+  assert.equal(job.flow.dr.s, 'fut'); assert.equal(job.flow.tr.s, 'cur')
+  ;({ job } = w.run('A-1', { op: 'stepDone', step: 'tr' }))
+  assert.equal(job.flow.dr.s, 'wait'); assert.equal(job.flow.dr.m, 'waits for A-2')
+})
+
+test('blockerClosed done: the step goes on with the outcome; the same data again changes nothing', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'))
+  w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' })
+  const r = w.run('A-1', { op: 'blockerClosed', step: 'tr', j: 'A-2', st: 'done', out: 'Imre confirmed' })
+  assert.equal(r.job.flow.tr.s, 'cur'); assert.equal(r.job.flow.tr.m, ''); assert.equal(r.nx, 'tr')
+  assert.equal(r.job.flow.tr.w![0].st, 'done'); assert.equal(r.job.flow.tr.w![0].out, 'Imre confirmed')
+  assert.equal(r.job.flow.tr.w![0].at, '2026-09-30T12:00:00.000Z')
+  const again = w.run('A-1', { op: 'blockerClosed', step: 'tr', j: 'A-2', st: 'done', out: 'Imre confirmed' })
+  assert.deepEqual(again.job.flow, r.job.flow); assert.equal(again.job.jr.length, r.job.jr.length)
+})
+
+test('two blockers: one done keeps it waiting, a cancelled one makes it bad with a problem note, removing that lets the rest decide', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'), mkJ('A-3'), mkJ('A-4'))
+  w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' }); w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-3' }); w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-4' })
+  let { job } = w.run('A-1', { op: 'blockerClosed', step: 'tr', j: 'A-2', st: 'done' })
+  assert.equal(job.flow.tr.s, 'wait'); assert.equal(job.flow.tr.m, 'waits for A-3, A-4')
+  ;({ job } = w.run('A-1', { op: 'blockerClosed', step: 'tr', j: 'A-3', st: 'cancelled' }))
+  assert.equal(job.flow.tr.s, 'bad'); assert.equal(job.flow.tr.m, 'blocker A-3 cancelled')
+  assert.ok(job.flow.tr.b.some((b) => b.k === 'p' && b.o && b.t.includes('A-3')))
+  assert.ok(needsYou(w.x, job))
+  ;({ job } = w.run('A-1', { op: 'waitDel', step: 'tr', j: 'A-3' }))
+  assert.equal(job.flow.tr.s, 'wait'); assert.equal(job.flow.tr.m, 'waits for A-4')
+  ;({ job } = w.run('A-1', { op: 'blockerClosed', step: 'tr', j: 'A-4', st: 'done' }))
+  assert.equal(job.flow.tr.s, 'cur')
+})
+
+test('a draft keeps the step waiting after the last blocker closes', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'))
+  withDraftOn(w, 'A-1', 'tr')
+  w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' })
+  const { job, nx } = w.run('A-1', { op: 'blockerClosed', step: 'tr', j: 'A-2', st: 'done', out: 'ok' })
+  assert.equal(job.flow.tr.s, 'wait'); assert.equal(nx, null); assert.equal(job.flow.tr.dr!.t, 'the draft')
+})
+
+test('stepDone and acceptDraft are refused while a blocker is open; force drops the open links and journals it', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'))
+  withDraftOn(w, 'A-1', 'tr')
+  w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' })
+  code(() => w.run('A-1', { op: 'stepDone', step: 'tr' }), 'bad_state')
+  code(() => w.run('A-1', { op: 'acceptDraft', step: 'tr' }), 'bad_state')
+  const { job } = w.run('A-1', { op: 'acceptDraft', step: 'tr', force: true })
+  assert.equal(job.flow.tr.s, 'done'); assert.equal(job.flow.tr.w, undefined)
+  assert.ok(job.jr.some((e) => /Dropped blocker A-2/.test(e.o)))
+})
+
+test('stepResume is refused while a blocker is open', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'))
+  w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' })
+  code(() => w.run('A-1', { op: 'stepResume', step: 'tr' }), 'bad_state')
+})
+
+test('returnTo keeps open blockers and lands on wait', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'))
+  w.run('A-1', { op: 'waitAdd', step: 'sn', j: 'A-2' })
+  w.run('A-1', { op: 'stepDone', step: 'tr' })
+  let { job } = w.run('A-1', { op: 'returnTo', step: 'tr', why: 'redo' })
+  assert.equal(job.flow.tr.s, 'cur')
+  assert.deepEqual(job.flow.sn.w, [{ j: 'A-2', t: 'job A-2', st: 'open' }])
+  w.run('A-1', { op: 'stepDone', step: 'tr' })
+  ;({ job } = w.run('A-1', { op: 'stepDone', step: 'dr' }))
+  assert.equal(job.flow.sn.s, 'wait'); assert.equal(job.flow.sn.m, 'waits for A-2')
+})
+
+test('runBlocker ends the run, keeps the draft and asks the user; waitAdd or blockerDrop clears it', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'))
+  assert.deepEqual(w.run('A-1', { op: 'runBlocker', step: 'tr', say: 'x' }).job.flow.tr.bb, undefined)
+  withDraftOn(w, 'A-1', 'tr')
+  w.run('A-1', { op: 'runReply', step: 'tr', q: 'wait for Imre', id: 'R2', intent: 'revise' })
+  let { job } = w.run('A-1', { op: 'runBlocker', step: 'tr', say: 'wait for Imre to confirm' })
+  assert.equal(job.flow.tr.run, null); assert.equal(job.flow.tr.s, 'wait'); assert.equal(job.flow.tr.dr!.t, 'the draft')
+  assert.equal(job.flow.tr.bb!.say, 'wait for Imre to confirm')
+  assert.ok(needsYou(w.x, job))
+  ;({ job } = w.run('A-1', { op: 'blockerDrop', step: 'tr' }))
+  assert.equal(job.flow.tr.bb, undefined)
+  w.run('A-1', { op: 'runReply', step: 'tr', q: 'again', id: 'R3', intent: 'revise' })
+  w.run('A-1', { op: 'runBlocker', step: 'tr', say: 'again' })
+  ;({ job } = w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' }))
+  assert.equal(job.flow.tr.bb, undefined)
+})
+
+test('a cancelled link on a future step makes it bad once reached', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'))
+  w.run('A-1', { op: 'waitAdd', step: 'dr', j: 'A-2' })
+  w.run('A-1', { op: 'blockerClosed', step: 'dr', j: 'A-2', st: 'cancelled' })
+  assert.equal(w.get('A-1').flow.dr.s, 'fut')
+  const { job } = w.run('A-1', { op: 'stepDone', step: 'tr' })
+  assert.equal(job.flow.dr.s, 'bad'); assert.equal(job.flow.dr.m, 'blocker A-2 cancelled')
+})

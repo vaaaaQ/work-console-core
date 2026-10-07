@@ -2,6 +2,7 @@ import { BK } from '../data/core.ts'
 import { PACKS } from '../data/packs.ts'
 import { clone, slugify, tfmt } from '../lib/util.ts'
 import { fromWall, midnight, offsetAt } from '../lib/zone.ts'
+import { openOf, reaches, settled, waitsM } from './blockers.ts'
 import { KINDS, ctxDefaults, ctxLabel, ctxOf, ctxUnit, parseWorkId } from './context.ts'
 import type { Kind } from './context.ts'
 import type {
@@ -11,8 +12,9 @@ import type {
 /* The one place for job transitions: the page (demo and live) and the backend run the same code.
    apply() never mutates its input; it returns the changed copy. */
 
-/** by = who the journal names for this change: the page and its runs are 'you', a Claude Code session or the console itself sign their own */
-export interface Ctx { PB: Record<string, Playbook>; TPL: Record<string, Tpl[]>; now?: () => Date; by?: string }
+/** by = who the journal names for this change: the page and its runs are 'you', a Claude Code session or the console itself sign their own;
+    jobOf = another job by its id, for the checks a link needs; absent = links cannot be added */
+export interface Ctx { PB: Record<string, Playbook>; TPL: Record<string, Tpl[]>; now?: () => Date; by?: string; jobOf?: (id: string) => Job | undefined }
 export type CmdCode = 'bad_step' | 'bad_state' | 'bad_args'
 export class CmdError extends Error {
   code: CmdCode
@@ -38,7 +40,7 @@ export const unsentAt = (x: Ctx, j: Job) => {
 export const dueFrom = (j: Job) => (j.due ? midnight(Date.parse(j.due), j.lead || 0) : null)
 export const dueNow = (x: Ctx, j: Job) => { const f = dueFrom(j); return f != null && nowOf(x).getTime() >= f }
 export const needsYou = (x: Ctx, j: Job) => !isClosed(j) && (j.st === 'waiting-user' || j.st === 'ready' || hasDraft(j) || unsentAt(x, j)
-  || flows(j).some((f) => f.s === 'bad' || f.b.some((b) => b.o)) || dueNow(x, j))
+  || flows(j).some((f) => f.s === 'bad' || f.b.some((b) => b.o)) || dueNow(x, j) || flows(j).some((f) => !!f.bb))
 /** the same wall-clock day and time one month on, kept inside a shorter month */
 export function nextMonth(iso: string) {
   const ms = Date.parse(iso), d = new Date(ms + offsetAt(ms)), day = d.getUTCDate()
@@ -192,13 +194,28 @@ function ctxEdit(x: Ctx, j: Job, c: Extract<Cmd, { op: 'ctxAdd' | 'ctxSet' | 'ct
 }
 
 /* ===== commands ===== */
+/** puts a reached step where its blockers and draft say; true when that made it current */
+function settle(f: Flow): boolean {
+  const g = settled(f)
+  if (!g) return false
+  const was = f.s
+  f.s = g
+  if (g === 'wait' && openOf(f).length) f.m = waitsM(f)
+  else if (g === 'bad') f.m = `blocker ${(f.w || []).filter((l) => l.st === 'cancelled').map((l) => l.j).join(', ')} cancelled`
+  else if (g === 'cur' && was !== 'cur') f.m = ''
+  if (was !== g) f.nw = 1
+  return was !== 'cur' && g === 'cur'
+}
+/** a step the flow moves onto: current, unless its blockers say otherwise */
+function onto(g: Flow) { g.s = 'cur'; g.nw = 1; settle(g) }
+
 function advance(x: Ctx, j: Job, sid: string, state: NodeState) {
   const f = j.flow[sid]
   f.s = state; f.nw = 1; f.dr = null
   if (state === 'done') f.arts.forEach((a) => { if (!a.ok) { a.ok = true; a.nw = 1 } })
   if (j.st === 'draft' || j.st === 'ready') j.st = 'active'
   const nx = atOf(x, j)
-  if (nx) { const g = j.flow[nx]; if (g.s === 'fut' || g.s === 'tpl') { g.s = 'cur'; g.nw = 1 } }
+  if (nx) { const g = j.flow[nx]; if (g.s === 'fut' || g.s === 'tpl') onto(g) }
   else if (j.st === 'recurring') {
     steps(x, j.pb).forEach((s) => { const g = j.flow[s.id]; g.s = s.msg ? 'tpl' : 'fut'; g.out = null; g.sent = {}; g.m = ''; g.arts.forEach((a) => { a.ok = false; delete a.link }) })
     const first = steps(x, j.pb)[0]; j.flow[first.id].s = 'cur'
@@ -234,8 +251,11 @@ function returnTo(x: Ctx, j: Job, sid: string, why: string) {
   }
   j.rounds = [...rounds, kept]; j.rf = sid
   const back = all.slice(ti)
-  back.forEach((s) => { const open = j.flow[s.id].b.filter((b) => b.o); j.flow[s.id] = { ...blank(s), b: open, nw: 1 } })
-  j.flow[sid].s = 'cur'
+  back.forEach((s) => {
+    const old = j.flow[s.id], open = old.b.filter((b) => b.o), w = openOf(old)
+    j.flow[s.id] = { ...blank(s), b: open, ...(w.length ? { w } : {}), nw: 1 }
+  })
+  onto(j.flow[sid])
   if (isClosed(j)) j.st = 'active'
   syncStatus(x, j)
   jr(x, j, `Returned to “${all[ti].t}”: ${why}`, `round ${kept.n + 1} starts here; ${back.length} step${back.length > 1 ? 's' : ''} from “${all[ti].t}” on start again, round ${kept.n} is kept.`,
@@ -243,7 +263,8 @@ function returnTo(x: Ctx, j: Job, sid: string, why: string) {
 }
 
 const STEP_OPS = new Set(['returnTo', 'stepDone', 'stepSkip', 'stepWait', 'stepResume', 'stepReopen', 'acceptDraft', 'rejectDraft',
-  'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'runStart', 'runReply', 'runDraft', 'runAnswer', 'runEnd', 'artifact'])
+  'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'runStart', 'runReply', 'runDraft', 'runAnswer', 'runEnd', 'artifact',
+  'waitAdd', 'waitDel', 'blockerClosed', 'runBlocker', 'blockerDrop'])
 
 /** runs one command on a copy of the job; nx is the step to show next, when the command moved on */
 export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null } {
@@ -255,18 +276,26 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     sid = (cmd as { step: string }).step
     s = stepOf(x, j, sid); f = j.flow[sid]
     if (!s || !f) throw new CmdError('bad_step', `${j.id} has no step ${sid}`)
-    if (cmd.op !== 'runEnd' && cmd.op !== 'runAnswer' && cmd.op !== 'artifact' && cmd.op !== 'returnTo') needOpen()
+    if (cmd.op !== 'runEnd' && cmd.op !== 'runAnswer' && cmd.op !== 'artifact' && cmd.op !== 'returnTo' && cmd.op !== 'runBlocker') needOpen()
   }
   const S = s!, F = f!
   const needDraft = () => { if (!F.dr) throw new CmdError('bad_state', `“${S.t}” has no draft`) }
   const noRun = () => { if (F.run) throw new CmdError('bad_state', `“${S.t}” has an LLM run; wait for it or cancel it`) }
+  /** an open blocker refuses a done step; force drops them and says so */
+  const noBlockers = (force?: boolean) => {
+    const open = openOf(F)
+    if (!open.length) return
+    if (!force) throw new CmdError('bad_state', `“${S.t}” ${waitsM(F)}; remove them, or mark it done with force`)
+    F.w = (F.w || []).filter((l) => l.st !== 'open'); if (!F.w.length) delete F.w
+    jr(x, j, `Dropped blocker${open.length > 1 ? 's' : ''} ${open.map((l) => l.j).join(', ')} of “${S.t}”.`, 'marked done without waiting for them.', '-', by(x), 'off')
+  }
   const badge = (i: number) => { const b = F.b[i]; if (!b) throw new CmdError('bad_args', `no note ${i} on “${S.t}”`); return b }
 
   switch (cmd.op) {
     case 'start': {
       if (j.st !== 'draft' && j.st !== 'ready') throw new CmdError('bad_state', `${j.id} has already started`)
       const first = atOf(x, j) || steps(x, j.pb)[0].id
-      j.st = 'active'; j.flow[first].s = 'cur'; j.flow[first].nw = 1; nx = first
+      j.st = 'active'; onto(j.flow[first]); nx = first
       jr(x, j, 'Started the job.', `“${stepOf(x, j, first)!.t}” in progress.`, nextTxt(x, j, first), by(x), 'cur'); syncStatus(x, j)
       break
     }
@@ -283,7 +312,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       j.st = 'active'
       steps(x, j.pb).forEach((st) => { const g = j.flow[st.id]; if (g.s === 'skip') g.s = st.msg ? 'tpl' : 'fut' })
       const a = atOf(x, j)
-      if (a && (j.flow[a].s === 'fut' || j.flow[a].s === 'tpl')) j.flow[a].s = 'cur'
+      if (a && (j.flow[a].s === 'fut' || j.flow[a].s === 'tpl')) onto(j.flow[a])
       syncStatus(x, j); nx = a
       jr(x, j, 'Reopened the job.', 'status back to in progress.', a ? nextTxt(x, j, a) : 'reopen a step.', by(x), 'cur')
       break
@@ -338,6 +367,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       break
     }
     case 'stepDone': {
+      noBlockers(cmd.force)
       const had = !!F.dr
       nx = advance(x, j, sid, 'done')
       jr(x, j, `Marked “${S.t}” done${had ? ' (LLM draft discarded)' : ''}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')
@@ -359,11 +389,12 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       break
     }
     case 'stepResume':
+      if (openOf(F).length) throw new CmdError('bad_state', `“${S.t}” ${waitsM(F)}; remove them, or mark it done with force`)
       F.s = 'cur'; F.m = ''
       jr(x, j, `Resumed “${S.t}”.`, 'step back in progress.', `finish “${S.t}”.`, by(x), 'cur'); syncStatus(x, j)
       break
     case 'acceptDraft': {
-      needDraft(); noRun()
+      needDraft(); noRun(); noBlockers(cmd.force)
       const dr = F.dr!, edited = cmd.text != null && cmd.text !== dr.t
       F.out = edited ? cmd.text! : dr.t; F.m = edited ? 'accepted with your edits' : 'draft accepted'
       nx = advance(x, j, sid, 'done')
@@ -480,6 +511,60 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       j.ts = nowOf(x).getTime()
       break
     }
+    case 'waitAdd': {
+      const bid = (cmd.j || '').trim(), plan = (cmd.plan || '').trim()
+      if (!isLive(F)) throw new CmdError('bad_state', `“${S.t}” is ${F.s === 'done' ? 'done' : 'skipped'}`)
+      noRun()
+      if (bid === j.id) throw new CmdError('bad_args', 'a job cannot wait for itself')
+      const b = x.jobOf?.(bid)
+      if (!b || b.ws !== j.ws) throw new CmdError('bad_args', `no job ${bid} in this workspace`)
+      if (isClosed(b)) throw new CmdError('bad_state', `${bid} is closed`)
+      if (openOf(F).some((l) => l.j === bid)) throw new CmdError('bad_state', `“${S.t}” already waits for ${bid}`)
+      if (reaches(x.jobOf!, bid, j.id)) throw new CmdError('bad_args', `${bid} already waits for ${j.id}; that would be a cycle`)
+      F.w = [...(F.w || []).filter((l) => l.j !== bid), { j: bid, t: b.t, st: 'open', ...(plan ? { plan } : {}) }]
+      delete F.bb
+      settle(F); F.nw = 1
+      jr(x, j, `“${S.t}” waits for ${bid} “${line(b.t, 80)}”.`, plan ? `plan: ${line(plan)}` : 'no plan given.', `it goes on by itself when ${bid} closes.`, by(x), 'wait')
+      syncStatus(x, j)
+      break
+    }
+    case 'waitDel': {
+      if (!(F.w || []).some((l) => l.j === cmd.j)) throw new CmdError('bad_args', `“${S.t}” does not wait for ${cmd.j}`)
+      F.w = F.w!.filter((l) => l.j !== cmd.j); if (!F.w.length) delete F.w
+      if (settle(F)) nx = sid
+      jr(x, j, `“${S.t}” no longer waits for ${cmd.j}.`, openOf(F).length ? `still ${waitsM(F)}.` : F.s === 'cur' ? 'step back in progress.' : 'step unchanged.',
+        nextTxt(x, j, atOf(x, j)), by(x), F.s === 'cur' ? 'cur' : 'wait')
+      syncStatus(x, j)
+      break
+    }
+    case 'blockerClosed': {
+      const l = (F.w || []).find((y) => y.j === cmd.j)
+      if (!l || (l.st === cmd.st && (l.out ?? '') === (cmd.out ?? ''))) break
+      l.st = cmd.st; l.at = nowOf(x).toISOString()
+      if (cmd.out) l.out = cmd.out; else delete l.out
+      if (cmd.st === 'cancelled') F.b = [...F.b, { k: 'p', t: `Blocker ${cmd.j} “${l.t ?? cmd.j}” was cancelled; remove it or link another.`, o: 1, nw: 1 }]
+      const on = settle(F)
+      if (on) nx = sid
+      jr(x, j, `Blocker ${cmd.j} of “${S.t}” ${cmd.st === 'done' ? 'is done' : 'was cancelled'}.`, cmd.out ? `outcome: ${line(cmd.out)}` : 'no outcome.',
+        on ? `“${S.t}” goes on.` : F.s === 'bad' ? 'remove the blocker or link another.' : openOf(F).length ? `still ${waitsM(F)}.` : nextTxt(x, j, atOf(x, j)),
+        by(x), cmd.st === 'done' ? 'ok' : 'bad')
+      syncStatus(x, j)
+      break
+    }
+    case 'runBlocker': {
+      if (!F.run) break
+      const say = (cmd.say || '').trim()
+      F.run = null; F.s = 'cur'; settle(F); F.nw = 1
+      F.bb = { say, at: nowOf(x).toISOString() }
+      jr(x, j, `Asked for a blocker on “${S.t}”.`, `said: ${line(say)}`, 'open the builder from the step to create or link it.', 'LLM', 'wait')
+      syncStatus(x, j)
+      break
+    }
+    case 'blockerDrop':
+      if (!F.bb) break
+      delete F.bb
+      jr(x, j, `Dismissed the blocker asked for on “${S.t}”.`, 'nothing linked.', nextTxt(x, j, atOf(x, j)), by(x), 'off')
+      break
     case 'journal':
       jr(x, j, cmd.o, cmd.c, cmd.n, cmd.a || 'LLM', 'cur')
       break
