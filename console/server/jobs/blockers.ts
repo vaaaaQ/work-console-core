@@ -71,11 +71,16 @@ export class Blockers {
     } finally { this.busy.delete(w.id) }
   }
 
-  /** a blocker reopened after its waiters went on: a journal line on each, nothing else */
+  /** a blocker reopened after its waiters went on or turned bad: a journal line on each, nothing else */
   private async reopened(b: Job) {
     for (const w of await this.jobs.all()) {
-      if (T.isClosed(w) || !Object.values(w.flow).some((f) => (f.w || []).some((l) => l.j === b.id && l.st !== 'open'))) continue
-      await this.jobs.cmd(w.id, { op: 'journal', o: `Blocker ${b.id} “${b.t}” was reopened.`, c: 'this job already went on with its outcome; nothing changed here.', n: '-', a: 'console' }, undefined, 'console')
+      if (T.isClosed(w)) continue
+      const ls = Object.values(w.flow).flatMap((f) => (f.w || []).filter((l) => l.j === b.id && l.st !== 'open'))
+      if (!ls.length) continue
+      const c = ls.some((l) => l.st === 'cancelled')
+        ? 'this job took its cancelled outcome as a failure; nothing changed here.'
+        : 'this job already went on with its outcome; nothing changed here.'
+      await this.jobs.cmd(w.id, { op: 'journal', o: `Blocker ${b.id} “${b.t}” was reopened.`, c, n: '-', a: 'console' }, undefined, 'console')
     }
   }
 }

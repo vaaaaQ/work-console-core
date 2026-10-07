@@ -48,15 +48,13 @@ test('a blocker closed as done wakes every waiter with its outcome and pushes on
   assert.equal(s.pushes[0].body, `${b.id} done: confirmed`)
 })
 
-test('a cancelled blocker makes the step bad, pushes its own message and no generic one', async () => {
+test('a cancelled blocker makes the step bad and pushes its own message', async () => {
   const s = setup(), a = await s.mk('Local stand'), b = await s.mk('Ask Imre')
   await s.jobs.cmd(a.id, { op: 'waitAdd', step: 'tr', j: b.id })
-  s.generic.length = 0 // start made each job need you; only what the close adds counts
   await s.jobs.cmd(b.id, { op: 'close', st: 'cancelled' })
   await until(() => s.pushes.length === 1)
   assert.equal((await s.get(a.id)).flow.tr.s, 'bad')
   assert.equal(s.pushes[0].title, `${a.id} Local stand: blocker ${b.id} cancelled`)
-  assert.equal(s.generic.includes(a.id), false)
 })
 
 test('reconcile catches a close made while no reactor listened', async () => {
@@ -99,4 +97,50 @@ test('a waiter reopened after its blocker closed goes on', async () => {
   await s.jobs.cmd(a.id, { op: 'reopen' })
   await until(async () => (await s.get(a.id)).flow.tr.s === 'cur')
   assert.equal((await s.get(a.id)).flow.tr.w![0].out, 'yes')
+})
+
+test('a wake the reactor pushes about itself sends no generic needs-you push', async () => {
+  const s = setup(), a = await s.mk('Local stand'), b = await s.mk('Ask Imre')
+  await s.jobs.cmd(a.id, { op: 'waitAdd', step: 'tr', j: b.id })
+  s.generic.length = 0 // start made the jobs need you; the waiting step has no templates, so only the close can fire it again
+  await s.jobs.cmd(b.id, { op: 'close', st: 'cancelled' })
+  await until(() => s.pushes.length === 1)
+  assert.equal((await s.get(a.id)).flow.tr.s, 'bad')
+  assert.equal(s.pushes[0].title, `${a.id} Local stand: blocker ${b.id} cancelled`)
+  assert.deepEqual(s.generic, [])
+})
+
+test('a second reconcile after a wake pushes nothing and changes nothing', async () => {
+  const s = setup(), a = await s.mk('Local stand'), b = await s.mk('Ask Imre')
+  await s.jobs.cmd(a.id, { op: 'waitAdd', step: 'tr', j: b.id })
+  await s.jobs.cmd(b.id, { op: 'close', st: 'done', note: 'yes' })
+  await until(() => s.pushes.length === 1)
+  const before = await s.get(a.id)
+  await s.b().reconcile()
+  assert.equal(s.pushes.length, 1)
+  assert.deepEqual(await s.get(a.id), before)
+})
+
+test('one cancelled blocker of two turns the step bad once while the other is still open', async () => {
+  const s = setup(), a = await s.mk('Local stand'), b = await s.mk('Ask Imre'), c = await s.mk('Ask Anna')
+  await s.jobs.cmd(a.id, { op: 'waitAdd', step: 'tr', j: b.id })
+  await s.jobs.cmd(a.id, { op: 'waitAdd', step: 'tr', j: c.id })
+  await s.jobs.cmd(b.id, { op: 'close', st: 'cancelled' })
+  await until(() => s.pushes.length === 1)
+  await s.b().reconcile()
+  const j = await s.get(a.id)
+  assert.equal(s.pushes.length, 1)
+  assert.equal(j.flow.tr.s, 'bad')
+  assert.deepEqual(j.flow.tr.w!.map((l) => l.st), ['cancelled', 'open'])
+})
+
+test('a cancelled blocker that is reopened gets the failure wording in the waiter journal', async () => {
+  const s = setup(), a = await s.mk('Local stand'), b = await s.mk('Ask Imre')
+  await s.jobs.cmd(a.id, { op: 'waitAdd', step: 'tr', j: b.id })
+  await s.jobs.cmd(b.id, { op: 'close', st: 'cancelled' })
+  await until(async () => (await s.get(a.id)).flow.tr.s === 'bad')
+  await s.jobs.cmd(b.id, { op: 'reopen' })
+  await until(async () => (await s.get(a.id)).jr[0].o.includes('reopened'))
+  const e = (await s.get(a.id)).jr[0]
+  assert.match(e.c, /cancelled outcome/); assert.doesNotMatch(e.c, /went on/)
 })
