@@ -40,7 +40,7 @@ export const unsentAt = (x: Ctx, j: Job) => {
 export const dueFrom = (j: Job) => (j.due ? midnight(Date.parse(j.due), j.lead || 0) : null)
 export const dueNow = (x: Ctx, j: Job) => { const f = dueFrom(j); return f != null && nowOf(x).getTime() >= f }
 export const needsYou = (x: Ctx, j: Job) => !isClosed(j) && (j.st === 'waiting-user' || j.st === 'ready' || hasDraft(j) || unsentAt(x, j)
-  || flows(j).some((f) => f.s === 'bad' || f.b.some((b) => b.o)) || dueNow(x, j) || flows(j).some((f) => !!f.bb))
+  || flows(j).some((f) => f.s === 'bad' || f.b.some((b) => b.o) || !!f.bb) || dueNow(x, j))
 /** the same wall-clock day and time one month on, kept inside a shorter month */
 export function nextMonth(iso: string) {
   const ms = Date.parse(iso), d = new Date(ms + offsetAt(ms)), day = d.getUTCDate()
@@ -252,7 +252,7 @@ function returnTo(x: Ctx, j: Job, sid: string, why: string) {
   j.rounds = [...rounds, kept]; j.rf = sid
   const back = all.slice(ti)
   back.forEach((s) => {
-    const old = j.flow[s.id], open = old.b.filter((b) => b.o), w = openOf(old)
+    const old = j.flow[s.id], open = old.b.filter((b) => b.o), w = (old.w || []).filter((l) => l.st !== 'cancelled')
     j.flow[s.id] = { ...blank(s), b: open, ...(w.length ? { w } : {}), nw: 1 }
   })
   onto(j.flow[sid])
@@ -378,7 +378,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       jr(x, j, `Skipped “${S.t}”.`, 'step skipped.', nextTxt(x, j, nx), by(x), 'off')
       break
     case 'stepReopen':
-      F.s = 'cur'; F.nw = 1; nx = sid
+      F.s = 'cur'; F.nw = 1; settle(F); nx = sid
       jr(x, j, `Reopened “${S.t}”.`, 'step back in progress.', `finish “${S.t}” again.`, by(x), 'cur'); syncStatus(x, j)
       break
     case 'stepWait': {
@@ -404,7 +404,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     case 'rejectDraft': {
       needDraft(); noRun()
       const w = line(cmd.why || '', 300)
-      F.dr = null; F.s = 'cur'; F.m = 'draft rejected'
+      F.dr = null; F.s = 'cur'; F.m = 'draft rejected'; settle(F)
       jr(x, j, sentence(`Rejected the LLM draft for “${S.t}”${w ? `: ${w}` : ''}`), 'step back in progress.',
         w ? 'review the new draft when it is ready.' : 'do it yourself, or ask again with a sharper instruction.', by(x), 'bad'); syncStatus(x, j)
       break
@@ -484,14 +484,14 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     }
     case 'runAnswer':
       if (!F.run) break
-      F.run = null; F.s = F.dr ? 'wait' : 'cur'; F.m = 'LLM answered'; F.nw = 1
+      F.run = null; F.s = F.dr ? 'wait' : 'cur'; F.m = 'LLM answered'; F.nw = 1; settle(F)
       jr(x, j, `The LLM answered on “${S.t}”.`, `answered: ${line(cmd.a)}`, 'read it; accept, reply to or reject the draft.', 'LLM', 'wait'); syncStatus(x, j)
       break
     case 'runEnd': {
       if (!F.run) break
       // a reply's draft outlives the reply
       const re = !!F.run.reply && !!F.dr
-      F.run = null; F.s = re ? 'wait' : 'cur'
+      F.run = null; F.s = re ? 'wait' : 'cur'; settle(F)
       const d = cmd.detail ? `: ${cmd.detail}` : '', kept = re ? 'the draft is unchanged.' : 'no draft kept.'
       if (cmd.why === 'cancelled') jr(x, j, `Cancelled the LLM run for “${S.t}”.`, kept, re ? 'accept, reply to or reject the draft.' : 'do it yourself, or ask again.', by(x), 'off')
       else if (cmd.why === 'failed') jr(x, j, `The LLM run for “${S.t}” failed${d}.`, kept,
@@ -531,6 +531,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     case 'waitDel': {
       if (!(F.w || []).some((l) => l.j === cmd.j)) throw new CmdError('bad_args', `“${S.t}” does not wait for ${cmd.j}`)
       F.w = F.w!.filter((l) => l.j !== cmd.j); if (!F.w.length) delete F.w
+      F.b.forEach((b) => { if (b.o && b.k === 'p' && b.t.startsWith(`Blocker ${cmd.j} `)) b.o = 0 })
       if (settle(F)) nx = sid
       jr(x, j, `“${S.t}” no longer waits for ${cmd.j}.`, openOf(F).length ? `still ${waitsM(F)}.` : F.s === 'cur' ? 'step back in progress.' : 'step unchanged.',
         nextTxt(x, j, atOf(x, j)), by(x), F.s === 'cur' ? 'cur' : 'wait')

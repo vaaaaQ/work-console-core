@@ -444,6 +444,7 @@ test('two blockers: one done keeps it waiting, a cancelled one makes it bad with
   assert.ok(needsYou(w.x, job))
   ;({ job } = w.run('A-1', { op: 'waitDel', step: 'tr', j: 'A-3' }))
   assert.equal(job.flow.tr.s, 'wait'); assert.equal(job.flow.tr.m, 'waits for A-4')
+  assert.ok(job.flow.tr.b.every((b) => !b.o), 'the note of the removed blocker is closed')
   ;({ job } = w.run('A-1', { op: 'blockerClosed', step: 'tr', j: 'A-4', st: 'done' }))
   assert.equal(job.flow.tr.s, 'cur')
 })
@@ -509,4 +510,51 @@ test('a cancelled link on a future step makes it bad once reached', () => {
   assert.equal(w.get('A-1').flow.dr.s, 'fut')
   const { job } = w.run('A-1', { op: 'stepDone', step: 'tr' })
   assert.equal(job.flow.dr.s, 'bad'); assert.equal(job.flow.dr.m, 'blocker A-2 cancelled')
+})
+
+test('a run that ends on a blocked step goes back to wait', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'))
+  w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' })
+  w.run('A-1', { op: 'runStart', step: 'tr', q: 'go', id: 'R1' })
+  const { job } = w.run('A-1', { op: 'runEnd', step: 'tr', why: 'cancelled' })
+  assert.equal(job.flow.tr.s, 'wait'); assert.equal(job.flow.tr.m, 'waits for A-2'); assert.equal(job.st, 'waiting-external')
+})
+
+test('an answer without a draft, a rejected draft and a reopened step stay waiting while a blocker is open', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'))
+  w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' })
+  w.run('A-1', { op: 'runStart', step: 'tr', q: 'go', id: 'R1' })
+  assert.equal(w.run('A-1', { op: 'runAnswer', step: 'tr', a: 'no' }).job.flow.tr.s, 'wait')
+  assert.equal(w.run('A-1', { op: 'stepReopen', step: 'tr' }).job.flow.tr.s, 'wait')
+  const v = world(mkJ('A-1'), mkJ('A-2'))
+  withDraftOn(v, 'A-1', 'tr')
+  v.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' })
+  const { job } = v.run('A-1', { op: 'rejectDraft', step: 'tr', why: 'no' })
+  assert.equal(job.flow.tr.s, 'wait'); assert.equal(job.flow.tr.m, 'waits for A-2'); assert.equal(job.flow.tr.dr, null); assert.equal(job.st, 'waiting-external')
+})
+
+test('returnTo keeps a done blocker with its outcome and drops a cancelled one', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'), mkJ('A-3'))
+  w.run('A-1', { op: 'waitAdd', step: 'sn', j: 'A-2' }); w.run('A-1', { op: 'waitAdd', step: 'sn', j: 'A-3' })
+  w.run('A-1', { op: 'blockerClosed', step: 'sn', j: 'A-2', st: 'done', out: 'Imre confirmed' })
+  w.run('A-1', { op: 'blockerClosed', step: 'sn', j: 'A-3', st: 'cancelled' })
+  w.run('A-1', { op: 'stepDone', step: 'tr' })
+  const { job } = w.run('A-1', { op: 'returnTo', step: 'tr', why: 'redo' })
+  assert.deepEqual(job.flow.sn.w!.map((l) => `${l.j}:${l.st}:${l.out ?? ''}`), ['A-2:done:Imre confirmed'])
+})
+
+test('stepDone with force drops the open blockers', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'))
+  w.run('A-1', { op: 'waitAdd', step: 'tr', j: 'A-2' })
+  const { job } = w.run('A-1', { op: 'stepDone', step: 'tr', force: true })
+  assert.equal(job.flow.tr.s, 'done'); assert.equal(job.flow.tr.w, undefined)
+  assert.ok(job.jr.some((e) => /Dropped blocker A-2/.test(e.o)))
+})
+
+test('waitDel of a link that is not there is refused; blockerClosed for one the step does not wait for and blockerDrop without bb change nothing', () => {
+  const w = world(mkJ('A-1'), mkJ('A-2'))
+  code(() => w.run('A-1', { op: 'waitDel', step: 'tr', j: 'A-2' }), 'bad_args')
+  const before = w.get('A-1')
+  assert.deepEqual(w.run('A-1', { op: 'blockerClosed', step: 'tr', j: 'A-2', st: 'done', out: 'x' }).job, before)
+  assert.deepEqual(w.run('A-1', { op: 'blockerDrop', step: 'tr' }).job, before)
 })
