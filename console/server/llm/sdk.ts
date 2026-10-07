@@ -34,6 +34,8 @@ export interface RunTools {
   knowledgeRead?(id: string): Promise<Note>
   /** the proposal's id */
   knowledgePropose?(p: KnowledgeIn): Promise<string>
+  /** a reply run only: keeps what the user asked on the step for the blocker builder, and ends the run */
+  openBlocker?(say: string): Promise<void>
 }
 export type KnowledgeIn = Omit<ProposalIn, 'by'>
 /** a result's t = the session's final text */
@@ -51,7 +53,7 @@ export interface Sdk {
 
 const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status']
 export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__context', 'mcp__run__screenshot', 'mcp__run__create_job', 'mcp__run__start_job',
-  'mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose', ...BRIDGE]
+  'mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose', 'mcp__run__open_blocker', ...BRIDGE]
 export const DENY = [
   'mcp__bridge__bridge_act', 'mcp__work-console',
   'Read(~/.bridge/**)', 'Read(~/.work-console/**)', 'Read(**/.work-console/**)',
@@ -149,6 +151,9 @@ export function runToolDefs(tools: RunTools) {
     ...(tools.knowledgePropose ? [tool('knowledge_propose', 'Propose a new knowledge note, or a change to one: note = its id, text = the whole new text in Markdown. The user accepts, edits or rejects it; nothing is written before that. Propose what a later run would need and could not find. playbooks: ids of the playbooks whose every run should read it.',
       { note: z.string().min(1).optional(), title: z.string().min(1), text: z.string().min(1), reason: z.string().min(1), tags: z.array(z.string()).optional(), playbooks: z.array(z.string()).optional() },
       (a) => answer(async () => `proposed ${await tools.knowledgePropose!(a)}; it waits for the user in Approvals`)())] : []),
+    ...(tools.openBlocker ? [tool('open_blocker', "Open the blocker builder on this step: only when the user's reply asks in so many words for a job this step has to wait for. say = what the user asked, in their words. It ends this run and the draft stays; stop after it.",
+      { say: z.string().min(1) },
+      (a) => wrap(() => tools.openBlocker!(a.say), 'the blocker builder waits on the step; stop here')())] : []),
   ]
 }
 

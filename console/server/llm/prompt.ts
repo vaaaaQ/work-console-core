@@ -102,7 +102,7 @@ const REPLY_TAIL: Record<RunIntent, string> = {
   accept: 'Change the draft as asked, if anything, and call submit_draft with the whole new text; it is accepted as it is then.',
   ask: 'Answer in text. Do not call submit_draft: the draft stays as it is.',
 }
-const BLOCKER_LINE = 'If the reply asks in so many words for a blocker, a job this step has to wait for (such as waiting for someone\'s answer), call open_blocker with what the user asked and stop. If it seems to want one but leaves open which step or what to wait for, ask back in text instead.'
+const BLOCKER_LINE = 'If the reply asks in so many words for a blocker, a job this step has to wait for (such as waiting for someone\'s answer), call open_blocker with what the user asked and stop. If it seems to want one but leaves open which step or what to wait for, ask back in text instead, without calling submit_draft.'
 /** a reply to the run's own draft, in its session; blocker = the run has open_blocker */
 export const replyPrompt = (q: string, intent: RunIntent, me?: string, blocker = false) =>
   `${me || 'the user'} replied to your draft:\n\n${q}\n\n${REPLY_TAIL[intent]}${blocker ? `\n\n${BLOCKER_LINE}` : ''}`

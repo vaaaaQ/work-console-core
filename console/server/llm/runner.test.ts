@@ -767,3 +767,35 @@ test('settle waits for the end, or returns the record as it is at the timeout', 
   s.sessions[1].end(true, undefined, 'Y.')
   assert.equal((await p).state, 'answered')
 })
+
+test('a reply run can open the blocker builder: the run is answered, the draft stays, the step asks the user', async () => {
+  const s = setup(), d = await withDraft(s)
+  const r = await s.runner.reply(d.job, d.step, 'wait for Imre to confirm', 'revise')
+  await until(() => s.sessions.length === 2)
+  assert.match(s.sessions[1].prompt, /open_blocker/)
+  assert.ok(s.sessions[1].tools.openBlocker)
+  await s.sessions[1].tools.openBlocker!('wait for Imre to confirm'); s.sessions[1].end()
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  const rec = (await s.runner.get(r.id))!, j = (await s.jobs.get(d.job))!
+  assert.equal(rec.state, 'answered'); assert.equal(rec.a, 'Opened the blocker builder: wait for Imre to confirm')
+  assert.equal(j.flow[d.step].bb!.say, 'wait for Imre to confirm'); assert.equal(j.flow[d.step].dr!.t, 'v1')
+})
+
+test('a first run has no open_blocker', async () => {
+  const s = setup(), j = await started(s.jobs)
+  await s.runner.ask(j.id, T.atOf(demoCtx(), j)!, 'go')
+  await until(() => s.sessions.length === 1)
+  assert.equal(s.sessions[0].tools.openBlocker, undefined)
+  s.sessions[0].end()
+})
+
+test('a reply that ends in text without a draft is an answer', async () => {
+  const s = setup(), d = await withDraft(s)
+  const r = await s.runner.reply(d.job, d.step, 'make a blocker', 'revise')
+  await until(() => s.sessions.length === 2)
+  s.sessions[1].end(true, undefined, 'Which step should wait, and for whom?')
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  const rec = (await s.runner.get(r.id))!
+  assert.equal(rec.state, 'answered'); assert.equal(rec.a, 'Which step should wait, and for whom?')
+  assert.equal((await s.jobs.get(d.job))!.flow[d.step].dr!.t, 'v1')
+})

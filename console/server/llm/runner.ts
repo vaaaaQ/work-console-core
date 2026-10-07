@@ -30,7 +30,7 @@ const JOBS_MAX = 5
 /** the most of an ask reply's answer a record keeps */
 const ANSWER_MAX = 4000
 /** started: the record says running; until then cancel and interruptAll leave settling to run() */
-type Live = { ac: AbortController; why: 'cancelled' | 'interrupted' | null; reason?: string; drafted: boolean; started: boolean }
+type Live = { ac: AbortController; why: 'cancelled' | 'interrupted' | null; reason?: string; drafted: boolean; started: boolean; blocked?: string }
 
 /** an artifact name that stays inside its job folder */
 export function safeName(n: string) {
@@ -374,13 +374,20 @@ export class Runner {
         knowledgeRead: (nid: string) => kn.read(nid),
         knowledgePropose: async (p: KnowledgeIn) => (await kn.propose({ ...p, by: `run ${rec.job}/${rec.step}` })).id,
       } : {}),
+      ...(rec.parent ? {
+        openBlocker: async (say: string) => {
+          if (l.blocked != null) throw new Error('the blocker builder was already opened')
+          await this.jobs.cmd(rec.job, { op: 'runBlocker', step: rec.step, say }, undefined, 'runner')
+          l.blocked = say
+        },
+      } : {}),
     }
     let error: string | undefined, said = ''
     try {
       // a resumed session already has its context
       const first = resume ? null : await input(job)
       const prompt = first ? buildPrompt(this.ctx(), job, rec.step, rec.q, first.o)
-        : reply ? replyPrompt(rec.q, rec.intent ?? 'revise', this.me)
+        : reply ? replyPrompt(rec.q, rec.intent ?? 'revise', this.me, true)
         : rec.intent === 'ask' ? RESUME_ASK_PROMPT : RESUME_PROMPT
       for await (const e of this.sdk.start({ prompt, ...(first?.images.length ? { images: first.images } : {}), resume, cwd, tools, abort: l.ac })) {
         if (l.why) break
@@ -394,11 +401,16 @@ export class Runner {
     }
     if (l.why) return // cancel / interruptAll already settled the record
     const now = () => new Date().toISOString()
+    if (l.blocked != null) {
+      await this.save({ ...r!, state: 'answered', a: `Opened the blocker builder: ${l.blocked}`.slice(0, ANSWER_MAX), ended: now() })
+      return
+    }
     if (l.drafted) {
       await this.save({ ...r!, state: 'draft', ended: now() }, false)
       return
     }
-    if (rec.intent === 'ask' && !error) {
+    // a reply that only asks back (which step? whom?) answers; the draft stays
+    if ((rec.intent === 'ask' || rec.parent) && !error) {
       const a = said.trim().slice(0, ANSWER_MAX)
       if (a) {
         await this.jobCmd(rec, { op: 'runAnswer', step: rec.step, a })
