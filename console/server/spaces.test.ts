@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import type { TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as T from '../src/model/transitions.ts'
@@ -14,7 +14,7 @@ import { hub, makeSpace, Spaces } from './spaces.ts'
 import type { Space } from './spaces.ts'
 import { acme, acmeServer, fakeSdk } from './testkit.ts'
 import { fakeSeed } from './workspace.ts'
-import type { WorkspaceServer, WsConfig } from './workspace.ts'
+import type { PluginCtx, WorkspaceServer, WsConfig } from './workspace.ts'
 import type { WorkDir } from './llm/worktree.ts'
 import type { Store } from './store/port.ts'
 
@@ -322,4 +322,25 @@ test("a stored playbook's planned messages outlive a restart: sent works on the 
     const sent = (await b.jobs.cmd(j.id, { op: 'sent', step: 'tell/post', i: 0, t: 'hi all, ACME-77 is done.', to: 'team chat' })).job
     assert.equal(sent.flow['tell/post'].sent[0]?.t, 'hi all, ACME-77 is done.')
   } finally { await a?.close(); await b?.close(); await fake.close() }
+})
+
+test("a managed workspace's runs get exactly its grants' runTools, and its plugins reach only its granted hosts", async () => {
+  install([{ page: acme }])
+  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-')), root = join(dir, 'console')
+  mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })
+  writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ runTools: ['Grep'], hosts: ['api.example.com'] }))
+  let http: PluginCtx['http'] | undefined
+  const w: WorkspaceServer = { ...acmeServer, plugins: (x) => { http = x.http; return [] } }
+  const o = { home: dir, artifactsDir: join(dir, 'arts'), sdk: fakeSdk().sdk, fake: true, push: async () => {} }
+  const managed = await makeSpace(w, { ...o, cfg: { ...wsCfg(dir), runTools: ['Read', 'Bash'] }, root })
+  try {
+    assert.deepEqual(managed.cfg.runTools, ['Grep'])
+    assert.deepEqual(managed.grants?.hosts, ['api.example.com'])
+    await assert.rejects(http!('https://evil.example/'), /host_not_granted/)
+  } finally { await managed.close() }
+  const plain = await makeSpace(w, { ...o, cfg: { ...wsCfg(dir), runTools: ['Read', 'Bash'] }, root: join(dir, 'other') })
+  try {
+    assert.deepEqual(plain.cfg.runTools, ['Read', 'Bash'])
+    assert.equal(plain.grants, null)
+  } finally { await plain.close() }
 })

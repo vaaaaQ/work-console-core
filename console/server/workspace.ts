@@ -5,6 +5,7 @@ import type { GatewayItem, WorkspacePage } from '../src/workspace.ts'
 import { BridgeClient } from './bridge/client.ts'
 import { readToken } from './config.ts'
 import type { Bus } from './events.ts'
+import { grantsOf } from './grants.ts'
 import type { Bridge } from './http/app.ts'
 import type { Jobs } from './jobs/jobs.ts'
 import type { WorkDir } from './llm/worktree.ts'
@@ -34,7 +35,8 @@ export interface Plugin {
   /** its block in /api/state: ws.<id>.plugins.<name> */
   state?(): unknown
 }
-export interface PluginCtx { id: string; cfg: WsConfig; home: string; jobs: Jobs; source: Source; artifactsDir: string }
+/** http = fetch for a plugin: a managed workspace's reaches only the hosts its grants name */
+export interface PluginCtx { id: string; cfg: WsConfig; home: string; jobs: Jobs; source: Source; artifactsDir: string; http(url: string | URL, init?: RequestInit): Promise<Response> }
 /** what the fake gateway starts with: items per concept, and the messages of each chat thread;
     get = what a get of a concept's item answers, instead of the item itself */
 export type FakeSeed = {
@@ -56,11 +58,11 @@ export interface WorkspaceServer {
   fake?(): FakeSeed                                          // default: derived from page.demo
 }
 
-const WS_ID = /^[a-z][a-z0-9-]{0,31}$/, PREFIX = /^[A-Z][A-Z0-9]{0,7}$/
+export const WS_ID = /^[a-z][a-z0-9-]{0,31}$/, PREFIX = /^[A-Z][A-Z0-9]{0,7}$/
 
 /** ids well-formed and unique, prefixes well-formed and unique, built-in playbook ids unique across workspaces and apart from the core's,
-    no own MCP server named bridge or run */
-export function checkWorkspaces(list: WorkspaceServer[]): void {
+    no own MCP server named bridge or run; a managed workspace (one with grants.json) declares neither runTools nor MCP servers */
+export function checkWorkspaces(list: WorkspaceServer[], managed: (id: string) => boolean = (id) => grantsOf(id) !== null): void {
   const ids = new Set<string>(), prefixes = new Map<string, string>()
   // the core's playbooks belong to every workspace, so none may define one of its own
   const owners = new Map<string, string>(Object.keys(CORE_PB).map((pb) => [pb, 'core']))
@@ -75,6 +77,10 @@ export function checkWorkspaces(list: WorkspaceServer[]): void {
     prefixes.set(jobPrefix, id)
     // a session's servers are bridge and run, then the workspace's own: an own one by those names would replace them
     for (const name of ['bridge', 'run']) if (llm?.mcp && Object.hasOwn(llm.mcp, name)) throw new Error(`workspace ${id}: llm.mcp may not name ${name}`)
+    if (managed(id)) {
+      if (llm?.runTools) throw new Error(`workspace ${id} is managed: its runTools come from grants.json, not llm.runTools`)
+      if (llm?.mcp) throw new Error(`workspace ${id} is managed: its MCP servers come from grants.json, not llm.mcp`)
+    }
     for (const pb of Object.keys(page.playbooks)) {
       const first = owners.get(pb)
       if (first) throw new Error(`playbook ${pb} is built into both ${first} and ${id}`)

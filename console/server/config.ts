@@ -28,7 +28,7 @@ export interface Config {
 const PC_KEYS = new Set(['home', 'loopbackPort', 'lanPort', 'pcName', 'fakeGateway', 'openaiKeyPath', 'formatModel', 'workspaces'])
 
 /** the console's own folder: console/server → console */
-const CONSOLE = dirname(dirname(fileURLToPath(import.meta.url)))
+export const CONSOLE = dirname(dirname(fileURLToPath(import.meta.url)))
 
 /** the repo the console sits in: the console's folder or the nearest one above it with a .git (a file in a worktree),
     else the folder above the console */
