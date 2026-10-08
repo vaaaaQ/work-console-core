@@ -1,10 +1,11 @@
+import { cursorSdk } from './cursor/sdk.ts'
 import { agentSdk } from './sdk.ts'
 import type { Sdk } from './sdk.ts'
 
 /* The tools a step's LLM work can run in. auto = the console runs a session itself (runs, auto-ask,
    draft replies, the builder); open = what the step's Open button gives to take the step up by hand.
-   The console never branches on a provider's id: it asks the registry. Cursor has no auto until a
-   spike shows cursor-agent keeps a run to its tools as the Agent SDK does. */
+   The console never branches on a provider's id: it asks the registry. Cursor's auto is its agent CLI
+   over ACP, kept to the same tools by cursor/policy.ts. */
 
 export type ProviderId = 'claude' | 'cursor'
 export const PROVIDER_IDS: readonly ProviderId[] = ['claude', 'cursor']
@@ -14,7 +15,8 @@ export const isProvider = (x: unknown): x is ProviderId => typeof x === 'string'
 export interface OpenIn { dir: string; job: string; title: string; step: string; stepTitle: string; run?: { provider: ProviderId; session?: string } }
 /** link = the page follows it; command = the page copies it for a terminal */
 export type Open = { kind: 'link' | 'command'; value: string }
-export type AgentOpts = Parameters<typeof agentSdk>[0]
+/** home = the console's home, where a Cursor session runs and is kept */
+export type AgentOpts = Parameters<typeof agentSdk>[0] & { home?: string; cursorPath?: () => string | undefined }
 export interface Provider { id: ProviderId; label: string; auto?: (o: AgentOpts) => Sdk; open(s: OpenIn): Open }
 export interface ProviderSettings { auto: ProviderId; manual: ProviderId; claudePath?: string; cursorPath?: string }
 
@@ -41,6 +43,7 @@ export const PROVIDERS: Record<ProviderId, Provider> = {
   },
   cursor: {
     id: 'cursor', label: 'Cursor',
+    auto: (o) => cursorSdk(o),
     open(s) {
       const u = `cursor://anysphere.cursor-deeplink/prompt?text=${encodeURIComponent(manualPrompt(s))}`
       if (u.length > CURSOR_URL) throw new Error(`the link is over ${CURSOR_URL} characters`)

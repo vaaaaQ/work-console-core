@@ -71,12 +71,12 @@ test("the provider ids and those that run by themselves are the console's", () =
   assert.deepEqual(AUTO_PROVIDERS, PROVIDER_IDS.filter((id) => PROVIDERS[id].auto))
 })
 
-test('chooseProvider writes --provider into providers.json, auto only where it can run by itself, and keeps the rest', () => {
+test('chooseProvider writes --provider into providers.json, auto too where it can run by itself, and keeps the rest', () => {
   const home = tmp('home'), f = join(home, 'providers.json')
   assert.deepEqual(chooseProvider(home, null), { auto: 'claude', manual: 'claude' })
   assert.equal(existsSync(f), false, 'no flag writes nothing')
-  assert.deepEqual(chooseProvider(home, 'cursor'), { auto: 'claude', manual: 'cursor' })
-  assert.deepEqual(JSON.parse(read(home, 'providers.json')), { manual: 'cursor' })
+  assert.deepEqual(chooseProvider(home, 'cursor'), { auto: 'cursor', manual: 'cursor' })
+  assert.deepEqual(JSON.parse(read(home, 'providers.json')), { manual: 'cursor', auto: 'cursor' })
   writeFileSync(f, JSON.stringify({ auto: 'claude', manual: 'cursor', claudePath: 'C:/x/claude.exe' }, null, 2))
   const before = read(home, 'providers.json')
   assert.deepEqual(chooseProvider(home, null), { auto: 'claude', manual: 'cursor' })
@@ -240,17 +240,17 @@ test('install: Docker down blocks the postgres step only and records no database
   assert.ok(calls.includes('npm ci') && calls.includes('npm run build'))
 })
 
-test('install --provider cursor: the settings name it for open-in, auto stays claude, and both are checked', async () => {
+test('install --provider cursor: the settings name it for open-in and for runs, and it is checked', async () => {
   const core = makeCore(), to = tmp('to'), home = tmp('home'), calls: string[] = []
   const r = await install({
     argv: ['--to', to, '--core', core, '--no-prompt', '--no-start', '--provider', 'cursor'], env: { WORK_CONSOLE_HOME: home },
     run: (c, a, o) => (c === 'agent' ? (calls.push('agent'), ok('Logged in')) : fakeRun(calls)(c, a, o)), docker: dockerDown, free: async () => true, log: quiet,
   })
-  assert.deepEqual(JSON.parse(read(home, 'providers.json')), { manual: 'cursor' })
+  assert.deepEqual(JSON.parse(read(home, 'providers.json')), { manual: 'cursor', auto: 'cursor' })
   assert.equal(JSON.parse(read(home, 'install.json')).provider, 'cursor')
   const step = r.steps.find((s) => s.name === 'provider')!
   assert.equal(step.state, 'ok', step.line)
-  assert.ok(calls.includes('agent') && calls.some((c) => c.startsWith('claude auth status')), step.line)
+  assert.ok(calls.includes('agent') && !calls.some((c) => c.startsWith('claude auth status')), step.line)
 })
 
 test('install: a postgres step that fails records no address either', async () => {

@@ -187,7 +187,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     // a getter: a provider reads it as each session starts
     get gatewayUrl() { return rb.url() },
     llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools, mcp, bridge: rb.bridge,
-    claudePath: () => settings.read().claudePath,
+    claudePath: () => settings.read().claudePath, cursorPath: () => settings.read().cursorPath, home: o.home,
   }))
   // fake mode touches no real repo
   const workDir = fake ? undefined : w.workDir?.(cfg)

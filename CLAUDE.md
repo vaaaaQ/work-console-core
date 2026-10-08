@@ -5,7 +5,7 @@ Guidance for an agent working in this repo.
 ## Rules that do not bend
 
 - **An LLM drafts; a person sends.** No LLM run and no Claude Code session ever posts, mails, votes,
-  comments or changes state in a tool. Runs get read tools only (`server/llm/sdk.ts` `ALLOW`/`DENY`).
+  comments or changes state in a tool. Runs get read tools only (`server/llm/sdk.ts` `ALLOW`/`DENY`; Cursor's through `server/llm/cursor/policy.ts`).
   Acts go through `/api/act`, and only from the page after a person confirms.
 - **The core names no workplace.** Code under `console/` and `schemas/` must not mention a real
   company, product, person or host. A workplace lives in its workspace, `console/workspaces/<id>/`

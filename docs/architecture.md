@@ -225,7 +225,7 @@ person's approval.*
 | Piece | What |
 |---|---|
 | Session | `server/agent/session.ts`; records of kind `agent` in the workspace's store (a JSON file under `<home>/agent/` when the store keeps none). One turn at a time, 60 minutes at most; Stop ends it idle. A turn left running when the console stopped reads back as failed |
-| Limits | `server/agent/limits.ts`, provider-neutral. cwd = the console's folder; Read, Glob and Grep anywhere; Edit and Write only under `workspaces/<id>/**` and `tools/**`. Denied: its `grants.json`, the two registries, `core.lock.json` and every core file it lists, Bash, PowerShell. A path is matched after its links resolve and case-folded where the disk ignores case. The Claude provider maps them to `dontAsk` rules plus a PreToolUse guard, with `settingSources: ['project']` |
+| Limits | `server/agent/limits.ts`, provider-neutral. cwd = the console's folder; Read, Glob and Grep anywhere; Edit and Write only under `workspaces/<id>/**` and `tools/**`. Denied: its `grants.json`, the two registries, `core.lock.json` and every core file it lists, Bash, PowerShell. A path is matched after its links resolve and case-folded where the disk ignores case. The Claude provider maps them to `dontAsk` rules plus a PreToolUse guard, with `settingSources: ['project']`; the Cursor provider to its CLI's denies, a preToolUse hook and its answers to permission requests (`server/llm/cursor/policy.ts`) |
 | Tools | `check`, `apply {summary}`, `undo {sha}`, `propose_grants {change, reason}`, `create_workspace {id, prefix, title}` (`server/agent/tools.ts`) |
 | First conversation | of a workspace whose grants are still empty: the agent interviews the person, one question at a time, then proposes grants and sets up the board and playbooks |
 | Template | `consumer/workspace-template/`, on the local browser. Install renders it as `home` with empty grants; `create_workspace` copies it, adds both registry lines and the workspace's database settings in `config.json`, and commits it with empty grants |
@@ -362,13 +362,35 @@ flowchart LR
 
 | Key | What |
 |---|---|
-| `auto` | the provider of every run the console starts. Only one that can run by itself (`Provider.auto`); today that is Claude |
+| `auto` | the provider of every run the console starts. Only one that can run by itself (`Provider.auto`): Claude or Cursor |
 | `manual` | what a step's Open button opens: Claude Code (`claude-cli://` link, or `claude --resume` copied when the step's newest run was Claude's) or Cursor (`cursor://anysphere.cursor-deeplink/prompt`) |
 | `claudePath`, `cursorPath` | the apps' binaries when not found by themselves; a path must be an existing file |
 
 - The registry is `console/server/llm/providers.ts`; a provider is `{id, label, auto?, open}`.
 - A run records its `provider`. A resume or a reply uses the one its run recorded; a provider that cannot run by itself fails it with `provider_unavailable`.
 - `GET /api/jobs/<id>/steps/<step>/open` is loopback only. It answers `{open: {kind: link|command, value}, label}` and is 409 `busy` while the step has a run.
+
+#### Cursor by itself
+
+```mermaid
+flowchart LR
+  c[cursorSdk] -->|ACP over stdio| cli[agent acp<br/>own config · data · home · temp]
+  cli -->|MCP, bearer| own[session's MCP server<br/>run · ask + answer · agent]
+  cli -->|preToolUse hook| g[guard] --> pol[cursor/policy.ts]
+  cli -->|permission request| c --> pol
+  cli -->|MCP| br[bridge · workspace MCP]
+```
+*Each turn is the Cursor agent CLI in a run folder of its own; the console serves its tools and decides every file, shell, fetch and MCP call from the same lists as the Claude provider's.*
+
+| Piece | What |
+|---|---|
+| Session | `server/llm/cursor/sdk.ts`. The CLI's newest version (or `cursorPath`) runs per turn in `<home>/cursor/runs/<8 hex>/`; a preload gives it that folder's home, so the user's own Cursor config and MCP servers stay out. On Windows it gets a short environment, and a home path longer than 164 characters fails the turn as `cursor_path:`, since SQLite opens no session store past 251. The turn ends with its process tree, and the folder goes |
+| Tools | a loopback MCP server per session with a token of its own: a run's tools, an ask's plus `answer`, the agent's. A run also gets the bridge (address and token read as the session starts) and the workspace's MCP servers |
+| Limits | `policy.ts` from `ALLOW`/`DENY`, `runTools` and the agent's `Limits`: the CLI's config denies (it matches case-sensitively, so they only back up), the hook (`guard.cjs`, fail-closed; its `hooks.json` holds no `//`, which the CLI reads as a comment) and the console's answer to each permission request |
+| Ask | the answer is the `answer` tool's input, checked against the schema; the session's text is not read |
+| Resume | the CLI's session folder is kept under `<home>/cursor/sessions/<id>` and copied into the next turn's run folder; a session not kept there fails the resume |
+| Model | the account's default; the console never names one. A plan that refuses a turn fails it as `cursor_plan:`, a signed-out CLI as `signin_required:`, a missing one as `cursor_missing:`. The console never signs in |
+| System prompt | ACP has none: an ask's and the agent's instructions go at the head of the turn's prompt |
 
 ## Knowledge
 

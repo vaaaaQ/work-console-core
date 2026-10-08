@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { HttpError } from './events.ts'
+import { PROVIDERS } from './llm/providers.ts'
 import { Settings } from './settings.ts'
 import { tempDir } from './testdirs.ts'
 
@@ -28,12 +29,13 @@ test('a path must be an existing file; an empty one drops it', () => {
   assert.equal(s.write({ claudePath: '' }).claudePath, undefined)
 })
 
-test('auto takes only a provider that can run by itself; an unknown id is refused', () => {
+test('auto takes a provider that can run by itself; an unknown id is refused, and the whole write with it', () => {
   const s = new Settings(home())
-  assert.throws(() => s.write({ auto: 'cursor' }), (e) => bad(e) && /cannot run by itself/.test((e as Error).message))
+  assert.throws(() => s.write({ manual: 'cursor', auto: 'x' }), bad)
   assert.throws(() => s.write({ auto: 'x' }), bad)
   assert.throws(() => s.write({ manual: 'x' }), bad)
   assert.deepEqual(s.read(), { auto: 'claude', manual: 'claude' }, 'a refused write changes nothing')
+  assert.equal(s.write({ auto: 'cursor' }).auto, 'cursor')
 })
 
 test('a broken or hand-edited file reads as the defaults key by key', () => {
@@ -45,11 +47,14 @@ test('a broken or hand-edited file reads as the defaults key by key', () => {
 })
 
 test('a hand-edited auto without auto is kept as written, so its runs fail as provider_unavailable', () => {
-  const h = home()
-  writeFileSync(join(h, 'providers.json'), JSON.stringify({ auto: 'cursor' }))
-  assert.equal(new Settings(h).read().auto, 'cursor')
+  const h = home(), auto = PROVIDERS.cursor.auto
+  try {
+    delete PROVIDERS.cursor.auto
+    writeFileSync(join(h, 'providers.json'), JSON.stringify({ auto: 'cursor' }))
+    assert.equal(new Settings(h).read().auto, 'cursor')
+  } finally { PROVIDERS.cursor.auto = auto }
 })
 
 test('the list says which provider can run by itself', () => {
-  assert.deepEqual(new Settings(home()).list(), [{ id: 'claude', label: 'Claude Code', auto: true }, { id: 'cursor', label: 'Cursor', auto: false }])
+  assert.deepEqual(new Settings(home()).list(), [{ id: 'claude', label: 'Claude Code', auto: true }, { id: 'cursor', label: 'Cursor', auto: true }])
 })

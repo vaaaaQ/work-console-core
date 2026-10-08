@@ -50,5 +50,11 @@ test('the pick: auto reads the settings each time, a provider without auto is pr
   assert.equal(made, 1)
   s.auto = 'cursor'
   assert.equal(pick.auto(), 'cursor')
-  assert.throws(() => pick.get('cursor'), /^Error: provider_unavailable/)
+  assert.equal(pick.get('cursor'), pick.get('cursor'))
+  assert.equal(made, 2)
+  const auto = PROVIDERS.cursor.auto
+  try {
+    delete PROVIDERS.cursor.auto
+    assert.throws(() => providerPick(() => ({ auto: 'cursor', manual: 'claude' }), () => ({}) as Sdk).get('cursor'), /^Error: provider_unavailable/)
+  } finally { PROVIDERS.cursor.auto = auto }
 })

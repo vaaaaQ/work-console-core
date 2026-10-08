@@ -27,7 +27,7 @@ const STARTERS = [
 
 /** the console's providers, and those that run by themselves; a test pins both to server/llm/providers.ts */
 export const PROVIDER_IDS = ['claude', 'cursor']
-export const AUTO_PROVIDERS = ['claude']
+export const AUTO_PROVIDERS = ['claude', 'cursor']
 
 /** provider null = no --provider */
 export function parseArgs(argv) {

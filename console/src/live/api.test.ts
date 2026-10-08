@@ -382,7 +382,7 @@ test('providers: the state names them, settings round-trip, a step opens in the 
     const g = await api.settings()
     assert.deepEqual(g.settings, { auto: 'claude', manual: 'claude' })
     assert.deepEqual(g.providers.map((p) => p.id), ['claude', 'cursor'])
-    await assert.rejects(api.putSettings({ auto: 'cursor' }), (e: api.ApiError) => e.status === 400 && e.code === 'bad_args')
+    await assert.rejects(api.putSettings({ auto: 'nope' as never }), (e: api.ApiError) => e.status === 400 && e.code === 'bad_args')
     assert.equal((await api.putSettings({ manual: 'cursor' })).settings.manual, 'cursor')
     applyState(await api.state())
     assert.equal(LIVE.providers.manualLabel, 'Cursor')
