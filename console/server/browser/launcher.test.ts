@@ -31,7 +31,7 @@ const closes = (dir: string) => { const f = join(dir, 'fake-edge-closes.jsonl');
 after(() => {
   for (const d of dirs) {
     for (const r of runs(d)) if (alive(r.pid)) process.kill(r.pid)
-    try { rmSync(d, { recursive: true, force: true }) } catch { /* a dying fake may still hold it */ }
+    try { rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) } catch { /* a dying fake may still hold it */ }
   }
 })
 
@@ -107,6 +107,15 @@ test('stop asks an Edge it launched to close itself, so the profile is written o
   await b.stop()
   assert.equal(closes(dir), 1)
   assert.ok(!(await answers(ep)))
+})
+
+test('stop returns once the closed Edge has let go of its profile', async () => {
+  const dir = fresh(), b = edge(dir)
+  await b.start()
+  assert.ok(existsSync(join(dir, 'lockfile')))
+  await b.stop()
+  assert.equal(closes(dir), 1)
+  assert.ok(!existsSync(join(dir, 'lockfile')), 'the profile is still held')
 })
 
 test('stop ends an Edge that relaunched itself under a new pid and ignores the close', async () => {

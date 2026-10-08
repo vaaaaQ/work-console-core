@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 /* The console's own Edge: one profile dir, a free debugging port read from DevToolsActivePort, reattached after a
@@ -84,8 +84,11 @@ export function holdsProfile(cmd: string, dir: string, win = process.platform ==
   return false
 }
 
-/** asks the browser to close itself, which writes the profile out; true once its port is gone */
-async function closeBrowser(endpoint: string, ms: number): Promise<boolean> {
+/** true while a browser holds the profile: Edge's lock file on Windows, its singleton link elsewhere */
+const held = (dir: string) => ['lockfile', 'SingletonLock'].some((f) => { try { lstatSync(join(dir, f)); return true } catch { return false } })
+
+/** asks the browser to close itself, which writes the profile out; true once its port is gone and the profile let go */
+async function closeBrowser(endpoint: string, dir: string, ms: number): Promise<boolean> {
   try {
     const v = await (await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(PROBE_TIMEOUT) })).json() as { webSocketDebuggerUrl?: string }
     if (!v.webSocketDebuggerUrl) return false
@@ -98,7 +101,7 @@ async function closeBrowser(endpoint: string, ms: number): Promise<boolean> {
     })
   } catch { return false }
   const end = Date.now() + ms
-  while (Date.now() < end) { if (!await probe(endpoint)) return true; await sleep(100) }
+  while (Date.now() < end) { if (!held(dir) && !await probe(endpoint)) return true; await sleep(100) }
   return false
 }
 
@@ -218,7 +221,7 @@ export function edgeBrowser(o: EdgeOptions): Browser {
     async stop() {
       if (starting) await starting.catch(() => {})
       watching = false; clearTimeout(timer)
-      if (ours && ep && !await closeBrowser(ep, closeMs)) await killProfile(dir)
+      if (ours && ep && !await closeBrowser(ep, dir, closeMs)) await killProfile(dir)
       if (child) await kill(child)
       child = null; ep = null; ours = false
       set('off')
