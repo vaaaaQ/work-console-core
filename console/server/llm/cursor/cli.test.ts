@@ -51,6 +51,24 @@ test('the preload gives the CLI the session\'s home and nothing else', () => {
   assert.ok(!out.split('|')[1].includes(home))
 })
 
+test('the CLI starting itself again, as it starts its worker server, gets the preload too; another node script does not', () => {
+  const home = tempDir('cursor-home'), d = tempDir('cursor-self'), cli = join(d, 'index.js'), other = join(d, 'other.js')
+  writeFileSync(other, 'process.stdout.write(require("os").homedir())')
+  // the worker manager's own call: the CLI's node on its index.js, with an environment of its own
+  writeFileSync(cli, `const cp = require('node:child_process')
+if (process.argv[2] === 'worker-server') process.stdout.write(require('os').homedir())
+else {
+  const c = cp.spawn(process.execPath, [process.argv[1], 'worker-server'], { env: { ...process.env, AGENT_CLI_SOCKET_PATH: 'x' }, windowsHide: true })
+  let self = ''
+  c.stdout.on('data', (b) => { self += b })
+  c.on('close', () => process.stdout.write(JSON.stringify({ self, sync: cp.execFileSync(process.execPath, [process.argv[1], 'worker-server']).toString(), other: cp.execFileSync(process.execPath, [${JSON.stringify(other)}]).toString() })))
+}`)
+  const out = JSON.parse(execFileSync(process.execPath, ['-r', PRELOAD, cli], { env: { ...process.env, WC_CURSOR_HOME: home } }).toString()) as Record<string, string>
+  assert.equal(out.self, home)
+  assert.equal(out.sync, home)
+  assert.notEqual(out.other, home)
+})
+
 test('the guard hook sends only the tool\'s name and paths, prints the verdict, and denies when the console does not answer', async () => {
   const seen: unknown[] = []
   const s = await serveSession({ name: 'run', tools: [], guard: (x) => { seen.push(x); return { permission: 'deny', user_message: 'no', agent_message: 'no' } } })
