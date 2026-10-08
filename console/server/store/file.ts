@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { rename, writeFile } from 'node:fs/promises'
+import type { AgentRec } from '../../src/model/agent.ts'
 import type { Job, Playbook, RunRec, Tpl } from '../../src/model/types.ts'
 import { Conflict } from './port.ts'
 import type { Mark, Store } from './port.ts'
@@ -8,7 +9,7 @@ import type { Mark, Store } from './port.ts'
    serialized, so two commands on one job see each other's version. Good for one PC, not more. */
 
 /** tpl = each stored playbook's planned messages, under its id */
-type Data = { jobs: Job[]; runs: RunRec[]; playbooks: Record<string, Playbook>; tpl?: Record<string, Record<string, Tpl[]>>; marks: Record<string, Mark>; seq: number }
+type Data = { jobs: Job[]; runs: RunRec[]; playbooks: Record<string, Playbook>; tpl?: Record<string, Record<string, Tpl[]>>; marks: Record<string, Mark>; seq: number; agents?: AgentRec[] }
 export type Seed = { jobs?: Job[]; playbooks?: Record<string, Playbook> }
 
 const copy = <T>(o: T): T => (o === undefined ? o : structuredClone(o))
@@ -66,6 +67,12 @@ export function fileStore(path: string, seed: () => Seed = () => ({}), prefix = 
     }),
     marks: () => serial(() => copy(d.marks)),
     putMark: (id, m) => serial(async () => { if (m) d.marks[id] = { ...d.marks[id], ...m }; else delete d.marks[id]; await flush() }),
+    agents: () => serial(() => copy(d.agents || [])),
+    putAgent: (a) => serial(async () => {
+      const xs = (d.agents ||= []), i = xs.findIndex((x) => x.id === a.id)
+      if (i >= 0) xs[i] = copy(a); else xs.push(copy(a))
+      await flush()
+    }),
     nextJobId: () => serial(async () => {
       // only this prefix's ids count; a prefix may hold digits, so the number is what follows the dash
       d.seq = Math.max(d.seq, ...d.jobs.map((j) => (j.id.startsWith(prefix + '-') ? +j.id.slice(prefix.length + 1) || 0 : 0))) + 1

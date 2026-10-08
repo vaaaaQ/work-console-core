@@ -187,3 +187,13 @@ test('a source whose password comes from a function connects to a url without on
     await c.connect(); await c.query(`drop schema if exists "${schema}" cascade`); await c.end()
   }
 })
+
+test('agent records: kept per workspace, a second put replaces the first', { skip }, async () => {
+  await withSchema(1, async ([x]) => {
+    const s = x.src.store({ prefix: 'AD', playbooks: PB })
+    const a = { id: 'a1', ws: 'w', provider: 'claude', turns: [], commits: [], status: 'idle' as const, created: 't', updated: 't' }
+    await s.putAgent!(a)
+    await s.putAgent!({ ...a, session: 's1' })
+    assert.deepEqual(await s.agents!(), [{ ...a, session: 's1' }])
+  })
+})

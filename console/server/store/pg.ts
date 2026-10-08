@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import pg from 'pg'
+import type { AgentRec } from '../../src/model/agent.ts'
 import type { Job, Playbook, RunRec, Tpl } from '../../src/model/types.ts'
 import { GatewayError } from '../bridge/wire.ts'
 import type { ConceptReply } from '../bridge/wire.ts'
@@ -18,7 +19,7 @@ export type PgSource = Source & { store(o: { prefix: string; playbooks: Record<s
 
 const SCHEMA = /^[a-z_][a-z0-9_]{0,62}$/
 const CHANNEL = 'work_console'
-type Kind = 'jobs' | 'runs' | 'playbooks' | 'marks'
+type Kind = 'jobs' | 'runs' | 'playbooks' | 'marks' | 'agent'
 type Row = { v: number; doc: Record<string, unknown> }
 type Note = { ws: string; kind: Kind; id: string; v: number; by: string }
 
@@ -185,6 +186,8 @@ export function pgSource(o: PgSourceOpts): PgSource {
       async marks() { return Object.fromEntries((await all('marks')).map((r) => [r.id, asMark(r.doc)])) },
       // merged as given, so a false clears a flag; asMark keeps only the true ones on read
       async putMark(id, m) { if (m) await upsert('marks', id, m, true); else await remove('marks', id) },
+      async agents() { return (await all('agent')).map((r) => clone(r.doc) as unknown as AgentRec) },
+      async putAgent(a) { await upsert('agent', a.id, a) },
       async nextJobId() {
         const [r] = await q(`insert into ${t('seq')} (ws, n) values ($1, 1) on conflict (ws) do update set n = ${t('seq')}.n + 1 returning n as v`, [o.ws])
         return `${so.prefix}-${String(r.v).padStart(4, '0')}`
