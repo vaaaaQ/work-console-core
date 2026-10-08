@@ -1,0 +1,22 @@
+# The console's own PostgreSQL. scripts/postgres.mjs sets every variable and the project name; run it through install.mjs.
+name: work-console
+services:
+  postgres:
+    image: postgres:17
+    container_name: ${WORK_CONSOLE_PG_CONTAINER:-work-console-postgres}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${WORK_CONSOLE_PG_PORT:-55432}:5432"
+    environment:
+      POSTGRES_USER: work_console
+      POSTGRES_DB: work_console
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg
+    secrets: [pg]
+    volumes:
+      - pg:/var/lib/postgresql/data
+volumes:
+  pg:
+    name: ${WORK_CONSOLE_PG_VOLUME:-work-console-pg}
+secrets:
+  pg:
+    file: ${WORK_CONSOLE_PG_PASSWORD_FILE:?set by scripts/postgres.mjs}
