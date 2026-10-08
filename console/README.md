@@ -12,8 +12,30 @@ npm run dev           # vite, the page alone in demo mode
 WORK_CONSOLE_FAKE_GATEWAY=1 npm start   # backend on http://127.0.0.1:7410 against the demo-seeded fake gateway
 ```
 
-On your PC: `scripts/install.ps1` once, `scripts/update.ps1` after pulling, `scripts/pair.ps1`
-to pair a phone.
+## Install, run, update
+
+Your own console is a folder of its own, a git repo that vendors this core:
+
+```bash
+node <core>/console/scripts/install.mjs --to <dir> [--provider claude|cursor]   # once; again repairs
+node <dir>/scripts/run.mjs [--detach | --stop | --restart]                     # keeps the server running
+node <dir>/scripts/update.mjs [--give-up]                                      # pull the core, check, move on
+```
+
+- Install checks Node 22.6+, git, npm and Docker, writes the folder with a `home` workspace, starts its
+  Postgres (`postgres/compose.yaml`, port 55432 or the next free one), reports whether the provider is signed
+  in (it never signs in), asks for an optional OpenAI key for voice, builds, and starts the console.
+- `<home>` is `WORK_CONSOLE_HOME` or `~/.work-console`: `config.json`, `install.json`, `postgres.password`,
+  `openai.key`, `run.json` and `logs/console.log`.
+- `run.mjs` restarts the server at once on exit code 75 and after a backoff on any other exit. After a
+  restart into a new build the page says "Updated — press Ctrl+F5".
+- `update.mjs` syncs and checks a new core in a worktree on `update/<sha7>`. A failure leaves the folder as
+  it was, exits 3 and writes `<home>/update-failed.json`. Commit a fix on that branch and run the update
+  again to apply it, or run `--give-up`.
+- Starting at logon is up to you: install prints the command and changes nothing on your system.
+
+The `.ps1` scripts are the older setup and still work: `scripts/install.ps1` once, `scripts/update.ps1`
+after pulling, `scripts/pair.ps1` to pair a phone.
 
 ## Adding a workspace
 
