@@ -54,8 +54,8 @@ test('the preload gives the CLI the session\'s home and nothing else', () => {
 test('the guard hook sends only the tool\'s name and paths, prints the verdict, and denies when the console does not answer', async () => {
   const seen: unknown[] = []
   const s = await serveSession({ name: 'run', tools: [], guard: (x) => { seen.push(x); return { permission: 'deny', user_message: 'no', agent_message: 'no' } } })
-  const hook = (url: string, token: string, input: string) => new Promise<string>((ok) => {
-    const p = spawn(process.execPath, [GUARD, url, token], { stdio: ['pipe', 'pipe', 'ignore'] })
+  const hook = (guard: string, token: string, input: string) => new Promise<string>((ok) => {
+    const p = spawn(process.execPath, [GUARD, new URL(guard).port, token], { stdio: ['pipe', 'pipe', 'ignore'] })
     let o = ''
     p.stdout.on('data', (b) => { o += b })
     p.on('close', () => ok(o))

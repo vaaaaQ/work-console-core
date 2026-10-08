@@ -1,7 +1,7 @@
 'use strict'
 // The session's preToolUse hook: sends the tool call's name and paths to the console's guard and prints its verdict.
-// Anything that goes wrong denies. Args: the guard's url and token.
-const [url, token] = process.argv.slice(2)
+// Anything that goes wrong denies. Args: the guard's loopback port and token; the CLI reads a "//" in hooks.json as a comment.
+const [port, token] = process.argv.slice(2), url = `http://127.0.0.1:${port}/guard`
 const KEYS = ['file_path', 'path', 'command', 'url', 'cwd', 'glob', 'server', 'uri', 'download_path']
 const say = (v) => { process.stdout.write(JSON.stringify(v)); process.exit(0) }
 const deny = (why) => say({ permission: 'deny', user_message: why, agent_message: why })

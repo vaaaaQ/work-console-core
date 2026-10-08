@@ -27,8 +27,14 @@ const next = (match) => {
   return new Promise((ok) => waiting.push({ match, ok }))
 }
 
+// as the CLI reads hooks.json: a "//" anywhere starts a comment, and a file that then fails to parse loads no hook
+function jsonc(s) {
+  try { return JSON.parse(s.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')) } catch { return null }
+}
+
 function hook(call) {
-  const cfg = JSON.parse(readFileSync(join(process.env.WC_CURSOR_HOME, '.cursor', 'hooks.json'), 'utf8'))
+  const cfg = jsonc(readFileSync(join(process.env.WC_CURSOR_HOME, '.cursor', 'hooks.json'), 'utf8'))
+  if (!cfg) return '{}'
   const cmd = cfg.hooks.preToolUse[0].command, payload = JSON.stringify({ ...call, user_email: 'someone@example.test', hook_event_name: 'preToolUse' })
   if (process.platform !== 'win32') return spawnSync('sh', ['-c', cmd], { input: payload }).stdout.toString()
   const file = join(process.env.TEMP, 'hook-payload.json')

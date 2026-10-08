@@ -17,8 +17,8 @@ const SID = '00000000-0000-4000-8000-000000000001'
 type Seen = Record<string, unknown>
 
 function rig(opts: Partial<CursorOpts> | ((work: string) => Partial<CursorOpts>) = {}) {
-  const home = tempDir('cursor-sdk-home'), work = tempDir('cursor-sdk-work'), seen: Seen[] = [], pids: number[] = []
-  const o = typeof opts === 'function' ? opts(work) : opts
+  const work = tempDir('cursor-sdk-work'), seen: Seen[] = [], pids: number[] = [], envs: Record<string, string>[] = []
+  const o = typeof opts === 'function' ? opts(work) : opts, home = o.home ?? tempDir('cursor-sdk-home')
   let fixture = 'prompt', subst: [string, string][] = [], hook: unknown[] = [], onSeen = (_: Seen) => {}
   // the options' own descriptors, so a getter stays one
   const sdk = cursorSdk(Object.defineProperties({
@@ -26,13 +26,14 @@ function rig(opts: Partial<CursorOpts> | ((work: string) => Partial<CursorOpts>)
     launch: (cwd: string, env: Record<string, string>) => {
       const p = spawn(process.execPath, [FAKE, fixture], { cwd, env: { ...env, FAKE_WORK: work, FAKE_SUBST: JSON.stringify(subst), FAKE_HOOK: JSON.stringify(hook) }, stdio: 'pipe' })
       pids.push(p.pid!)
+      envs.push(env)
       createInterface({ input: p.stderr }).on('line', (l) => { try { const x = JSON.parse(l) as Seen; seen.push(x); onSeen(x) } catch { /* not ours */ } })
       return p
     },
   }, Object.getOwnPropertyDescriptors(o)) as CursorOpts)
   const play = (f: string, s: [string, string][] = [], h: unknown[] = [], on = (_: Seen) => {}) => { fixture = f; subst = s; hook = h; onSeen = on; seen.length = 0 }
   const of = (k: string) => seen.filter((x) => k in x).map((x) => x[k])
-  return { sdk, home, work, seen, pids, play, of }
+  return { sdk, home, work, seen, pids, envs, play, of }
 }
 async function all<T>(xs: AsyncIterable<T>): Promise<T[]> { const out: T[] = []; for await (const x of xs) out.push(x); return out }
 const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
@@ -169,4 +170,19 @@ test('a refused plan, a signed-out CLI and a missing one each say so', async () 
   const out = await all(none.start({ prompt: 'p', cwd: r.work, tools: runTools(), abort: new AbortController() }))
   assert.match((out[0] as { error: string }).error, /^cursor_missing: /)
   await gone(r)
+})
+
+test('the CLI\'s session store gets a path Windows opens; a home too deep for one fails before the CLI starts', { skip: process.platform !== 'win32' && 'a Windows limit' }, async () => {
+  const deep = (n: number) => { const t = tempDir('cursor-sdk-deep'), d = join(t, 'h'.repeat(n - t.length - 1)); mkdirSync(d); return d }
+  const ok = rig({ home: deep(160) })
+  assert.deepEqual((await start(ok)).at(-1), { k: 'result', ok: true, t: 'pong' })
+  // SQLite's own limit, measured with the CLI's node: 251 characters open, 252 do not
+  assert.ok(join(ok.envs[0].CURSOR_CONFIG_DIR, 'acp-sessions', SID, 'store.db').length <= 251)
+  await gone(ok)
+  const no = rig({ home: deep(170) })
+  const out = await start(no)
+  assert.equal(out.length, 1)
+  assert.match((out[0] as { error: string }).error, /^cursor_path: .*251/)
+  assert.deepEqual(no.pids, [])
+  assert.equal(existsSync(join(no.home, 'cursor', 'runs')), false, 'no run folder is made')
 })

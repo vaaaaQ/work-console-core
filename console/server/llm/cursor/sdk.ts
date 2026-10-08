@@ -1,5 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -51,6 +51,8 @@ const SID = /^[\w-]{1,100}$/
 const DAY = 86400e3
 const noEmail = (t: string) => t.replace(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g, '<email>')
 const PLAN = /^\s*Upgrade your plan/i
+/** SQLite opens no database on Windows whose path leaves no room under MAX_PATH for its "-journal" name */
+const STORE_MAX = 251
 
 function removeSoon(dir: string) {
   void (async () => {
@@ -58,6 +60,10 @@ function removeSoon(dir: string) {
       try { rmSync(dir, { recursive: true, force: true }); return } catch { await new Promise((r) => setTimeout(r, 100 * i)) }
     }
   })()
+}
+/** a short name, so the CLI's session store fits STORE_MAX */
+function runDir(runs: string): string {
+  for (;;) { const d = join(runs, randomBytes(4).toString('hex')); if (!existsSync(d)) return d }
 }
 /** run folders a crashed console left behind */
 function sweep(runs: string) {
@@ -82,7 +88,12 @@ export function cursorSdk(o: CursorOpts): Sdk {
   async function* turn(t: Turn): AsyncGenerator<Out> {
     if (t.abort.signal.aborted) { yield { k: 'result', ok: false, error: 'the session was stopped' }; return }
     sweep(runs)
-    const dir = join(runs, randomUUID()), d = { config: join(dir, 'config'), data: join(dir, 'data'), home: join(dir, 'home'), tmp: join(dir, 'tmp') }
+    const dir = runDir(runs), d = { config: join(dir, 'config'), data: join(dir, 'data'), home: join(dir, 'home'), tmp: join(dir, 'tmp') }
+    const store = join(d.config, 'acp-sessions', '0'.repeat(36), 'store.db').length
+    if (process.platform === 'win32' && store > STORE_MAX) {
+      yield { k: 'result', ok: false, error: `cursor_path: the Cursor CLI cannot open its session store under ${base}: its path would take ${store} characters, and Windows opens one of ${STORE_MAX}; give the console a shorter home` }
+      return
+    }
     for (const x of [d.config, d.data, join(d.home, '.cursor'), d.tmp]) mkdirSync(x, { recursive: true })
     const policy: Policy = { cwd: t.cwd, mode: t.mode, hidden: [o.home ?? base, dir] }
     const own = OWN[t.mode.kind], feed = new Feed(t.mode.kind === 'start' ? undefined : own, t.hide)
@@ -100,7 +111,7 @@ export function cursorSdk(o: CursorOpts): Sdk {
     try {
       served = await serveSession({ name: own, tools: t.tools, guard: (x) => guard(policy, x as never) })
       writeFileSync(join(d.config, 'cli-config.json'), JSON.stringify(cliConfig(policy), null, 2))
-      writeFileSync(join(d.home, '.cursor', 'hooks.json'), JSON.stringify({ version: 1, hooks: { preToolUse: [{ command: hookCommand([process.execPath, GUARD, served.guard, served.token]), failClosed: true }] } }, null, 2))
+      writeFileSync(join(d.home, '.cursor', 'hooks.json'), JSON.stringify({ version: 1, hooks: { preToolUse: [{ command: hookCommand([process.execPath, GUARD, new URL(served.guard).port, served.token]), failClosed: true }] } }, null, 2))
       if (t.resume) {
         if (!SID.test(t.resume) || !existsSync(join(kept, t.resume))) throw new Error(`the Cursor session ${t.resume} is not kept in this console`)
         cpSync(join(kept, t.resume), join(d.config, 'acp-sessions', t.resume), { recursive: true })
