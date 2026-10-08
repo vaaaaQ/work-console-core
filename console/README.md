@@ -98,3 +98,11 @@ node <core>/console/scripts/sync-core.mjs --to <consumer console dir> [--ref <re
   sync). It skips only in the core itself, which has `schemas/` and `packs/` beside `console/`.
 - Rule: a generic change is a core commit, then a consumer commit that only syncs. A workspace change
   touches only `workspaces/<id>/`.
+
+## Known issues
+
+- A page command that races a runner write to the same job can fail with 409 `conflict`, even without
+  `expectV`: the write is compare-and-set, and only the runner's and the console's own writes try again
+  (`server/jobs/jobs.ts:77`). This is the behaviour so far, not a regression.
+- `server/store/file.test.ts` once failed as a whole file, with no output, inside an agent's apply when
+  `check` still ran the whole suite. Its cause is not found.
