@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { consoleHome, firstFree, gitId, isFree, npmChecks, readJson, run, writeJson } from './lib.mjs'
 import { PG, dockerRunner, engine, ensurePassword, postgres } from './postgres.mjs'
+import { startConsole } from './run.mjs'
 import { isCoreLayout, readCore, sync } from './sync-core.mjs'
 
 /* One command from an empty folder to a running console:
@@ -153,10 +154,9 @@ export async function voice(home, { prompt, ask = askHidden }) {
 }
 
 const pgUrl = (port) => `postgres://${PG.user}@127.0.0.1:${port}/${PG.db}`
-const defaultStart = async (s) => (await import('./run.mjs')).startConsole(s)
 
 export async function install(o = {}) {
-  const { env = process.env, run: r = run, docker = dockerRunner(r), pg = postgres, free = isFree, log = console.log, ask, start = defaultStart } = o
+  const { env = process.env, run: r = run, docker = dockerRunner(r), pg = postgres, free = isFree, log = console.log, ask, start = startConsole } = o
   const a = parseArgs(o.argv ?? process.argv.slice(2))
   const home = consoleHome(env)
   const recorded = readJson(join(home, 'install.json'), {})
