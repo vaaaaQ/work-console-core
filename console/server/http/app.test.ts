@@ -923,8 +923,10 @@ test("a reply goes to the run's step in its session; reject with a reason answer
     assert.equal(rj.status, 200, rj.text); assert.ok(rj.json.run?.id); assert.equal(rj.json.job.flow[step].dr, null)
     await until(() => prompts.length === n + 2)
     assert.match(prompts[n + 1], /## Why\nwrong scope/)
+    // the redo run writes its draft to the job: a command racing that write meets "the job changed elsewhere"
+    await until(async () => (await call(lp, 'GET', `/api/runs/${rj.json.run.id}`)).json.run?.state === 'draft')
     const plain = await call(lp, 'POST', `/api/jobs/${job.id}/cmd`, { body: { cmd: { op: 'noteAdd', step, k: 'q', t: 'x' } } })
-    assert.equal(plain.status, 200); assert.equal('run' in plain.json, false)
+    assert.equal(plain.status, 200, plain.text); assert.equal('run' in plain.json, false)
   } finally { await stop() }
 })
 
