@@ -33,6 +33,8 @@ export class Updates implements Reintegration {
   private o: UpdatesOpts
   private exec: Exec
   private running: UpdateKind | null = null
+  /** the record a run started on: update.mjs drops the file before the run ends */
+  private held: FailedUpdate | null = null
   private last: UpdateView['last']
   private ops = new Map<string, Ops>()
 
@@ -43,7 +45,7 @@ export class Updates implements Reintegration {
   }
 
   view(): UpdateView | null {
-    const f = this.failed()
+    const f = this.failed() ?? (this.running ? this.held : null)
     if (!f) return null
     return {
       core: f.core, from: f.from, branch: f.branch, step: f.step, output: f.output, at: f.at,
@@ -85,6 +87,7 @@ export class Updates implements Reintegration {
 
   async run(kind: UpdateKind, report?: (r: UpdateEnd) => Promise<void>): Promise<UpdateEnd> {
     if (this.running) throw new HttpError(409, 'updating', 'the update runs already')
+    this.held = this.failed()
     this.running = kind
     this.o.emit(this.view())
     let end: UpdateEnd
@@ -96,7 +99,7 @@ export class Updates implements Reintegration {
       const output = tail(r.out)
       end = { code: r.code, output, updated: kind === 'apply' && r.code === 0 && this.lockCore() !== before, failed: this.failed() }
       this.last = { kind, code: r.code, output, at: new Date().toISOString() }
-    } finally { this.running = null }
+    } finally { this.running = null; this.held = null }
     await report?.(end).catch((e) => console.error('update report:', (e as Error).message))
     this.o.emit(this.view())
     if (end.updated) this.o.restart()

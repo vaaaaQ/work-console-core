@@ -112,7 +112,8 @@ test('an update that fails again keeps its record with the last run; give up run
   assert.deepEqual([v.running, v.last?.kind, v.last?.code], [null, 'apply', 3])
   assert.match(v.last!.output, /failed at tests/)
 
-  x.setThen(() => { rmSync(join(x.home, 'update-failed.json')); return { code: 0, out: 'dropped the failed update' } })
+  const during: (UpdateView | null)[] = []
+  x.setThen(() => { rmSync(join(x.home, 'update-failed.json')); during.push(x.u.view()); return { code: 0, out: 'dropped the failed update' } })
   x.waiting.on = true
   assert.equal(x.u.start('give-up')?.running, 'give-up')
   assert.throws(() => x.u.start('apply'), /runs already/)
@@ -121,6 +122,7 @@ test('an update that fails again keeps its record with the last run; give up run
   x.release()
   while (x.u.updating()) await new Promise((ok) => setTimeout(ok, 5))
   assert.deepEqual(x.ran.at(-1)?.args.slice(1), ['--give-up', '--no-restart'])
+  assert.deepEqual([during[0]?.core, during[0]?.running], ['e'.repeat(40), 'give-up'], 'the record dropped mid-run still shows until the run ends')
   assert.equal(x.u.view(), null)
   assert.throws(() => x.u.start('apply'), /no failed core update/)
 })
