@@ -5,7 +5,8 @@ import { itemOf } from '../../src/workspace.ts'
 import type { WorkspacePage } from '../../src/workspace.ts'
 import { READY } from '../bridge/wire.ts'
 import type { ActReq, ActRes, ConceptReply } from '../bridge/wire.ts'
-import { HttpError } from '../events.ts'
+import { HttpError, downError } from '../events.ts'
+import type { Via } from '../events.ts'
 import type { Jobs, Who } from '../jobs/jobs.ts'
 
 /* Start on a board item, the same for the page and a Claude Code session: the tracker assigns the item to
@@ -17,7 +18,7 @@ const KEY_MAX = 64
 export type StartItem = (key: string, pb?: string, who?: Who) => Promise<{ job: Job; created: boolean }>
 interface Deps {
   jobs: Jobs; ctx: () => T.Ctx; page: WorkspacePage
-  bridge: { available(): boolean; act(a: ActReq): Promise<ActRes>; read(concepts: string[]): Promise<Record<string, ConceptReply>> }
+  bridge: { available(): boolean; via?: Via; act(a: ActReq): Promise<ActRes>; read(concepts: string[]): Promise<Record<string, ConceptReply>> }
 }
 
 export function startItem(d: Deps): StartItem {
@@ -46,7 +47,7 @@ export function startItem(d: Deps): StartItem {
   }
   async function start(id: string, pb: string, who: Who) {
     if (!d.ctx().PB[pb]) throw new HttpError(400, 'bad_args', `no playbook ${pb}`)
-    if (!d.bridge.available()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; nothing was changed')
+    if (!d.bridge.available()) throw downError(d.bridge.via, 'nothing was changed')
     const r = await d.bridge.act({ action: 'work.start', actionId: randomUUID(), args: { id } })
     if (r.status !== 'ok') {
       // the pack's refusal reaches the console as "<source>: bad_args: <why>"

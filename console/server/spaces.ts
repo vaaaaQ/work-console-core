@@ -8,6 +8,7 @@ import { AgentSession } from './agent/session.ts'
 import type { SessionOps } from './agent/session.ts'
 import { BoardReturns } from './board/returns.ts'
 import { startItem } from './board/start.ts'
+import { GATEWAY_ACTIONS, grantedActs } from './bridge/actions.ts'
 import { startFakeGateway } from './bridge/fake.ts'
 import type { FakeGateway } from './bridge/fake.ts'
 import { READY } from './bridge/wire.ts'
@@ -15,7 +16,7 @@ import { readToken } from './config.ts'
 import { shoot } from './llm/shot.ts'
 import { builder } from './llm/builder.ts'
 import type { Build } from './llm/builder.ts'
-import { Bus, HttpError } from './events.ts'
+import { Bus, HttpError, downName } from './events.ts'
 import { grantsOf, guardedHttp } from './grants.ts'
 import type { Grants } from './grants.ts'
 import { Blockers } from './jobs/blockers.ts'
@@ -46,6 +47,8 @@ export interface Space {
   grants: Grants | null
   /** a managed workspace's agent; none unmanaged */
   agent: AgentSession | null
+  /** the actions the page may send: a gateway's eight, or what a managed workspace's grants allow */
+  acts: ReadonlySet<string>
   bus: Bus; source: Source; store: Store; jobs: Jobs; runner: Runner
   /** the workspace's knowledge folder */
   notes: Notes
@@ -120,9 +123,10 @@ export function onBridgeBack(bus: Bus, load: () => Promise<void>, backoff = [200
 
 /** a workspace's instance; its source is not started, so the caller can wire what listens first;
     askDelay = how long auto-ask waits before it asks, tests shorten it; root = the console's folder, where grants.json is read;
-    agent = what a managed workspace's agent shares with the others: the ops, the restart hold, the registered names */
+    agent = what a managed workspace's agent shares with the others: the ops, the restart hold, the registered names;
+    packsDir = where a managed workspace's granted packs are read */
 export type SpaceOpts = {
-  cfg: WsConfig; home: string; artifactsDir: string; sdk?: Sdk; fake: boolean; push: Push; askDelay?: number; root?: string
+  cfg: WsConfig; home: string; artifactsDir: string; sdk?: Sdk; fake: boolean; push: Push; askDelay?: number; root?: string; packsDir?: string
   agent?: { ops: SessionOps; hold(): () => void; taken(): { ids: string[]; prefixes: string[] } }
 }
 
@@ -137,6 +141,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   // a managed workspace's runs get exactly what its grants name
   const cfg: WsConfig = { ...o.cfg, ...(fake ? { gatewayUrl: fake.url } : {}), ...(grants ? { runTools: grants.runTools } : {}) }
   const mcp = grants ? grants.mcp : w.llm?.mcp
+  const acts = grants ? grantedActs(grants, o.packsDir) : GATEWAY_ACTIONS
   // the fake stands in for whatever source and store the workspace brings
   const source = fake ? gatewaySource(cfg, { bus, token: () => fake.token }) : w.source?.(cfg, { bus }) ?? gatewaySource(cfg, { bus })
   const builtins = { ...CORE_PB, ...w.page.playbooks }
@@ -158,7 +163,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     onChange: (concept, upserts, removes) => bus.emit({ kind: 'source', concept, upserts, removes }),
   })
 
-  const jobs = new Jobs({ store, bus, ctx, gate })
+  const jobs = new Jobs({ store, bus, ctx, gate, via: source.via })
   // a new run takes the auto provider the settings name now; a resume or a reply the one its run recorded
   const settings = new Settings(o.home)
   const sdk = o.sdk ?? providerPick(() => settings.read(), (p) => p.auto!({
@@ -168,7 +173,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   // fake mode touches no real repo
   const workDir = fake ? undefined : w.workDir?.(cfg)
   const runner = new Runner({
-    store, jobs, bus, sdk, cwd: cfg.workDir, max: cfg.maxSessions, gate, artifactsDir: o.artifactsDir, ctx,
+    store, jobs, bus, sdk, cwd: cfg.workDir, max: cfg.maxSessions, gate, via: source.via, artifactsDir: o.artifactsDir, ctx,
     context: (j) => resolveContext(source, j, w.page.me, notes), me: w.page.me, bridge: w.llm?.bridge, workDir,
     screenshot: w.llm?.screenshot ? (s) => shoot({ ...s, browserPath: cfg.browserPath }) : undefined,
     jobTools: w.llm?.jobTools ? { ws: id, pb: w.page.board.start, prj: w.page.pack.prj, prefix: w.jobPrefix } : undefined, notes,
@@ -179,7 +184,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   const build = builder({ ws: id, page: w.page, sdk, notes, source: w.llm?.bridge === false ? null : source, ctx, bus, jobs: () => jobs.all() })
   const offInterrupt = bus.on((e) => {
     if (e.kind === 'bridge' && e.state === 'unavailable')
-      void runner.interruptAll('the bridge went away').catch((err) => console.error(`interrupting the runs of ${id}:`, (err as Error).message))
+      void runner.interruptAll(`${downName(source.via)} went away`).catch((err) => console.error(`interrupting the runs of ${id}:`, (err as Error).message))
   })
 
   /** a closed job's work dir goes; what was kept and why is journaled, unless the journal already says it */
@@ -216,7 +221,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     const all = await store.jobs()
     for (const j of all) known.set(j.id, j)
     for (const j of all) if (T.isClosed(j)) clean(j)
-    await runner.recover(recovered ? 'the bridge went away' : 'the console restarted')
+    await runner.recover(recovered ? `${downName(source.via)} went away` : 'the console restarted')
     recovered = true
     await runner.resumeDue()
     // a blocker closed while the console was off is seen here
@@ -224,7 +229,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   })
 
   return {
-    id, page: w.page, prefix: w.jobPrefix, cfg, grants, agent, bus, source, store, jobs, runner, notes, ctx, known, fake, build,
+    id, page: w.page, prefix: w.jobPrefix, cfg, grants, agent, acts, bus, source, store, jobs, runner, notes, ctx, known, fake, build,
     putPlaybook: async (pid, pb, tpl) => { await store.putPlaybook(pid, pb, tpl); await loadPbs() },
     start: startItem({ jobs, ctx, bridge: source, page: w.page }),
     plugins: w.plugins?.({ id, cfg, home: o.home, jobs, source, artifactsDir: o.artifactsDir, http: guardedHttp(grants?.hosts ?? null) }) ?? [],

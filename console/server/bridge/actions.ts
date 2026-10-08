@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { HttpError } from '../events.ts'
+import { PACKS_DIR, loadPacks } from './packs.ts'
 import type { PackManifest } from './packs.ts'
 import type { ActReq } from './wire.ts'
 
@@ -11,6 +12,13 @@ type Declares = Pick<PackManifest, 'name' | 'actions'>
 export function actionsOf(packs: readonly Declares[], acts?: readonly string[]): ReadonlySet<string> {
   const declared = new Set(packs.flatMap((p) => Object.keys(p.actions || {})))
   return acts === undefined ? declared : new Set(acts.filter((a) => declared.has(a)))
+}
+
+/** a managed workspace's allowed set: what the packs its grants name declare, less what they do not grant;
+    a pack that does not load gives nothing */
+export function grantedActs(g: { packs: readonly string[]; acts: readonly string[] }, dir = PACKS_DIR, warn: (m: string) => void = console.error): ReadonlySet<string> {
+  const packs = g.packs.flatMap((n) => { try { return loadPacks(dir, [n]) } catch (e) { warn(`pack ${n} gives no actions: ${(e as Error).message}`); return [] } })
+  return actionsOf(packs, g.acts)
 }
 
 export function actionPacks(packs: readonly Declares[]): Map<string, string[]> {

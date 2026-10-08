@@ -7,8 +7,8 @@ import * as T from '../../src/model/transitions.ts'
 import { thread } from '../../src/model/thread.ts'
 import { INTENTS } from '../../src/model/types.ts'
 import type { Cmd, Job, RunIntent, RunRec, Ws } from '../../src/model/types.ts'
-import { HttpError } from '../events.ts'
-import type { Bus } from '../events.ts'
+import { HttpError, downError } from '../events.ts'
+import type { Bus, Via } from '../events.ts'
 import type { Jobs } from '../jobs/jobs.ts'
 import type { Notes } from '../knowledge/notes.ts'
 import type { Store } from '../store/port.ts'
@@ -48,7 +48,7 @@ export type JobTools = { ws: Ws; pb: string; prj: string[]; prefix: string }
 
 export class Runner {
   private store: Store; private jobs: Jobs; private bus: Bus; private pick: SdkPick; private cwd: string
-  private max: number; private gate: () => boolean; private artifactsDir: string; private ctx: () => T.Ctx
+  private max: number; private gate: () => boolean; private via?: Via; private artifactsDir: string; private ctx: () => T.Ctx
   private context: (j: Job) => Promise<RunContext>; private me?: string; private bridge?: boolean; private workDir?: WorkDir
   private screenshot?: (o: Shot & { out: string; fileRoot?: string }) => Promise<unknown>
   private jobTools?: JobTools
@@ -62,9 +62,9 @@ export class Runner {
 
   /** context = reads the job's context items and their pictures for a run's prompt and its context tool; me = what prompts call the user (unset or empty: "the user");
       bridge false = the workspace has no gateway, so prompts do not point at the bridge tools;
-      workDir = each job's own dir, in place of cwd; sdk = one Sdk, or the pick of a run's provider */
+      workDir = each job's own dir, in place of cwd; sdk = one Sdk, or the pick of a run's provider; via = what the gate stands for */
   constructor(o: {
-    store: Store; jobs: Jobs; bus: Bus; sdk: Sdk | SdkPick; cwd: string; max?: number; gate: () => boolean; artifactsDir: string; ctx: () => T.Ctx
+    store: Store; jobs: Jobs; bus: Bus; sdk: Sdk | SdkPick; cwd: string; max?: number; gate: () => boolean; via?: Via; artifactsDir: string; ctx: () => T.Ctx
     context?: (j: Job) => Promise<RunContext>; me?: string; bridge?: boolean; workDir?: WorkDir
     /** takes a png of a page into out; none = runs get no screenshot tool */
     screenshot?: (o: Shot & { out: string; fileRoot?: string }) => Promise<unknown>
@@ -76,7 +76,7 @@ export class Runner {
     autoResume?: boolean
   }) {
     this.store = o.store; this.jobs = o.jobs; this.bus = o.bus; this.pick = pickOf(o.sdk); this.cwd = o.cwd
-    this.max = o.max ?? 3; this.gate = o.gate; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => ({ ctx: [], images: [] })); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot; this.jobTools = o.jobTools; this.notes = o.notes
+    this.max = o.max ?? 3; this.gate = o.gate; this.via = o.via; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => ({ ctx: [], images: [] })); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot; this.jobTools = o.jobTools; this.notes = o.notes
     this.autoResume = !!o.autoResume
   }
 
@@ -115,7 +115,7 @@ export class Runner {
 
   /** auto = the console asks by itself, and the journal says so; via = who asked when not the user, name = its signer */
   async ask(job: string, step: string, q: string, o: { auto?: boolean; via?: 'session'; name?: string } = {}): Promise<RunRec> {
-    if (!this.gate()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; no run was started')
+    if (!this.gate()) throw downError(this.via, 'no run was started')
     if (!q || !q.trim()) throw new HttpError(400, 'bad_args', 'the instruction is empty')
     await this.hasRun(job, step)
     const r: RunRec = { id: `r-${randomBytes(6).toString('hex')}`, job, step, q: q.trim(), state: 'queued', at: new Date().toISOString(), provider: this.pick.auto(), ...(o.via ? { via: o.via } : {}) }
@@ -134,7 +134,7 @@ export class Runner {
 
   /** a reply to the step's draft in its own session; via = who replied when not the user: a session, or the console itself */
   async reply(job: string, step: string, t: string, intent: RunIntent, o: { via?: 'session' | 'console'; name?: string } = {}): Promise<RunRec> {
-    if (!this.gate()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; the reply was not sent')
+    if (!this.gate()) throw downError(this.via, 'the reply was not sent')
     if (!t || !t.trim()) throw new HttpError(400, 'bad_args', 'the reply is empty')
     if (!INTENTS.includes(intent)) throw new HttpError(400, 'bad_args', `intent is one of ${INTENTS.join(', ')}`)
     const j = await this.jobs.get(job)
@@ -227,7 +227,7 @@ export class Runner {
   /** the same record queued again: its session continues, or without one it starts afresh on the same instruction;
       a reply that never reached its session goes again in the session it replies to */
   private async requeue(r: RunRec, auto: boolean): Promise<RunRec> {
-    if (!this.gate()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; the run was not resumed')
+    if (!this.gate()) throw downError(this.via, 'the run was not resumed')
     await this.hasRun(r.job, r.step)
     const fresh = !!r.parent && !r.session, resume = fresh ? (await this.chain(r.job, r.step)).session : r.session
     if (r.parent && !resume) throw new HttpError(409, 'no_session', 'the draft this replies to has no session any more')

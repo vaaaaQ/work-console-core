@@ -29,3 +29,9 @@ export class HttpError extends Error {
   status: number; code: string
   constructor(status: number, code: string, msg: string) { super(msg); this.status = status; this.code = code }
 }
+
+/** what a workspace's source stands for when it is down, named as the page names it */
+export type Via = 'gateway' | 'store'
+export const downName = (via?: Via) => via === 'store' ? 'the database' : 'the bridge'
+export const downError = (via: Via | undefined, then: string) =>
+  new HttpError(503, via === 'store' ? 'store_unavailable' : 'bridge_unavailable', `${downName(via)} is unavailable; ${then}`)

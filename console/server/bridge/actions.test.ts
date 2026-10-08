@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { HttpError } from '../events.ts'
-import { GATEWAY_ACTIONS, actionPacks, actionsOf, resolveAct } from './actions.ts'
+import { GATEWAY_ACTIONS, actionPacks, actionsOf, grantedActs, resolveAct } from './actions.ts'
+import { PACKS_DIR } from './packs.ts'
 import type { PackManifest } from './packs.ts'
 
 const act = (concept: string) => ({ tab: 't', concept })
@@ -43,4 +44,15 @@ test('a gateway workspace keeps its eight actions', async () => {
   assert.equal(GATEWAY_ACTIONS.size, 8)
   for (const action of GATEWAY_ACTIONS) assert.equal((await resolveAct({ action, args: { chatName: 'Team Dev' } }, chats)).action, action)
   await assert.rejects(resolveAct({ action: 'rm -rf', args: {} }, chats), refused('unknown_action'))
+})
+
+test("a managed workspace may act only through the core packs its grants name, and only as granted", () => {
+  const said: string[] = []
+  const g = (packs: string[], acts: string[]) => [...grantedActs({ packs, acts }, PACKS_DIR, (m) => said.push(m))].sort()
+  assert.deepEqual(g(['m365-teams', 'azure-devops'], ['chat.post', 'review.vote', 'mail.send']), ['chat.post', 'review.vote'])
+  assert.deepEqual(g(['m365-teams'], []), [], 'nothing granted, nothing allowed')
+  assert.deepEqual(g([], ['chat.post']), [], 'a granted act no pack declares is not allowed')
+  assert.deepEqual(g(['no-such-pack', 'm365-mail'], ['mail.send']), ['mail.send'], 'a pack that does not load gives nothing')
+  assert.equal(said.length, 1)
+  assert.match(said[0], /no-such-pack/)
 })

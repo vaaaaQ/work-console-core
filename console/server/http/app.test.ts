@@ -69,7 +69,7 @@ function expectErrors(t: TestContext, ...pats: RegExp[]) {
 type Fakes = Record<string, FakeGateway>
 /** acme and beta (or acme alone), each on its own fake gateway; `before` runs before the sources start.
     A setup that fails partway closes what it opened, so a red run fails instead of hanging. */
-async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[]; before?: (f: Fakes) => void; voice?: Voice; format?: Format } = {}) {
+async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[]; before?: (f: Fakes) => void; voice?: Voice; format?: Format; root?: string } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'wc-http-')), web = join(dir, 'web')
   const list: Space[] = [], servers: Server[] = []
   let h: ReturnType<typeof createApp> | null = null, unhub = () => {}
@@ -84,7 +84,7 @@ async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[];
     const beta = o.betaPlugins ? { ...betaW, plugins: () => o.betaPlugins! } : betaW
     const ws: [WorkspaceServer, string | null][] = o.one ? [[acmeW, 'Europe/Berlin']] : [[acmeW, 'Europe/Berlin'], [beta, null]]
     install(ws.map(([w]) => ({ page: w.page })))
-    for (const [w, tz] of ws) list.push(await makeSpace(w, { cfg: wsCfg(dir, tz), home: dir, artifactsDir: join(dir, 'arts'), sdk, fake: true, push: async () => {} }))
+    for (const [w, tz] of ws) list.push(await makeSpace(w, { cfg: wsCfg(dir, tz), home: dir, artifactsDir: join(dir, 'arts'), sdk, fake: true, push: async () => {}, root: o.root }))
     const spaces = new Spaces(list), bus = new Bus()
     unhub = hub(list, bus)
     const fakes: Fakes = Object.fromEntries(list.map((s) => [s.id, s.fake!]))
@@ -412,6 +412,21 @@ test('sources come in page shapes; an act resolves the chat name and reaches onl
     assert.equal((await call(lp, 'POST', '/api/ws/acme/act', { body: { action: 'chat.post', args: { chatName: 'no such chat', text: 'x' } } })).json.error.code, 'unknown_chat')
     assert.equal((await call(lp, 'POST', '/api/ws/acme/act', { body: { action: 'rm -rf', args: {} } })).status, 400)
     assert.equal((await call(lp, 'DELETE', '/api/ws/acme/sources')).status, 405)
+  } finally { await stop() }
+})
+
+test("a managed workspace acts only through what its granted packs declare and its grants name", async () => {
+  const root = mkdtempSync(join(tmpdir(), 'wc-root-'))
+  mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })
+  writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ packs: ['m365-teams', 'azure-devops'], acts: ['chat.post'] }))
+  const { lp, fakes, stop } = await setup({ one: true, root })
+  try {
+    const no = await call(lp, 'POST', '/api/ws/acme/act', { body: { action: 'work.comment', args: { id: 'x', text: 'hi' } } })
+    assert.equal(no.json.error?.code, 'unknown_action', no.text)
+    const chat = (await call(lp, 'GET', '/api/ws/acme/sources?concepts=chat')).json.concepts.chat.items[0]
+    const a = await call(lp, 'POST', '/api/ws/acme/act', { body: { action: 'chat.post', args: { chatName: chat.name, text: 'hello' } } })
+    assert.equal(a.status, 200, a.text)
+    assert.deepEqual(fakes.acme.acts.map((x) => x.action), ['chat.post'])
   } finally { await stop() }
 })
 

@@ -10,6 +10,7 @@ import { install } from '../src/workspace.ts'
 import { startFakeGateway } from './bridge/fake.ts'
 import { Bus, HttpError } from './events.ts'
 import type { Ev } from './events.ts'
+import { GATEWAY_ACTIONS } from './bridge/actions.ts'
 import { hub, makeSpace, Spaces } from './spaces.ts'
 import type { Space } from './spaces.ts'
 import { acme, acmeServer, fakeSdk } from './testkit.ts'
@@ -17,6 +18,8 @@ import { fakeSeed } from './workspace.ts'
 import type { PluginCtx, WorkspaceServer, WsConfig } from './workspace.ts'
 import type { WorkDir } from './llm/worktree.ts'
 import type { Store } from './store/port.ts'
+import { pgSource } from './store/pg.ts'
+import type { PgSource } from './store/pg.ts'
 
 /** Acme under another id and prefix; its playbooks stay Acme's, so it brings none of its own */
 const beta2: WorkspaceServer = { ...acmeServer, page: { ...acme, id: 'beta2', playbooks: {}, me: 'Alex' }, jobPrefix: 'B' }
@@ -328,7 +331,7 @@ test("a managed workspace's runs get exactly its grants' runTools, and its plugi
   install([{ page: acme }])
   const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-')), root = join(dir, 'console')
   mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })
-  writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ runTools: ['Grep'], hosts: ['api.example.com'] }))
+  writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ runTools: ['Grep'], hosts: ['api.example.com'], packs: ['m365-mail'], acts: ['mail.send', 'chat.post'] }))
   let http: PluginCtx['http'] | undefined
   const w: WorkspaceServer = { ...acmeServer, plugins: (x) => { http = x.http; return [] } }
   const o = { home: dir, artifactsDir: join(dir, 'arts'), sdk: fakeSdk().sdk, fake: true, push: async () => {} }
@@ -337,10 +340,29 @@ test("a managed workspace's runs get exactly its grants' runTools, and its plugi
     assert.deepEqual(managed.cfg.runTools, ['Grep'])
     assert.deepEqual(managed.grants?.hosts, ['api.example.com'])
     await assert.rejects(http!('https://evil.example/'), /host_not_granted/)
+    assert.deepEqual([...managed.acts], ['mail.send'])
   } finally { await managed.close() }
   const plain = await makeSpace(w, { ...o, cfg: { ...wsCfg(dir), runTools: ['Read', 'Bash'] }, root: join(dir, 'other') })
   try {
     assert.deepEqual(plain.cfg.runTools, ['Read', 'Bash'])
     assert.equal(plain.grants, null)
+    assert.equal(plain.acts, GATEWAY_ACTIONS)
   } finally { await plain.close() }
+})
+
+test('a workspace on its own database names the database when it is down, not the bridge', async () => {
+  install([{ page: acme }])
+  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-'))
+  const w: WorkspaceServer = {
+    ...acmeServer,
+    source: (_c, { bus }) => pgSource({ url: null, unset: 'Postgres not running', ws: 'acme', bus }),
+    store: (src, _c, o) => (src as PgSource).store(o),
+  }
+  const s = await makeSpace(w, { cfg: wsCfg(dir), home: dir, artifactsDir: join(dir, 'arts'), sdk: fakeSdk().sdk, fake: false, push: async () => {} })
+  try {
+    const down = (then: string) => httpError(503, 'store_unavailable', `the database is unavailable; ${then}`)
+    await assert.rejects(s.jobs.create({ t: 'x', key: 'ACME-77', pb: 'tell', prj: acme.pack.prj[0], ws: 'acme' }), down('nothing was changed'))
+    await assert.rejects(s.runner.ask('A-0001', 'tell/post', 'go'), down('no run was started'))
+    await assert.rejects(s.start('ACME-77'), down('nothing was changed'))
+  } finally { await s.close() }
 })

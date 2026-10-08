@@ -1,7 +1,8 @@
 import * as T from '../../src/model/transitions.ts'
 import { PAGE_OPS, SESSION_OPS } from '../../src/model/types.ts'
 import type { Cmd, Job } from '../../src/model/types.ts'
-import { Bus, HttpError } from '../events.ts'
+import { Bus, HttpError, downError } from '../events.ts'
+import type { Via } from '../events.ts'
 import { Conflict } from '../store/port.ts'
 import type { Store } from '../store/port.ts'
 
@@ -17,12 +18,13 @@ const ALLOWED: Partial<Record<Who, Set<string>>> = { page: new Set(PAGE_OPS), se
 const BY: Partial<Record<Who, string>> = { session: 'Claude Code', console: 'console', run: 'LLM' }
 
 export class Jobs {
-  private store: Store; private bus: Bus; private ctx: () => T.Ctx; private gate: () => boolean
+  private store: Store; private bus: Bus; private ctx: () => T.Ctx; private gate: () => boolean; private via?: Via
   private nyf: ((j: Job) => void)[] = []
   private cmdf: ((e: CmdEv) => void)[] = []
 
-  constructor(o: { store: Store; bus: Bus; ctx: () => T.Ctx; gate: () => boolean }) {
-    this.store = o.store; this.bus = o.bus; this.ctx = o.ctx; this.gate = o.gate
+  /** via = what the gate stands for, named when it is closed */
+  constructor(o: { store: Store; bus: Bus; ctx: () => T.Ctx; gate: () => boolean; via?: Via }) {
+    this.store = o.store; this.bus = o.bus; this.ctx = o.ctx; this.gate = o.gate; this.via = o.via
   }
 
   /** fires when a job starts needing you (it did not a moment ago) */
@@ -33,7 +35,7 @@ export class Jobs {
     return () => { this.cmdf = this.cmdf.filter((g) => g !== f) }
   }
 
-  private open() { if (!this.gate()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; nothing was changed') }
+  private open() { if (!this.gate()) throw downError(this.via, 'nothing was changed') }
 
   private async put(prev: Job | null, next: Job, expectV: number | null) {
     let saved: Job

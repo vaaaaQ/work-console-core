@@ -8,7 +8,7 @@ import type { Cmd, Job, Playbook, RunIntent, RunRec, Tpl } from '../../src/model
 import { resolveAct } from '../bridge/actions.ts'
 import { GatewayError, READY } from '../bridge/wire.ts'
 import type { ActRes, ConceptReply } from '../bridge/wire.ts'
-import { HttpError } from '../events.ts'
+import { HttpError, downError } from '../events.ts'
 import type { Bus, Ev } from '../events.ts'
 import { noteIn } from '../knowledge/notes.ts'
 import { buildIn } from '../llm/builder.ts'
@@ -295,12 +295,12 @@ export function createApp(d: Deps) {
   }
 
   async function act(s: Space, b: Record<string, unknown>) {
-    if (!s.source.available()) throw new HttpError(503, 'bridge_unavailable', 'the bridge is unavailable; nothing was sent')
+    if (!s.source.available()) throw downError(s.source.via, 'nothing was sent')
     const chats = async () => {
       const c = (await s.source.read(['chat'])).chat
       return READY.has(c?.status) && Array.isArray(c.items) ? (c.items as { id: string; name: string }[]) : []
     }
-    const a = await resolveAct(b as { action: string; actionId?: string; args?: Record<string, unknown> }, chats)
+    const a = await resolveAct(b as { action: string; actionId?: string; args?: Record<string, unknown> }, chats, s.acts)
     return { actionId: a.actionId, ...(await s.source.act(a)) }
   }
 
