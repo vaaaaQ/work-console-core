@@ -391,6 +391,7 @@ flowchart LR
 | Resume | the CLI's session folder is kept under `<home>/cursor/sessions/<id>` and copied into the next turn's run folder; a session not kept there fails the resume. A turn's start drops kept sessions unused for 30 days, as long as Claude Code keeps a transcript to resume (its `cleanupPeriodDays` default) |
 | Model | the account's default; the console never names one. A plan that refuses a turn fails it as `cursor_plan:`, a signed-out CLI as `signin_required:`, a missing one as `cursor_missing:`. A turn the CLI could not run still ends as `end_turn`, its reason a last text chunk of its own after a blank line; the console fails the turn with it. The console never signs in |
 | System prompt | ACP has none: an ask's and the agent's instructions go at the head of the turn's prompt |
+| Unlike Claude | a manual Open starts a fresh chat, with no resume; shells get the short environment, without the user's own variables; the CLI also loads the project's `.cursor/hooks.json` and `.claude/settings.local.json` hooks, in ask turns too (read from its bundle, not seen live); on POSIX the session keeps the real `HOME`, and nothing there is tested |
 
 ## Knowledge
 
