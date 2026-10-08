@@ -30,6 +30,12 @@
         "qa"
       ]
     },
+    "swimlane": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "assignedTo": {
       "type": [
         "string",

@@ -11,7 +11,7 @@ flowchart LR
   tab -->|fetch, credentials: include| api[Tool's own web API]
   tab -->|"{ok, data} | {ok:false, code}"| carrier --> gw
 ```
-*The script runs as the page and uses the tab's own session. It never sees or returns a token.*
+*The script runs as the page and uses the tab's own session. It never returns a token.*
 
 ## pack.json
 
@@ -33,6 +33,31 @@ flowchart LR
 | `concepts.<c>.interval` | Seconds between reads |
 | `concepts.<c>.cap` | Max items kept |
 | `actions.<a>.concept` | Which concept to re-read after the act |
+
+### Config and hosts
+
+A pack that serves more than one workplace names no organisation, project or site. It declares the
+settings it takes, and the workspace supplies the values.
+
+```json
+"config": {
+  "org": { "about": "the organisation in the tool's URLs", "required": true, "pattern": "^[A-Za-z0-9-]+$" },
+  "done": { "about": "states that count as closed", "list": true, "default": ["Done"] }
+},
+"hosts": ["tracker.example", "api.tracker.example"],
+"tabs": { "site": { "match": "^https://tracker\\.example/{org}(/|$)", "open": "https://tracker.example/{org}" } }
+```
+
+| Field | Meaning |
+|---|---|
+| `config.<key>` | `about`, plus optional `required`, `default`, `pattern`, `enum`, and `list` for a list of strings |
+| `hosts` | Every host the script may call. The tab's host is not added for you |
+| `{key}` | A setting put into `tabs.*.match` (regex-escaped), `tabs.*.open` (URL-encoded) or `hosts` (as is, and the result must be a bare host name). A list key cannot be a template |
+
+The console checks the workspace's values with `packConfig` and renders the templates with
+`renderPack` (`console/server/bridge/packs.ts`). The script gets the values, defaults applied, as
+`call.config`. It checks them again, because it runs on its own in the tab: a missing or malformed
+value answers `bad_args` naming `config.<key>`, before any request.
 
 ## The call
 
@@ -67,6 +92,9 @@ Return `{ok:false, code, message, retryAfter?}` and never throw out of the funct
 
 - Check the tab's host for every concept and action, so the script never acts on a sign-in page.
 - Validate every id against a strict regex before it reaches a URL or a query (`KEY` in the example).
+- A tab whose API wants a bearer token keeps one from its own sign-in library, such as MSAL's entries in
+  `localStorage`. Use the live one that expires last, only in a header from inside the tab, only to a
+  declared host, and never follow a link the source returned to another host (`packs/m365-mail/`).
 - Scrub tokens from every message (`scrub`).
 - Return times as ISO UTC. The `zone` field is for display only.
 - Keep the script self-contained, with no imports. The carrier serializes it.
@@ -76,7 +104,13 @@ Return `{ok:false, code, message, retryAfter?}` and never throw out of the funct
 `packs/example/test/` runs the script in Node against a fake tab:
 
 - `harness.mjs` provides a routed `fetch` that records each request, plus `location` and `document`.
+  For a pack that uses the tab's MSAL tokens it also fakes `localStorage` (`msalToken`, `msalAccount`).
+  `load(url)` loads any pack's script, and `run(call, {pack})` runs it.
 - `validate.mjs` is a small JSON-schema check against `schemas/`.
+- `contract.mjs` runs the contract over a pack's `pack.json` with your fixtures. It checks that
+  reads and gets match the schemas within the cap, that an act without args is refused before any
+  request, that a blank tab, a sign-in page and a missing required setting are refused, that every
+  request goes to a declared host, and that no token appears in any result.
 
 ```bash
 node --test "packs/**/test/*.test.mjs"

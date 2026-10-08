@@ -1,0 +1,18 @@
+{
+  "name": "m365-teams",
+  "zone": "UTC",
+  "script": "m365-teams.js",
+  "config": {
+    "host": { "about": "the Teams web site the person signs in to", "enum": ["teams.microsoft.com", "teams.cloud.microsoft"], "default": "teams.microsoft.com" }
+  },
+  "hosts": ["{host}", "graph.microsoft.com"],
+  "tabs": {
+    "teams": { "match": "^https://{host}/", "open": "https://{host}/" }
+  },
+  "concepts": {
+    "chat": { "tab": "teams", "interval": 5, "cap": 50 }
+  },
+  "actions": {
+    "chat.post": { "tab": "teams", "concept": "chat" }
+  }
+}
