@@ -36,9 +36,13 @@ node <dir>/scripts/update.mjs [--give-up]                                      #
   `postgres.password`, `openai.key`, `run.json`, `logs/console.log` and `browser/`, the console's own Edge profile.
 - `run.mjs` restarts the server at once on exit code 75 and after a backoff on any other exit. After a
   restart into a new build the page says "Updated — press Ctrl+F5".
-- `update.mjs` syncs and checks a new core in a worktree on `update/<sha7>`. A failure leaves the folder as
-  it was, exits 3 and writes `<home>/update-failed.json`. Commit a fix on that branch and run the update
-  again to apply it, or run `--give-up`.
+- `update.mjs` syncs and checks a new core in a worktree `<home>-updates/<sha7>` on `update/<sha7>`. A failure
+  leaves the folder as it was, exits 3 and writes `<home>/update-failed.json`, which the console shows in a
+  banner: **Reintegrate** opens a conversation with a managed workspace's agent, given the failing output and
+  the core's diff, which fixes the workspace on that branch and applies or gives up; **Apply** runs the update
+  again; **Give up** drops it. By hand: commit a fix on that branch and run the update again, or run `--give-up`.
+  `--no-restart` leaves the restart to the console that runs it.
+- What to change where, and what never to touch, is in [EXTENDING.md](EXTENDING.md).
 - Starting at logon is up to you: install prints the command and changes nothing on your system.
 
 The `.ps1` scripts are the older setup and still work: `scripts/install.ps1` once, `scripts/update.ps1`

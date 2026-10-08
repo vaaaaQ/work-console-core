@@ -250,7 +250,27 @@ person's approval.*
   `vm` or `module`, nor require or import a computed name, nor use a global `fetch`, `WebSocket`,
   `XMLHttpRequest` or `EventSource`.
 - **Routes** under `/api/ws/<id>/agent`: `GET`, `POST {text}`, `/stop`, `/new`, `/undo {sha}`,
-  `/grants {accept, reason}`; an unmanaged workspace answers 404 `not_managed`. Progress comes as `agent` events.
+  `/grants {accept, reason}`, `/reintegrate`; an unmanaged workspace answers 404 `not_managed`. Progress comes
+  as `agent` events.
+
+### Reintegration
+
+A core update that fails at `typecheck`, `tests` or `build` (`scripts/update.mjs`) leaves its branch, its
+worktree under `<home>-updates/` and `<home>/update-failed.json`. `/api/state.update` and `update` events
+carry it, and the page shows it in a banner.
+
+| Piece | What |
+|---|---|
+| Reintegrate | `POST /api/ws/<id>/agent/reintegrate`: a new conversation of that workspace's agent whose first message is the failing output and the core's diff as it lands in the folder, the locks left out (`server/update.ts`) |
+| Limits | the agent's, rooted at the update's worktree: it edits `workspaces/<id>/` and `tools/` there |
+| Tools | `check`; `apply` commits on the update branch with no restart; `give_up {reason}` |
+| After the turn | once no agent's turn runs, `update.mjs --no-pull --no-restart`, or `--give-up --no-restart`. Applied: the console restarts. Failed again: the agent gets the new output with the next message. A turn that was stopped or failed runs nothing |
+| Page | `POST /api/update/apply` and `/api/update/give-up` run the same; a turn that runs ends first |
+
+- While update.mjs runs, no agent turn starts (409 `updating`). A conversation whose update was applied,
+  given up or replaced takes no more turns (409 `update_closed`).
+- A failure before workspace code ran (`sync`, `check`) is not reintegrable: Apply or Give up.
+- A reintegrate commit is `<id>: <summary>` on the update branch and cannot be undone from the panel.
 
 ## LLM runs
 
