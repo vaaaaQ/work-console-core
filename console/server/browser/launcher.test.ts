@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { edgeBrowser, findEdge, parsePolicy, sharedBrowser } from './launcher.ts'
+import { edgeBrowser, findEdge, holdsProfile, parsePolicy, sharedBrowser } from './launcher.ts'
 import type { Browser, BrowserStatus } from './launcher.ts'
 
 const FAKE = join(import.meta.dirname, 'fake-edge.mjs')
@@ -26,6 +26,7 @@ const answers = async (ep: string) => {
   try { return (await fetch(`${ep}/json/version`, { signal: AbortSignal.timeout(1000) })).ok } catch { return false }
 }
 const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
+const closes = (dir: string) => { const f = join(dir, 'fake-edge-closes.jsonl'); return existsSync(f) ? readFileSync(f, 'utf8').trim().split('\n').length : 0 }
 
 after(() => {
   for (const d of dirs) {
@@ -97,6 +98,44 @@ test('an Edge that opens no debugging port is unavailable after portWaitMs, and 
   assert.match(b.status().reason!, /no debugging port; a policy may block remote debugging/)
   const [r] = runs(dir)
   await until(() => !alive(r.pid))
+})
+
+test('stop asks an Edge it launched to close itself, so the profile is written out', async () => {
+  const dir = fresh(), b = edge(dir)
+  await b.start()
+  const ep = b.endpoint()!
+  await b.stop()
+  assert.equal(closes(dir), 1)
+  assert.ok(!(await answers(ep)))
+})
+
+test('stop ends an Edge that relaunched itself under a new pid and ignores the close', async () => {
+  const dir = fresh(), b = edge(dir, { env: { ...process.env, FAKE_EDGE_MODE: 'relaunch,noclose' }, closeMs: 300 })
+  await b.start()
+  const ep = b.endpoint()!
+  assert.equal(runs(dir).length, 2)
+  await b.stop()
+  assert.ok(!(await answers(ep)))
+  for (const r of runs(dir)) await until(() => !alive(r.pid))
+})
+
+test('an Edge that relaunched itself and opens no port is ended when the launch gives up', async () => {
+  const dir = fresh(), b = edge(dir, { env: { ...process.env, FAKE_EDGE_MODE: 'relaunch,noport' }, portWaitMs: 1500 })
+  await b.start()
+  assert.equal(b.status().state, 'unavailable')
+  assert.equal(runs(dir).length, 2)
+  for (const r of runs(dir)) await until(() => !alive(r.pid))
+})
+
+test('holdsProfile matches a command line on exactly this profile dir', () => {
+  const dir = String.raw`C:\Users\u\wc\browser`
+  assert.ok(holdsProfile(String.raw`"C:\Edge\msedge.exe" --user-data-dir=C:\Users\u\wc\browser --no-first-run`, dir, true))
+  assert.ok(holdsProfile('msedge.exe --type=renderer "--user-data-dir=c:/users/u/wc/browser"', dir, true))
+  assert.ok(holdsProfile(String.raw`msedge.exe --user-data-dir="C:\Users\u\wc\browser"`, dir, true))
+  assert.ok(!holdsProfile(String.raw`msedge.exe --user-data-dir=C:\Users\u\wc\browser2`, dir, true))
+  assert.ok(!holdsProfile('msedge.exe --profile-directory=Default', dir, true))
+  assert.ok(!holdsProfile('edge --user-data-dir=/home/U/wc/browser', '/home/u/wc/browser', false))
+  assert.ok(holdsProfile('edge --user-data-dir=/home/u/wc/browser', '/home/u/wc/browser', false))
 })
 
 test('the watchdog relaunches an Edge that was closed', async () => {

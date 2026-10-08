@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 /* The console's own Edge: one profile dir, a free debugging port read from DevToolsActivePort, reattached after a
-   console restart, watched and relaunched when it closes. It never touches another profile or a process it did not start. */
+   console restart, watched and relaunched when it closes. Stop closes an Edge it launched; nothing outside its profile is touched. */
 
 export type BrowserStatus = { state: 'off' | 'starting' | 'up' | 'unavailable'; reason?: string }
 export interface Browser {
@@ -24,6 +24,8 @@ export type EdgeOptions = {
   policy?: () => Promise<string | null>
   probeMs?: number
   portWaitMs?: number
+  /** how long stop waits for Edge to close itself before ending its processes */
+  closeMs?: number
   env?: NodeJS.ProcessEnv
 }
 
@@ -71,6 +73,49 @@ async function probe(endpoint: string): Promise<boolean> {
   try { return (await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(PROBE_TIMEOUT) })).ok } catch { return false }
 }
 
+/** true when a process command line runs on exactly this profile dir */
+export function holdsProfile(cmd: string, dir: string, win = process.platform === 'win32'): boolean {
+  const norm = (s: string) => (win ? s.toLowerCase().replace(/\//g, '\\') : s)
+  const c = norm(cmd), d = norm(dir), flag = '--user-data-dir='
+  for (let i = c.indexOf(flag); i >= 0; i = c.indexOf(flag, i + 1)) {
+    const v = c.slice(i + flag.length).replace(/^"/, '')
+    if (v.startsWith(d) && /^(["\s]|$)/.test(v.slice(d.length))) return true
+  }
+  return false
+}
+
+/** asks the browser to close itself, which writes the profile out; true once its port is gone */
+async function closeBrowser(endpoint: string, ms: number): Promise<boolean> {
+  try {
+    const v = await (await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(PROBE_TIMEOUT) })).json() as { webSocketDebuggerUrl?: string }
+    if (!v.webSocketDebuggerUrl) return false
+    await new Promise<void>((ok) => {
+      const ws = new WebSocket(v.webSocketDebuggerUrl!)
+      const done = () => { clearTimeout(t); try { ws.close() } catch { /* closed */ } ok() }
+      const t = setTimeout(done, ms)
+      ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Browser.close' }))
+      ws.onmessage = done; ws.onclose = done; ws.onerror = done
+    })
+  } catch { return false }
+  const end = Date.now() + ms
+  while (Date.now() < end) { if (!await probe(endpoint)) return true; await sleep(100) }
+  return false
+}
+
+/** ends every process on this profile dir: Edge restarts itself under a new pid, so the spawned one may be gone */
+async function killProfile(dir: string): Promise<void> {
+  const win = process.platform === 'win32'
+  const [cmd, args] = win
+    ? ['powershell', ['-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }']]
+    : ['ps', ['-eo', 'pid=,args=']]
+  const out = await new Promise<string>((ok) => execFile(cmd, args, { windowsHide: true, maxBuffer: 64 << 20 }, (_e, so) => ok(String(so ?? ''))))
+  for (const line of out.split(/\r?\n/)) {
+    const m = /^\s*(\d+)\s+(.*)$/.exec(line)
+    if (!m || Number(m[1]) === process.pid || !holdsProfile(m[2], dir, win)) continue
+    try { process.kill(Number(m[1]), 'SIGKILL') } catch { /* already gone */ }
+  }
+}
+
 function kill(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null || !child.pid) return Promise.resolve()
   const pid = child.pid
@@ -81,8 +126,8 @@ function kill(child: ChildProcess): Promise<void> {
 
 export function edgeBrowser(o: EdgeOptions): Browser {
   const dir = resolve(o.dir), portFile = join(dir, 'DevToolsActivePort')
-  const probeMs = o.probeMs ?? 10_000, portWaitMs = o.portWaitMs ?? 20_000
-  let st: BrowserStatus = { state: 'off' }, ep: string | null = null, child: ChildProcess | null = null
+  const probeMs = o.probeMs ?? 10_000, portWaitMs = o.portWaitMs ?? 20_000, closeMs = o.closeMs ?? 5000
+  let st: BrowserStatus = { state: 'off' }, ep: string | null = null, child: ChildProcess | null = null, ours = false
   let starting: Promise<void> | null = null, watching = false, timer: NodeJS.Timeout | undefined
   let misses = 0, launches: number[] = []
   const subs = new Set<(s: BrowserStatus) => void>()
@@ -112,10 +157,11 @@ export function edgeBrowser(o: EdgeOptions): Browser {
     const end = Date.now() + portWaitMs
     while (Date.now() < end) {
       const e = readPort()
-      if (e && await probe(e)) { ep = e; return true }
+      if (e && await probe(e)) { ep = e; ours = true; return true }
       await sleep(50)
     }
     await kill(c)
+    await killProfile(dir)
     if (child === c) child = null
     ep = null
     return false
@@ -153,7 +199,7 @@ export function edgeBrowser(o: EdgeOptions): Browser {
     if (blocked) return set('unavailable', blocked)
     set('starting')
     const live = readPort()
-    if (live && await probe(live)) { ep = live; set('up'); return watch() }
+    if (live && await probe(live)) { ep = live; ours = false; set('up'); return watch() }
     launches = []
     if (!await launch()) return set('unavailable', 'Edge opened no debugging port; a policy may block remote debugging')
     set('up')
@@ -172,8 +218,9 @@ export function edgeBrowser(o: EdgeOptions): Browser {
     async stop() {
       if (starting) await starting.catch(() => {})
       watching = false; clearTimeout(timer)
+      if (ours && ep && !await closeBrowser(ep, closeMs)) await killProfile(dir)
       if (child) await kill(child)
-      child = null; ep = null
+      child = null; ep = null; ours = false
       set('off')
     },
   }
