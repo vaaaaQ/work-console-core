@@ -1,7 +1,9 @@
 import { execFile, spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
-import { existsSync, lstatSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, unlinkSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { closeEdge, killProfile, probe, profileEndpoint } from '../../scripts/edge.mjs'
+export { holdsProfile } from '../../scripts/edge.mjs'
 
 /* The console's own Edge: one profile dir, a free debugging port read from DevToolsActivePort, reattached after a
    console restart, watched and relaunched when it closes. Stop closes an Edge it launched; nothing outside its profile is touched. */
@@ -29,7 +31,7 @@ export type EdgeOptions = {
   env?: NodeJS.ProcessEnv
 }
 
-const MISSES = 3, MAX_RESTARTS = 3, WINDOW = 10 * 60_000, PROBE_TIMEOUT = 5000
+const MISSES = 3, MAX_RESTARTS = 3, WINDOW = 10 * 60_000
 const SECRET = new Set(['SECRET', 'TOKEN', 'PAT', 'PASSWORD', 'PWD', 'KEY', 'CONNECTION', 'CREDENTIAL'])
 const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms))
 
@@ -69,55 +71,9 @@ function scrub(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out
 }
 
-async function probe(endpoint: string): Promise<boolean> {
-  try { return (await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(PROBE_TIMEOUT) })).ok } catch { return false }
-}
-
-/** true when a process command line runs on exactly this profile dir */
-export function holdsProfile(cmd: string, dir: string, win = process.platform === 'win32'): boolean {
-  const norm = (s: string) => (win ? s.toLowerCase().replace(/\//g, '\\') : s)
-  const c = norm(cmd), d = norm(dir), flag = '--user-data-dir='
-  for (let i = c.indexOf(flag); i >= 0; i = c.indexOf(flag, i + 1)) {
-    const v = c.slice(i + flag.length).replace(/^"/, '')
-    if (v.startsWith(d) && /^(["\s]|$)/.test(v.slice(d.length))) return true
-  }
-  return false
-}
-
-/** true while a browser holds the profile: Edge's lock file on Windows, its singleton link elsewhere */
-const held = (dir: string) => ['lockfile', 'SingletonLock'].some((f) => { try { lstatSync(join(dir, f)); return true } catch { return false } })
-
-/** asks the browser to close itself, which writes the profile out; true once its port is gone and the profile let go */
-async function closeBrowser(endpoint: string, dir: string, ms: number): Promise<boolean> {
-  try {
-    const v = await (await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(PROBE_TIMEOUT) })).json() as { webSocketDebuggerUrl?: string }
-    if (!v.webSocketDebuggerUrl) return false
-    await new Promise<void>((ok) => {
-      const ws = new WebSocket(v.webSocketDebuggerUrl!)
-      const done = () => { clearTimeout(t); try { ws.close() } catch { /* closed */ } ok() }
-      const t = setTimeout(done, ms)
-      ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Browser.close' }))
-      ws.onmessage = done; ws.onclose = done; ws.onerror = done
-    })
-  } catch { return false }
-  const end = Date.now() + ms
-  while (Date.now() < end) { if (!held(dir) && !await probe(endpoint)) return true; await sleep(100) }
-  return false
-}
-
-/** ends every process on this profile dir: Edge restarts itself under a new pid, so the spawned one may be gone */
-async function killProfile(dir: string): Promise<void> {
-  const win = process.platform === 'win32'
-  const [cmd, args] = win
-    ? ['powershell', ['-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }']]
-    : ['ps', ['-eo', 'pid=,args=']]
-  const out = await new Promise<string>((ok) => execFile(cmd, args, { windowsHide: true, maxBuffer: 64 << 20 }, (_e, so) => ok(String(so ?? ''))))
-  for (const line of out.split(/\r?\n/)) {
-    const m = /^\s*(\d+)\s+(.*)$/.exec(line)
-    if (!m || Number(m[1]) === process.pid || !holdsProfile(m[2], dir, win)) continue
-    try { process.kill(Number(m[1]), 'SIGKILL') } catch { /* already gone */ }
-  }
-}
+let keep = false
+/** while on, stop leaves a launched Edge running for the console started next to reattach; a restart turns it on */
+export function keepBrowsers(on = true) { keep = on }
 
 function kill(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null || !child.pid) return Promise.resolve()
@@ -140,12 +96,7 @@ export function edgeBrowser(o: EdgeOptions): Browser {
     st = reason === undefined ? { state } : { state, reason }
     for (const f of subs) f(st)
   }
-  const readPort = (): string | null => {
-    try {
-      const port = readFileSync(portFile, 'utf8').split(/\r?\n/)[0].trim()
-      return /^\d+$/.test(port) ? `http://127.0.0.1:${port}` : null
-    } catch { return null }
-  }
+  const readPort = () => profileEndpoint(dir)
 
   /** spawns Edge and waits for its port; false (the process ended) when none answers in time */
   const launch = async (): Promise<boolean> => {
@@ -221,8 +172,8 @@ export function edgeBrowser(o: EdgeOptions): Browser {
     async stop() {
       if (starting) await starting.catch(() => {})
       watching = false; clearTimeout(timer)
-      if (ours && ep && !await closeBrowser(ep, dir, closeMs)) await killProfile(dir)
-      if (child) await kill(child)
+      if (!keep && ours && ep && !await closeEdge(ep, dir, closeMs)) await killProfile(dir)
+      if (child && !keep) await kill(child)
       child = null; ep = null; ours = false
       set('off')
     },

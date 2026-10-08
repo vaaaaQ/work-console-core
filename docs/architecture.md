@@ -197,7 +197,7 @@ playbooks, marks) in PostgreSQL rows of kind `state` (`server/browser/pgdocs.ts`
 |---|---|
 | Packs | `grants.packs` of `grants.json`, loaded from the core's `packs/` (a consumer's synced copy) with their `pack.json` settings from `packConfig` in `config.json`. Every host a pack declares or its settings produce must be in `grants.hosts`, or the pack does not load and its concepts say why |
 | Acts | what the loaded packs declare, less what `grants.acts` leaves out; a gateway workspace keeps `GATEWAY_ACTIONS` |
-| Edge | started only once a pack is granted; `edgeHeadless` in the workspace config hides it |
+| Edge | started only once a pack is granted; `edgeHeadless` in the workspace config hides it. A restart leaves it running for the next server to reattach; `run.mjs --stop` closes it over CDP and waits until it lets go of the profile |
 | Down | without `pgUrl` and `pgPasswordPath` the source is down as a store and says so, `via: 'store'`; the page names the database, not the bridge |
 | Sign-in | a tab that answers unauthorized makes its concepts `signin_required` with the tab's host. The page shows *Sign in to <host>*, which calls `POST /api/ws/<id>/browser/front {host}`; `GET /browser/status` lists the tabs |
 | Acts kept | an act's id is kept with its result, a refusal included, so one Send is never sent twice |

@@ -10,6 +10,7 @@ import type { Job } from '../src/model/types.ts'
 import { install } from '../src/workspace.ts'
 import { SERVERS } from '../workspaces/server.ts'
 import { Ops } from './agent/ops.ts'
+import { keepBrowsers } from './browser/launcher.ts'
 import { buildId } from './build.ts'
 import type { FakeGateway } from './bridge/fake.ts'
 import { loadConfig, readRaw, readToken, wsConfigs } from './config.ts'
@@ -115,6 +116,8 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
   }
   restartNow = o.restart ?? (() => {
     console.log('the console restarts on its new code')
+    // the next server reattaches to the Edge rather than opening a new one
+    keepBrowsers()
     void close().catch((e) => console.error('closing before the restart:', (e as Error).message)).finally(() => process.exit(RESTART_EXIT))
   })
 

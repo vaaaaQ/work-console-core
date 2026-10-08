@@ -34,8 +34,9 @@ node <dir>/scripts/update.mjs [--give-up]                                      #
 - `--provider` writes `<home>/providers.json`; without it, install keeps the choice already there.
 - `<home>` is `WORK_CONSOLE_HOME` or `~/.work-console`: `config.json`, `install.json`, `providers.json`,
   `postgres.password`, `openai.key`, `run.json`, `logs/console.log` and `browser/`, the console's own Edge profile.
-- `run.mjs` restarts the server at once on exit code 75 and after a backoff on any other exit. After a
-  restart into a new build the page says "Updated — press Ctrl+F5".
+- `run.mjs` restarts the server at once on exit code 75 and after a backoff on any other exit; a restart keeps
+  the console's Edge for the next server, and `--stop` or Ctrl+C closes it. After a restart into a new build the
+  page says "Updated — press Ctrl+F5".
 - `update.mjs` syncs and checks a new core in a worktree `<home>-updates/<sha7>` on `update/<sha7>`. A failure
   leaves the folder as it was, exits 3 and writes `<home>/update-failed.json`, which the console shows in a
   banner: **Reintegrate** opens a conversation with a managed workspace's agent, given the failing output and

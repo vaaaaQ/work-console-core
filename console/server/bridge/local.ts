@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { CarrierError, cdpCarrier } from '../browser/cdp.ts'
 import { edgeBrowser, sharedBrowser } from '../browser/launcher.ts'
+import { edgeProfile } from '../../scripts/edge.mjs'
 import type { Browser, BrowserStatus } from '../browser/launcher.ts'
 import { configGrants, grantedPacks, PACKS_DIR } from '../browser/packs.ts'
 import type { GrantsFn, LoadedPack } from '../browser/packs.ts'
@@ -97,7 +98,7 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
   const g = (o.grants ?? configGrants)(cfg), packsDir = o.packsDir ?? PACKS_DIR, schemasDir = o.schemasDir ?? SCHEMAS_DIR
   const { packs, problems } = grantedPacks(g, packsDir, schemasDir)
   const val = validator(schemasDir), watched = new Watched()
-  const profile = join(home, 'browser')
+  const profile = edgeProfile(home)
   const browser: Browser | null = !packs.length ? null : o.browser
     ?? sharedBrowser(profile, () => edgeBrowser({ dir: profile, exe: typeof cfg.edgePath === 'string' && cfg.edgePath ? cfg.edgePath : undefined, headless: cfg.edgeHeadless === true }))
   const carrier = cdpCarrier(() => browser?.endpoint() ?? null)

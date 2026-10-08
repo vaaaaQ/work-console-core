@@ -3,13 +3,15 @@ import { spawn } from 'node:child_process'
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { closeProfile, edgeProfile } from './edge.mjs'
 import { alive, consoleHome, readJson, writeJson } from './lib.mjs'
 
 /* Keeps the console's server running:
      node <dir>/scripts/run.mjs [--home <dir>]     in this window; Ctrl+C stops it
      node <dir>/scripts/run.mjs --detach           in the background, prints the URL
      node <dir>/scripts/run.mjs --stop | --restart
-   Exit code 75 restarts the server at once; any other exit restarts it after a backoff.
+   Exit code 75 restarts the server at once and keeps the console's Edge; any other exit restarts it after a backoff.
+   Stopping closes the Edge too.
    Output goes to <home>/logs/console.log; <home>/run.json names the supervisor and the server. */
 
 export const RESTART = 75
@@ -76,7 +78,7 @@ export function supervise(o) {
     rmSync(flag, { force: true })
   })()
 
-  return { done, stop: async () => { stopping = true; child?.kill(); await done } }
+  return { done, stop: async () => { stopping = true; child?.kill(); await done; await closeProfile(edgeProfile(home)) } }
 }
 
 /** asks a running supervisor to restart its server now; false when none runs */
@@ -88,14 +90,16 @@ export function requestRestart(home) {
   return true
 }
 
-/** ends the supervisor first, so nothing restarts the server, then the server */
-export function stopConsole(home) {
+/** ends the supervisor first, so nothing restarts the server, then the server, then closes the console's Edge */
+export async function stopConsole(home) {
   const s = readJson(join(home, 'run.json'), null)
-  if (!s) return false
-  for (const pid of [s.pid, s.server]) if (alive(pid)) try { process.kill(pid) } catch { /* already gone */ }
+  const pids = s ? [s.pid, s.server] : []
+  for (const pid of pids) if (alive(pid)) try { process.kill(pid) } catch { /* already gone */ }
+  for (const end = Date.now() + 5000; pids.some(alive) && Date.now() < end;) await sleep(50)
   rmSync(join(home, 'run.json'), { force: true })
   rmSync(join(home, 'restart'), { force: true })
-  return true
+  await closeProfile(edgeProfile(home))
+  return !!s
 }
 
 export async function waitUp({ port, home, timeoutMs = 60000 }) {
@@ -125,7 +129,7 @@ export async function startConsole({ folder, home, port }) {
     }
     return waitUp({ port, home })
   }
-  if (s) stopConsole(home)
+  if (s) await stopConsole(home)
   return detach({ folder, home, port })
 }
 
@@ -136,7 +140,7 @@ async function cli(argv) {
     else if (['--detach', '--stop', '--restart'].includes(argv[i])) mode = argv[i].slice(2)
     else throw new Error(`unknown argument ${argv[i]}\nusage: node scripts/run.mjs [--home <dir>] [--detach | --stop | --restart]`)
   }
-  if (mode === 'stop') return console.log(stopConsole(home) ? 'stopped' : 'not running')
+  if (mode === 'stop') return console.log(await stopConsole(home) ? 'stopped' : 'not running')
   if (mode === 'restart') return console.log(requestRestart(home) ? 'restarting' : 'not running: run.mjs --detach starts it')
   if (mode === 'detach') {
     if (supervisorOf(home)) return console.log(`already running: http://127.0.0.1:${portOf(home)}/`)

@@ -15,7 +15,8 @@ export function supervise(o: {
   backoff?: (fails: number) => number
 }): { done: Promise<void>; stop(): Promise<void> }
 export function requestRestart(home: string): boolean
-export function stopConsole(home: string): boolean
+/** ends the supervisor and its server, then closes the console's Edge; false when none ran */
+export function stopConsole(home: string): Promise<boolean>
 /** the URL once /api/state answers on loopback */
 export function waitUp(o: { port: number; home: string; timeoutMs?: number }): Promise<string>
 export function detach(o: { folder: string; home: string; port: number; timeoutMs?: number }): Promise<string>

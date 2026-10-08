@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { edgeBrowser, findEdge, holdsProfile, parsePolicy, sharedBrowser } from './launcher.ts'
+import { edgeBrowser, findEdge, holdsProfile, keepBrowsers, parsePolicy, sharedBrowser } from './launcher.ts'
 import type { Browser, BrowserStatus } from './launcher.ts'
 
 const FAKE = join(import.meta.dirname, 'fake-edge.mjs')
@@ -62,6 +62,21 @@ test('a second browser on a live profile reattaches without launching; only the 
   assert.ok(await answers(ep), 'a reattached browser leaves the process alone')
   await a.stop()
   await until(async () => !(await answers(ep)))
+})
+
+test('while browsers are kept, stop leaves a launched Edge up and the next browser reattaches to it', async () => {
+  const dir = fresh(), a = edge(dir)
+  await a.start()
+  const ep = a.endpoint()!
+  keepBrowsers()
+  try { await a.stop() } finally { keepBrowsers(false) }
+  assert.equal(closes(dir), 0)
+  assert.ok(await answers(ep), 'the kept Edge was closed')
+  const b = edge(dir)
+  await b.start()
+  assert.equal(b.endpoint(), ep)
+  assert.equal(runs(dir).length, 1)
+  await b.stop()
 })
 
 test('a stale port file is replaced by a fresh launch', async () => {
