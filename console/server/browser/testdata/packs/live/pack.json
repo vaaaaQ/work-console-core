@@ -1,0 +1,15 @@
+{
+  "name": "live",
+  "zone": "UTC",
+  "script": "live.js",
+  "config": {
+    "port": { "about": "the test page's port", "required": true, "pattern": "^[0-9]+$" }
+  },
+  "hosts": ["127.0.0.1"],
+  "tabs": {
+    "app": { "match": "^http://127\\.0\\.0\\.1:{port}/app/", "open": "http://127.0.0.1:{port}/app/" }
+  },
+  "concepts": {
+    "work": { "tab": "app", "interval": 1, "cap": 10 }
+  }
+}
