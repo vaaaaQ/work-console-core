@@ -128,9 +128,9 @@ test('a get answers the pack, checked by its schema, and the next read watches t
   const { src } = make()
   await src.read(['work'])
   assert.deepEqual(plain(await src.get('work', 'W-9')), { status: 'ok', rev: 1, items: { description: 'd', comments: [] } })
+  // a poll already under way when the get came may still go out without the id
   const n = reads(board).length
-  await until(() => reads(board).length > n)
-  assert.deepEqual(reads(board).at(-1).watch, { work: ['W-9'] })
+  await until(() => reads(board).slice(n).some((c: { watch?: unknown }) => JSON.stringify(c.watch) === JSON.stringify({ work: ['W-9'] })))
   assert.equal((await src.get('work', 'W-404')).status, 'not_found')
   board.ctx.GETS = { work: { 'W-8': { description: 'd', comments: [], extra: 1 } } }
   assert.equal((await src.get('work', 'W-8')).status, 'source_error')
