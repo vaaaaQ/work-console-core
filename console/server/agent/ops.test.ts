@@ -30,7 +30,7 @@ function repo() {
 }
 
 /** npm and vite faked by name, git real; fail names the steps that exit 1 */
-function fakeExec(o: { fail?: string[]; during?: (step: string) => void } = {}) {
+function fakeExec(o: { fail?: string[]; failOnce?: string[]; during?: (step: string) => void } = {}) {
   const calls: string[] = []
   const exec: Exec = async (cmd, args, opt) => {
     if (cmd === 'git') return realExec(cmd, args, opt)
@@ -38,6 +38,7 @@ function fakeExec(o: { fail?: string[]; during?: (step: string) => void } = {}) 
     calls.push(step)
     o.during?.(step)
     if (o.fail?.includes(step)) return { code: 1, out: `${step} went wrong\nline two` }
+    if (o.failOnce?.includes(step) && calls.filter((c) => c === step).length === 1) return { code: 1, out: `${step} flaked` }
     if (step === 'build') {
       const out = args[args.indexOf('--outDir') + 1]
       mkdirSync(out, { recursive: true }); writeFileSync(join(out, 'index.html'), 'new build\n')
@@ -164,8 +165,18 @@ test('a change outside its areas while the check ran (test code writing the core
 test('check passes, or names the failing step with its output', async () => {
   const { r } = repo()
   assert.deepEqual(await ops(r, fakeExec()).o.check('w1'), { ok: true, failures: [] })
-  const c = await ops(r, fakeExec({ fail: ['test'] })).o.check('w1')
+  const f = fakeExec({ fail: ['test'] }), c = await ops(r, f).o.check('w1')
   assert.deepEqual(c, { ok: false, failures: ['npm test failed (exit 1)', 'test went wrong', 'line two'] })
+  assert.deepEqual(f.calls, ['typecheck', 'test', 'test'], 'a failing suite runs twice')
+})
+
+test('the tests run once more when they fail, as update.mjs does: a load flake passes the check', async () => {
+  const { r } = repo(), f = fakeExec({ failOnce: ['test'] })
+  assert.deepEqual(await ops(r, f).o.check('w1'), { ok: true, failures: [] })
+  assert.deepEqual(f.calls, ['typecheck', 'test', 'test'])
+  const t = fakeExec({ fail: ['typecheck'] })
+  assert.equal((await ops(r, t).o.check('w1')).ok, false)
+  assert.deepEqual(t.calls, ['typecheck'], 'a typecheck runs once')
 })
 
 test('undo reverts its own commit, builds, commits `<ws>: undo — <summary>` and restarts', async () => {

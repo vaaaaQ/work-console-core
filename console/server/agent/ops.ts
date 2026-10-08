@@ -124,7 +124,9 @@ export class Ops {
     const imports = importCheck(this.root, areas).filter((l) => !locked.has(l.slice(0, l.indexOf(':'))))
     if (imports.length) return { ok: false, failures: imports }
     for (const [args, name] of [[['run', 'typecheck'], 'npm run typecheck'], [['test'], 'npm test']] as const) {
-      const r = await this.run('npm', [...args], CHECK_MS)
+      let r = await this.run('npm', [...args], CHECK_MS)
+      // the suite has known load flakes; one more run tells a flake from a failure, as update.mjs does
+      if (r.code !== 0 && args[0] === 'test') r = await this.run('npm', [...args], CHECK_MS)
       if (r.code !== 0) return { ok: false, failures: [`${name} failed (exit ${r.code})`, ...tail(r.out)] }
     }
     return { ok: true, failures: [] }

@@ -232,7 +232,7 @@ person's approval.*
 
 - **Apply.** `server/agent/ops.ts`, one op at a time: refuse staged paths outside the two areas and any
   `grants.json`; refuse symlinks and junctions there; the static import check; `npm run typecheck` and
-  `npm test`; `vite build` into `node_modules/.cache/work-console/dist`; swap that into `dist/`; commit only
+  `npm test`, run once more when it fails, as `update.mjs` does; `vite build` into `node_modules/.cache/work-console/dist`; swap that into `dist/`; commit only
   the two areas as `<id>: <summary>`. A failed check or build commits nothing and leaves `dist/` as it was. A
   file outside the areas that changes during the check fails the apply.
 - **Undo** reverts one of the agent's own commits the same way, as `<id>: undo — <summary>`; grants commits
