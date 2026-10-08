@@ -6,7 +6,7 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { alive } from './lib.mjs'
-import { RESTART, backoff, requestRestart, stopConsole, supervise, supervisorOf, waitUp } from './run.mjs'
+import { RESTART, backoff, finishFile, requestRestart, stopConsole, supervise, supervisorOf, waitUp } from './run.mjs'
 
 /* run.mjs with a stand-in server: a script that counts its starts in a file, exits with the codes it is given
    and then stays up until it is killed. */
@@ -84,6 +84,45 @@ test('a restart request ends the server and starts it again at once', async () =
     await until('the new server in run.json', () => !!supervisorOf(home)?.server && supervisorOf(home)!.server !== first)
     assert.equal(alive(first), false)
     assert.equal(existsSync(join(home, 'restart')), false, 'the request is consumed')
+  } finally { await sup.stop() }
+})
+
+test("requestRestart asks the console's own route, which waits for its agents' turns, and kills nothing", async () => {
+  const home = homeDir(), got: unknown[] = []
+  const srv = createServer((req, res) => {
+    let b = ''
+    req.on('data', (c) => { b += c })
+    req.on('end', () => { got.push({ url: req.url, method: req.method, type: req.headers['content-type'], body: JSON.parse(b) }); res.end('{"restarting":true}') })
+  })
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r))
+  const server = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+  try {
+    writeFileSync(join(home, 'run.json'), JSON.stringify({ pid: process.pid, server: server.pid, folder: home, port: (srv.address() as { port: number }).port }))
+    assert.equal(await requestRestart(home), true)
+    assert.deepEqual(got, [{ url: '/api/restart', method: 'POST', type: 'application/json', body: { home } }])
+    assert.ok(alive(server.pid))
+    assert.equal(existsSync(join(home, 'restart')), false)
+  } finally { server.kill(); srv.close() }
+})
+
+test('before a start the supervisor finishes the core update a restart left for it, once', async () => {
+  const home = homeDir(), s = standIn([]), done = join(s.dir, 'finished')
+  writeFileSync(join(s.dir, 'finish.mjs'), `
+import { appendFileSync, existsSync } from 'node:fs'
+appendFileSync(${JSON.stringify(done)}, JSON.stringify({ started: existsSync(${JSON.stringify(join(s.dir, 'count'))}), home: process.env.WORK_CONSOLE_HOME }) + '\\n')
+`)
+  writeFileSync(finishFile(home), '{}')
+  const sup = supervise({ folder: s.dir, home, cmd: s.cmd, finish: [process.execPath, join(s.dir, 'finish.mjs')], backoff: () => 60000 })
+  try {
+    await until('the first start', () => s.starts().length === 1 && !!supervisorOf(home)?.server)
+    assert.equal(supervisorOf(home)!.finish, true, 'run.json says this supervisor finishes updates')
+    const runs = () => readFileSync(done, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    assert.deepEqual(runs(), [{ started: false, home }])
+    assert.equal(existsSync(finishFile(home)), false, 'the record is gone though the finish left it')
+    assert.match(readFileSync(join(home, 'logs', 'console.log'), 'utf8'), /finishing the core update/)
+    await requestRestart(home)
+    await until('the second start', () => s.starts().length === 2)
+    assert.equal(runs().length, 1)
   } finally { await sup.stop() }
 })
 

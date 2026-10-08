@@ -35,14 +35,17 @@ node <dir>/scripts/update.mjs [--give-up]                                      #
 - `<home>` is `WORK_CONSOLE_HOME` or `~/.work-console`: `config.json`, `install.json`, `providers.json`,
   `postgres.password`, `openai.key`, `run.json`, `logs/console.log` and `browser/`, the console's own Edge profile.
 - `run.mjs` restarts the server at once on exit code 75 and after a backoff on any other exit; a restart keeps
-  the console's Edge for the next server, and `--stop` or Ctrl+C closes it. After a restart into a new build the
-  page says "Updated — press Ctrl+F5".
+  the console's Edge for the next server, and `--stop` or Ctrl+C closes it. `--restart` asks the server, which
+  waits until no agent turn runs. After a restart into a new build the page says "Updated — press Ctrl+F5".
 - `update.mjs` syncs and checks a new core in a worktree `<home>-updates/<sha7>` on `update/<sha7>`. A failure
   leaves the folder as it was, exits 3 and writes `<home>/update-failed.json`, which the console shows in a
   banner: **Reintegrate** opens a conversation with a managed workspace's agent, given the failing output and
   the core's diff, which fixes the workspace on that branch and applies or gives up; **Apply** runs the update
   again; **Give up** drops it. By hand: commit a fix on that branch and run the update again, or run `--give-up`.
-  `--no-restart` leaves the restart to the console that runs it.
+  `--no-restart` leaves the restart to the console that runs it. `npm ci` runs only when the npm lock changed:
+  under `run.mjs` the update asks the console to restart, which waits for the agents' turns, and `run.mjs` runs
+  `npm ci` and the build (`update.mjs --finish`) before it starts the server again, so nothing rewrites
+  `node_modules` under a running server. A finish that fails puts the folder back and says so in `logs/console.log`.
 - What to change where, and what never to touch, is in [EXTENDING.md](EXTENDING.md).
 - Starting at logon is up to you: install prints the command and changes nothing on your system.
 

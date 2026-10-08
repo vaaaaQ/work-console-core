@@ -64,6 +64,8 @@ export interface Deps {
   build?: () => string | null
   /** the failed core update and its Apply or Give up; none = the console updates by hand only */
   updates?: { view(): UpdateView | null; start(kind: UpdateKind): UpdateView | null }
+  /** a restart asked for by run.mjs or update.mjs, which waits for the agents' turns; home = the console's own */
+  restart?: { home: string; want(): void }
 }
 
 type Side = 'loopback' | 'lan'
@@ -89,10 +91,15 @@ const ART_TYPES: Record<string, string> = {
 }
 /** artifact types the page shows as they are; never svg or html, which could run script */
 const ART_IMAGES: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' }
-/** pairing, devices, the provider settings and opening a step in an app on the PC */
-const PC_ONLY = /^\/api\/(pair|devices|settings)(\/|$)|^\/api\/jobs\/[^/]+\/steps\/[^/]+\/open$/
+/** pairing, devices, the provider settings, a restart and opening a step in an app on the PC */
+const PC_ONLY = /^\/api\/(pair|devices|settings|restart)(\/|$)|^\/api\/jobs\/[^/]+\/steps\/[^/]+\/open$/
 /** a workspace-bound route: the workspace id, then the path the per-space table and plugins match */
 const IN_WS = /^\/api\/ws\/([^/]+)(\/.*)$/
+
+const sameDir = (a: string, b: string) => {
+  const n = (p: string) => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p))
+  return n(a) === n(b)
+}
 
 function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
   if (res.headersSent) return
@@ -348,6 +355,13 @@ export function createApp(d: Deps) {
     // a failed core update: run update.mjs again, or drop it; a reintegrate conversation is a workspace's agent
     ['POST', /^\/api\/update\/apply$/, () => ({ update: updates().start('apply') })],
     ['POST', /^\/api\/update\/give-up$/, () => ({ update: updates().start('give-up') })],
+    ['POST', /^\/api\/restart$/, async (r) => {
+      if (!d.restart) throw new HttpError(404, 'no_restart', 'this console is restarted by its run script only')
+      const b = await r.body()
+      if (typeof b.home !== 'string' || !sameDir(b.home, d.restart.home)) throw new HttpError(409, 'other_home', `this console runs for ${d.restart.home}`)
+      d.restart.want()
+      return { restarting: true }
+    }],
     ['GET', /^\/api\/jobs$/, async () => { const m = await merged((s) => s.jobs.all()); return { jobs: m.items, parts: m.parts } }],
     ['POST', /^\/api\/jobs$/, async (r) => {
       const b = await r.body()

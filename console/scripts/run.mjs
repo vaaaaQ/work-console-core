@@ -11,7 +11,8 @@ import { alive, consoleHome, readJson, writeJson } from './lib.mjs'
      node <dir>/scripts/run.mjs --detach           in the background, prints the URL
      node <dir>/scripts/run.mjs --stop | --restart
    Exit code 75 restarts the server at once and keeps the console's Edge; any other exit restarts it after a backoff.
-   Stopping closes the Edge too.
+   Stopping closes the Edge too. A restart asks the server first, which waits for its agents' turns; before a start,
+   a core update that changed the npm lock is finished (npm ci, the build) by the folder's update.mjs --finish.
    Output goes to <home>/logs/console.log; <home>/run.json names the supervisor and the server. */
 
 export const RESTART = 75
@@ -22,6 +23,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 /** 1 s after the first quick failure, doubling, at most 60 s */
 export const backoff = (fails) => Math.min(60000, 1000 * 2 ** Math.max(0, fails - 1))
 
+/** the record of a merged core update whose npm ci and build wait for the server to be down */
+export const finishFile = (home) => join(home, 'update-finish.json')
+const finishCmd = (folder) => [process.execPath, join(folder, 'scripts', 'update.mjs'), '--finish']
 const serverCmd = (folder) => [process.execPath, '--experimental-strip-types', '--no-warnings=ExperimentalWarning', join(folder, 'server', 'main.ts')]
 const portOf = (home) => readJson(join(home, 'config.json'), {}).loopbackPort ?? 7410
 const rotate = (file) => { try { if (statSync(file).size > MB10) renameSync(file, `${file}.1`) } catch { /* no log yet */ } }
@@ -32,7 +36,7 @@ export function supervisorOf(home) {
 }
 
 export function supervise(o) {
-  const { folder, home, cmd = serverCmd(folder), log = () => {}, quickMs = 60000, backoff: wait = backoff } = o
+  const { folder, home, cmd = serverCmd(folder), finish = finishCmd(folder), log = () => {}, quickMs = 60000, backoff: wait = backoff } = o
   const running = supervisorOf(home)
   if (running) throw new Error(`the console already runs for ${home} (pid ${running.pid}); run.mjs --stop ends it`)
   mkdirSync(join(home, 'logs'), { recursive: true })
@@ -40,7 +44,7 @@ export function supervise(o) {
   rmSync(flag, { force: true })
   let stopping = false, child = null
   const note = (line) => { const l = `[${new Date().toISOString()}] ${line}`; appendFileSync(logFile, l + '\n'); log(l) }
-  const record = (server) => writeJson(runFile, { pid: process.pid, server, folder, port: portOf(home) })
+  const record = (server) => writeJson(runFile, { pid: process.pid, server, folder, port: portOf(home), finish: true })
   const consume = () => { if (!existsSync(flag)) return false; rmSync(flag, { force: true }); return true }
   // a backoff ends early on stop or on a restart request
   const pause = (ms) => new Promise((res) => {
@@ -49,21 +53,33 @@ export function supervise(o) {
   })
   record(null)
 
+  /** runs a command with the log as its output to its exit code */
+  const exec = async (c, started = () => {}) => {
+    const fd = openSync(logFile, 'a')
+    try {
+      child = spawn(c[0], c.slice(1), { cwd: folder, env: { ...process.env, WORK_CONSOLE_HOME: home }, stdio: ['ignore', fd, fd], windowsHide: true })
+      if (child.pid) started(child.pid)
+      return await new Promise((res) => {
+        child.once('error', (e) => { note(`could not start: ${e.message}`); res(1) })
+        child.once('exit', (code) => res(code ?? 1))
+      })
+    } finally { closeSync(fd); child = null }
+  }
+
   const done = (async () => {
     let fails = 0
     while (!stopping) {
       rotate(logFile)
+      if (existsSync(finishFile(home))) {
+        note('finishing the core update: npm ci and the build')
+        const code = await exec(finish)
+        // a finish stopped halfway runs again on the next start
+        if (stopping) break
+        note(`the update finished with ${code}`)
+        rmSync(finishFile(home), { force: true })
+      }
       note('starting')
-      const t0 = Date.now(), fd = openSync(logFile, 'a')
-      let code
-      try {
-        child = spawn(cmd[0], cmd.slice(1), { cwd: folder, env: { ...process.env, WORK_CONSOLE_HOME: home }, stdio: ['ignore', fd, fd], windowsHide: true })
-        if (child.pid) record(child.pid)
-        code = await new Promise((res) => {
-          child.once('error', (e) => { note(`could not start: ${e.message}`); res(1) })
-          child.once('exit', (c) => res(c ?? 1))
-        })
-      } finally { closeSync(fd); child = null }
+      const t0 = Date.now(), code = await exec(cmd, record)
       if (stopping) break
       record(null)
       if (consume() || code === RESTART) { note(`exited with ${code}; restarting now`); fails = 0; continue }
@@ -81,10 +97,17 @@ export function supervise(o) {
   return { done, stop: async () => { stopping = true; child?.kill(); await done; await closeProfile(edgeProfile(home)) } }
 }
 
-/** asks a running supervisor to restart its server now; false when none runs */
-export function requestRestart(home) {
+/** asks the console to restart through its route, which waits for its agents' turns; a server that does not answer
+    is ended and its supervisor starts it again at once. False when none runs */
+export async function requestRestart(home) {
   const s = supervisorOf(home)
   if (!s) return false
+  try {
+    const r = await fetch(`http://127.0.0.1:${s.port}/api/restart`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ home: resolve(home) }), signal: AbortSignal.timeout(5000),
+    })
+    if (r.ok) return true
+  } catch { /* not up, or an older server */ }
   writeFileSync(join(home, 'restart'), String(Date.now()))
   if (alive(s.server)) try { process.kill(s.server) } catch { /* already gone */ }
   return true
@@ -122,7 +145,7 @@ export async function startConsole({ folder, home, port }) {
   const s = supervisorOf(home)
   if (s && resolve(s.folder) === resolve(folder)) {
     const old = s.server
-    requestRestart(home)
+    await requestRestart(home)
     for (const end = Date.now() + 30000; Date.now() < end; await sleep(250)) {
       const now = supervisorOf(home)
       if (now?.server && now.server !== old) break
@@ -141,7 +164,7 @@ async function cli(argv) {
     else throw new Error(`unknown argument ${argv[i]}\nusage: node scripts/run.mjs [--home <dir>] [--detach | --stop | --restart]`)
   }
   if (mode === 'stop') return console.log(await stopConsole(home) ? 'stopped' : 'not running')
-  if (mode === 'restart') return console.log(requestRestart(home) ? 'restarting' : 'not running: run.mjs --detach starts it')
+  if (mode === 'restart') return console.log(await requestRestart(home) ? 'restarting once no agent turn runs' : 'not running: run.mjs --detach starts it')
   if (mode === 'detach') {
     if (supervisorOf(home)) return console.log(`already running: http://127.0.0.1:${portOf(home)}/`)
     return console.log(await detach({ folder: HERE, home, port: portOf(home) }))

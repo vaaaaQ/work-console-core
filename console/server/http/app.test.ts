@@ -69,7 +69,7 @@ function expectErrors(t: TestContext, ...pats: RegExp[]) {
 type Fakes = Record<string, FakeGateway>
 /** acme and beta (or acme alone), each on its own fake gateway; `before` runs before the sources start.
     A setup that fails partway closes what it opened, so a red run fails instead of hanging. */
-async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[]; before?: (f: Fakes) => void; voice?: Voice; format?: Format; root?: string } = {}) {
+async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[]; before?: (f: Fakes) => void; voice?: Voice; format?: Format; root?: string; restart?: () => void } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'wc-http-')), web = join(dir, 'web')
   const list: Space[] = [], servers: Server[] = []
   let h: ReturnType<typeof createApp> | null = null, unhub = () => {}
@@ -93,7 +93,8 @@ async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[];
     const loop = createServer((q, s) => h!.loopback(q, s)), lanS = createServer((q, s) => h!.lan(q, s))
     servers.push(loop, lanS)
     const lp = await listen(loop), np = await listen(lanS)
-    h = createApp({ loopbackPort: lp, lanPort: 7411, pcName: 'pc', hub: bus, spaces, pairing, notify, staticDirs: [web], artifactsDir: join(dir, 'arts'), tz: 'Asia/Tokyo', settings: new Settings(dir), voice: o.voice, format: o.format })
+    h = createApp({ loopbackPort: lp, lanPort: 7411, pcName: 'pc', hub: bus, spaces, pairing, notify, staticDirs: [web], artifactsDir: join(dir, 'arts'), tz: 'Asia/Tokyo', settings: new Settings(dir), voice: o.voice, format: o.format,
+      ...(o.restart ? { restart: { home: join(dir, 'home'), want: o.restart } } : {}) })
     o.before?.(fakes)
     for (const s of list) s.source.start()
     await until(() => list.every((s) => s.source.available()))
@@ -183,6 +184,25 @@ test('LAN: the page is public, the API needs a paired cookie, pairing and device
     assert.equal((await call(np, 'GET', '/api/state', { host, headers: { cookie } })).status, 401, 'revoked')
     assert.equal(pairing.devices().length, 0)
   } finally { await stop() }
+})
+
+test("POST /api/restart asks this console for a restart, for its own home and on the PC only", async () => {
+  let wants = 0
+  const { lp, np, stop, dir } = await setup({ restart: () => { wants++ } })
+  try {
+    const home = join(dir, 'home')
+    const ok = await call(lp, 'POST', '/api/restart', { body: { home } })
+    assert.equal(ok.status, 200, ok.text)
+    assert.deepEqual(ok.json, { restarting: true })
+    assert.equal(wants, 1)
+    const other = await call(lp, 'POST', '/api/restart', { body: { home: join(dir, 'other') } })
+    assert.equal(other.status, 409)
+    assert.equal(other.json.error.code, 'other_home')
+    assert.equal((await call(np, 'POST', '/api/restart', { host: 'pc:7411', body: { home } })).status, 403)
+    assert.equal(wants, 1)
+  } finally { await stop() }
+  const none = await setup({ one: true })
+  try { assert.equal((await call(none.lp, 'POST', '/api/restart', { body: { home: 'x' } })).json.error.code, 'no_restart') } finally { await none.stop() }
 })
 
 test('state: the PC zone in home, one block per workspace with its jobs, playbooks, bridge and plugins', async () => {

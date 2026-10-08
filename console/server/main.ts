@@ -143,7 +143,7 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
     voice: whisper({ keyPath: cfg.openaiKeyPath }),
     format: formatter({ keyPath: cfg.openaiKeyPath, model: cfg.formatModel }),
     build: () => buildId(join(PKG, 'dist', 'index.html')),
-    updates,
+    updates, restart: { home: cfg.home, want: () => restarter.want() },
   })
   for (const s of list) s.source.start()
   const fakes: Record<string, FakeGateway> = Object.fromEntries(list.flatMap((s) => (s.fake ? [[s.id, s.fake]] : [])))

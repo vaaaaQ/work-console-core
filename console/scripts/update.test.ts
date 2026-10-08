@@ -9,7 +9,8 @@ import { run, type Ran, type Runner } from './lib.mjs'
 import { folder } from './install.mjs'
 import { TEMPLATE_FILES } from './workspaces.mjs'
 import { sync } from './sync-core.mjs'
-import { EXIT_REINTEGRATE, failedUpdate, giveUp, update, updatesDir } from './update.mjs'
+import { finishFile } from './run.mjs'
+import { EXIT_REINTEGRATE, failedUpdate, finish, giveUp, update, updatesDir } from './update.mjs'
 
 /* update.mjs against throwaway repos: an origin core, a clone of it as the person's core, and a consumer folder
    made by install's folder(). Git runs for real; npm is a fake, and the checks are a stand-in that fails while
@@ -74,10 +75,12 @@ function harness() {
   const o = (s: ReturnType<typeof setup>, more: Record<string, unknown> = {}) => ({
     home: s.home, folder: s.to, run: r, check, log: quiet,
     sync: ({ core, to, rev }: { core: string; to: string; rev: string }) => { sync({ core, to, rev, log: quiet }) },
-    restart: (h: string) => { restarts.push(h); return true }, ...more,
+    restart: async (h: string) => { restarts.push(h); return true }, running: () => null, ...more,
   })
   return { npm, checked, restarts, o }
 }
+/** a supervisor that finishes updates, as run.json names it */
+const sup = (s: ReturnType<typeof setup>) => () => ({ pid: 1, server: 2, folder: s.to, port: 1, finish: true })
 const subjects = (dir: string, ref = 'HEAD') => git(dir, 'log', '--format=%s', ref).split('\n')
 const branches = (dir: string) => git(dir, 'branch', '--format=%(refname:short)').split('\n').filter(Boolean)
 
@@ -137,6 +140,69 @@ test('pass without a lock change builds without npm ci', async () => {
   advance(s.origin, { 'console/server/a.ts': 'export const a = 2\n' })
   assert.equal((await update(h.o(s))).status, 'updated')
   assert.deepEqual(h.npm, [`npm run build @ ${s.to}`])
+})
+
+test('a lock change from the console: the npm ci and the build are left for its supervisor, after the server is down', async () => {
+  const s = setup(), h = harness(), pre = git(s.to, 'rev-parse', 'HEAD'), lines: string[] = []
+  const sha = advance(s.origin, { 'console/server/a.ts': 'export const a = 2\n', 'console/package-lock.json': '{ "v": 2 }\n' })
+  const r = await update(h.o(s, { restart: null, running: sup(s), log: (l: string) => lines.push(l) }))
+  assert.deepEqual([r.status, r.code, r.sha], ['updated', 0, sha])
+  assert.deepEqual(h.npm, [], 'nothing runs in the folder while the server holds it')
+  assert.equal(lines.at(-1), 'the console runs npm ci and the build when it restarts')
+  assert.deepEqual(JSON.parse(read(s.home, 'update-finish.json')), { folder: s.to, repo: s.to, pre, sha })
+  assert.deepEqual(branches(s.to), ['main'])
+  // what the supervisor runs before it starts the server again
+  assert.deepEqual(finish({ home: s.home, run: h.o(s).run, log: quiet }), { status: 'updated', code: 0, sha })
+  assert.deepEqual(h.npm, [`npm ci @ ${s.to}`, `npm run build @ ${s.to}`])
+  assert.equal(existsSync(finishFile(s.home)), false)
+  assert.deepEqual(finish({ home: s.home, run: h.o(s).run, log: quiet }), { status: 'none', code: 0 })
+})
+
+test('a lock change from the command line: the console is asked to restart first, and the update reports what its supervisor did', async () => {
+  const s = setup(), h = harness(), pre = git(s.to, 'rev-parse', 'HEAD'), seen: number[] = []
+  const sha = advance(s.origin, { 'console/package-lock.json': '{ "v": 2 }\n' })
+  // the running console: once its turns end it exits, and its supervisor finishes the update before it starts
+  const restart = (build?: () => { ok: boolean; output: string }) => async (home: string) => {
+    seen.push(h.npm.length)
+    finish({ home, run: h.o(s).run, log: quiet, build })
+    return true
+  }
+  const r = await update(h.o(s, { running: sup(s), restart: restart(), settle: async () => true }))
+  assert.deepEqual([r.status, r.code, r.sha], ['updated', 0, sha])
+  assert.deepEqual(seen, [0], 'npm ci ran only once the console was asked to stop')
+  assert.deepEqual(h.npm, [`npm ci @ ${s.to}`, `npm run build @ ${s.to}`])
+  assert.notEqual(git(s.to, 'rev-parse', 'HEAD'), pre)
+
+  const t = setup(), g = harness(), before = git(t.to, 'rev-parse', 'HEAD')
+  advance(t.origin, { 'console/package-lock.json': '{ "v": 2 }\n' })
+  const bad = await update(g.o(t, { running: sup(t), settle: async () => true,
+    restart: async (home: string) => { finish({ home, run: g.o(t).run, log: quiet, build: () => ({ ok: false, output: 'vite: out of memory' }) }); return true } }))
+  assert.deepEqual([bad.status, bad.code], ['failed', 1])
+  assert.equal(git(t.to, 'rev-parse', 'HEAD'), before, 'the supervisor put it back')
+  assert.deepEqual(g.npm, [`npm ci @ ${t.to}`, `npm ci @ ${t.to}`])
+})
+
+test('a finish whose build fails puts the folder back on its commit before the update, with npm ci for it', async () => {
+  const s = setup(), h = harness(), pre = git(s.to, 'rev-parse', 'HEAD')
+  advance(s.origin, { 'console/server/a.ts': 'export const a = 2\n', 'console/package-lock.json': '{ "v": 2 }\n' })
+  await update(h.o(s, { restart: null, running: sup(s) }))
+  const f = finish({ home: s.home, run: h.o(s).run, log: quiet, build: () => ({ ok: false, output: 'vite: out of memory' }) })
+  assert.deepEqual([f.status, f.code], ['failed', 1])
+  assert.equal(git(s.to, 'rev-parse', 'HEAD'), pre)
+  assert.equal(read(s.to, 'server/a.ts'), 'export const a = 1\n')
+  assert.deepEqual(h.npm, [`npm ci @ ${s.to}`, `npm ci @ ${s.to}`])
+  assert.equal(existsSync(finishFile(s.home)), false)
+})
+
+test('with no console, or one whose supervisor finishes nothing, npm ci and the build run in place', async () => {
+  for (const running of [() => null, () => ({ pid: 1, server: 2, folder: 'x', port: 1 })]) {
+    const s = setup(), h = harness()
+    advance(s.origin, { 'console/package-lock.json': '{ "v": 2 }\n' })
+    assert.equal((await update(h.o(s, { running }))).status, 'updated')
+    assert.deepEqual(h.npm, [`npm ci @ ${s.to}`, `npm run build @ ${s.to}`])
+    assert.deepEqual(h.restarts, [s.home])
+    assert.equal(existsSync(finishFile(s.home)), false)
+  }
 })
 
 test('fail: the result sits on update/<sha7>, the folder stays on its commit, update-failed.json has the output, exit 3', async () => {

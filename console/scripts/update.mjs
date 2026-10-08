@@ -3,15 +3,17 @@ import { existsSync, realpathSync, rmSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { consoleHome, gitId, npmChecks, readJson, run, tail, writeJson } from './lib.mjs'
-import { requestRestart } from './run.mjs'
+import { finishFile, requestRestart, supervisorOf, waitUp } from './run.mjs'
 
 /* Moves the console to the core's newest commit:
-     node <dir>/scripts/update.mjs [--no-pull] [--core <core repo>] [--give-up] [--no-restart]
+     node <dir>/scripts/update.mjs [--no-pull] [--core <core repo>] [--give-up] [--no-restart] [--finish]
    pull the core, then sync and check in a git worktree at <home>-updates/<sha7> on branch update/<sha7>.
    Pass: the folder fast-forwards to it, builds and restarts. Fail: the folder is untouched, the worktree stays,
    <home>/update-failed.json says what failed, exit 3; a reintegrate session commits its fix on the branch and
    runs the update again, which applies it. --give-up drops the branch and the worktree. --no-restart leaves the
-   restart to the console that runs this, so it can wait for its agents' turns. */
+   restart to the console that runs this, so it can wait for its agents' turns.
+   npm ci runs only when the npm lock changed; under run.mjs it waits for the restart, after the agents' turns, and
+   the supervisor runs --finish (npm ci, the build) before it starts the server again. */
 
 export const EXIT_REINTEGRATE = 3
 const HERE = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -38,6 +40,37 @@ const npmBuild = (r) => (dir) => {
   return { ok: b.status === 0, output: tail(`${b.stdout}\n${b.stderr}`) }
 }
 
+/** npm ci when the lock changed, then the build; a failure puts the folder back on pre, so the next start runs what ran before */
+function install(r, build, log, { repo, folder, pre, sha, ci: lockChanged }) {
+  const ci = lockChanged ? r('npm', ['ci'], { cwd: folder }) : { status: 0 }
+  const b = ci.status === 0 ? build(folder) : { ok: false, output: tail(`${ci.stdout}\n${ci.stderr}`) }
+  if (b.ok) return { status: 'updated', code: 0, sha }
+  git(r, repo, ['reset', '-q', '--keep', pre])
+  if (lockChanged) r('npm', ['ci'], { cwd: folder })
+  log(`${ci.status === 0 ? 'the build' : 'npm ci'} failed in ${folder}; it is back on its commit before the update:\n${b.output}`)
+  return { status: 'failed', code: 1, sha }
+}
+
+/** the supervisor's step between the server's exit and its next start: npm ci and the build for an update left to it */
+export function finish({ home, run: r = run, log = console.log, build }) {
+  const rec = readJson(finishFile(home), null)
+  if (!rec) return { status: 'none', code: 0 }
+  try {
+    const x = install(r, build ?? npmBuild(r), log, { ...rec, ci: true })
+    if (x.code === 0) log(`updated to core ${rec.sha.slice(0, 7)}`)
+    return x
+  } finally { rmSync(finishFile(home), { force: true }) }
+}
+
+/** settles once the supervisor finished the update and the console answers; false when it did not within the time */
+async function settled(home, port, { timeoutMs = 3 * 60 * 60_000 } = {}) {
+  for (const end = Date.now() + timeoutMs; existsSync(finishFile(home)); await new Promise((ok) => setTimeout(ok, 1000))) {
+    if (Date.now() > end || !supervisorOf(home)) return false
+  }
+  try { await waitUp({ port, home, timeoutMs: 120_000 }) } catch { /* reported from the folder's commit */ }
+  return true
+}
+
 /** the worktree and its branch go; a worktree git cannot remove (a locked file) is deleted and pruned */
 function drop(r, repo, rec) {
   if (rec.worktree && existsSync(rec.worktree) && !tryGit(r, repo, ['worktree', 'remove', '--force', rec.worktree])) {
@@ -59,7 +92,7 @@ export function giveUp({ home, run: r = run }) {
 }
 
 export async function update(o) {
-  const { home, pull = true, run: r = run, log = console.log, restart = requestRestart } = o
+  const { home, pull = true, run: r = run, log = console.log, restart = requestRestart, running = supervisorOf, settle = settled } = o
   const check = o.check ?? ((dir) => npmChecks(dir, { run: r, log: (l) => log(`  ${l}`), build: true }))
   const syncTo = o.sync ?? coreSync(r)
   const build = o.build ?? npmBuild(r)
@@ -121,33 +154,48 @@ export async function update(o) {
   const m = r('git', ['-C', repo, 'merge', '-q', '--ff-only', branch])
   if (m.status !== 0) return refused(`${repo} moved since ${branch} was made, so it cannot fast-forward: run update.mjs --give-up, then update again`)
   const lockChanged = !tryGit(r, repo, ['diff', '--quiet', pre, 'HEAD', '--', join(rel, 'package-lock.json').replaceAll('\\', '/')])
-  const ci = lockChanged ? r('npm', ['ci'], { cwd: folder }) : { status: 0 }
-  const b = ci.status === 0 ? build(folder) : { ok: false, output: tail(`${ci.stdout}\n${ci.stderr}`) }
-  if (!b.ok) {
-    // back to the commit before the update, so the next start runs what ran before
-    git(r, repo, ['reset', '-q', '--keep', pre])
-    if (lockChanged) r('npm', ['ci'], { cwd: folder })
-    log(`${ci.status === 0 ? 'the build' : 'npm ci'} failed in ${folder}; it is back on its commit before the update:\n${b.output}`)
-    return { status: 'failed', code: 1, sha }
+  const sup = lockChanged ? running(home) : null
+  if (sup?.finish) {
+    // npm ci rewrites node_modules under a running server, so its supervisor runs it once the server has exited
+    writeJson(finishFile(home), { folder, repo, pre, sha })
+    drop(r, repo, { worktree, branch })
+    rmSync(join(home, RECORD), { force: true })
+    if (!restart) { log('the console runs npm ci and the build when it restarts'); return { status: 'updated', code: 0, sha } }
+    log(`merged core ${sha7}; the console restarts once no agent turn runs, and runs npm ci and the build first`)
+    if (!await restart(home)) return finish({ home, run: r, log, build })
+    if (!await settle(home, sup.port)) {
+      log(`the console has not finished the update yet; see ${join(home, 'logs', 'console.log')}`)
+      return { status: 'updated', code: 0, sha }
+    }
+    if (git(r, repo, ['rev-parse', 'HEAD']) === pre) {
+      log(`npm ci or the build failed in ${folder}; it is back on its commit before the update: see ${join(home, 'logs', 'console.log')}`)
+      return { status: 'failed', code: 1, sha }
+    }
+    log(`updated to core ${sha7}`)
+    return { status: 'updated', code: 0, sha }
   }
+  const x = install(r, build, log, { repo, folder, pre, sha, ci: lockChanged })
+  if (x.code !== 0) return x
   drop(r, repo, { worktree, branch })
   rmSync(join(home, RECORD), { force: true })
   log(`updated to core ${sha7}`)
   if (!restart) log('the console restarts itself')
-  else log(restart(home) ? 'restarting the console' : `the console is not running: node ${join(folder, 'scripts', 'run.mjs')} --detach starts it`)
+  else log(await restart(home) ? 'restarting the console once no agent turn runs' : `the console is not running: node ${join(folder, 'scripts', 'run.mjs')} --detach starts it`)
   return { status: 'updated', code: 0, sha }
 }
 
 function cli(argv) {
-  const o = { pull: true, core: undefined, giveUp: false, restart: undefined }
+  const o = { pull: true, core: undefined, giveUp: false, finish: false, restart: undefined }
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--no-pull') o.pull = false
     else if (argv[i] === '--core') o.core = resolve(argv[++i] ?? '')
     else if (argv[i] === '--give-up') o.giveUp = true
     else if (argv[i] === '--no-restart') o.restart = null
-    else throw new Error(`unknown argument ${argv[i]}\nusage: node scripts/update.mjs [--no-pull] [--core <core repo>] [--give-up] [--no-restart]`)
+    else if (argv[i] === '--finish') o.finish = true
+    else throw new Error(`unknown argument ${argv[i]}\nusage: node scripts/update.mjs [--no-pull] [--core <core repo>] [--give-up] [--no-restart] [--finish]`)
   }
   const home = consoleHome()
+  if (o.finish) return Promise.resolve(finish({ home }))
   if (o.giveUp) { console.log(giveUp({ home }) ? 'dropped the failed update' : 'no failed update'); return Promise.resolve({ code: 0 }) }
   return update({ home, folder: HERE, core: o.core, pull: o.pull, restart: o.restart })
 }
