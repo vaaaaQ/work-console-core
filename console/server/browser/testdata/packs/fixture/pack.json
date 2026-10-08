@@ -1,0 +1,22 @@
+{
+  "name": "fixture",
+  "zone": "UTC",
+  "script": "fixture.js",
+  "config": {
+    "org": { "about": "the board's organization", "required": true },
+    "team": { "about": "the team the board opens on", "default": "core" }
+  },
+  "hosts": ["board.example", "mail.example"],
+  "tabs": {
+    "board": { "match": "^https://board\\.example/{org}/", "open": "https://board.example/{org}/{team}" },
+    "mail": { "match": "^https://mail\\.example/", "open": "https://mail.example/inbox" }
+  },
+  "concepts": {
+    "work": { "tab": "board", "interval": 1, "cap": 10 },
+    "mail": { "tab": "mail", "interval": 1, "cap": 10 },
+    "chat": { "tab": "mail", "interval": 1, "cap": 50 }
+  },
+  "actions": {
+    "work.comment": { "tab": "board", "concept": "work" }
+  }
+}
