@@ -17,14 +17,14 @@ export function navDef(): [string, NavItem[]][] {
     ['Sources', [...src(w.src.chat, ['chats', 'Chats', 'message', w.src.chat?.n]), ...src(w.src.mail, ['mail', 'Mail', 'mail', w.src.mail?.n]),
       ...src(w.src.cal, ['calendar', 'Calendar', 'calendar', w.src.cal?.n]), ...src(w.src.work, ['board', 'Board', 'wrench', w.src.work?.n]),
       ...src(w.src.time, ['time', 'Time', 'hourglass', w.src.time?.n])]],
-    ['Setup', [['playbooks', 'Playbooks', 'layers'], ['workspaces', 'Workspaces', 'sliders'], ...(LIVE.on && LIVE.pc ? [['devices', 'Devices', 'user'], ['settings', 'Settings', 'bot']] as NavItem[] : [])]]] as [string, NavItem[]][])
+    ['Setup', [['playbooks', 'Playbooks', 'layers'], ['workspaces', 'Workspaces', 'sliders'], ...(LIVE.on && L().managed ? [['agent', 'Agent', 'pen']] as NavItem[] : []), ...(LIVE.on && LIVE.pc ? [['devices', 'Devices', 'user'], ['settings', 'Settings', 'bot']] as NavItem[] : [])]]] as [string, NavItem[]][])
     // a workspace without sources has no Sources heading either
     .filter(([, items]) => items.length)
 }
 
 function counts(): Partial<Record<View, number>> {
   return {
-    jobs: wsJobs().filter(needsYou).length, approvals: approvals().length + (LIVE.on ? L().proposals.length : 0),
+    jobs: wsJobs().filter(needsYou).length, approvals: approvals().length + (LIVE.on ? L().proposals.length + (L().agent?.pending ? 1 : 0) : 0),
     chats: (CHATS[S.ws] || []).reduce((a, c) => a + c.unread, 0), mail: (MAIL[S.ws] || []).filter((m) => m.cat === 'reply' && !m.done).length,
   }
 }

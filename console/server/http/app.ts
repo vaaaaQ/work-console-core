@@ -56,6 +56,8 @@ export interface Deps {
   voice?: Voice
   /** dictated text made clean for a field; none = no Tidy up */
   format?: Format
+  /** the page build being served; a new one after a restart tells open pages to reload */
+  build?: () => string | null
 }
 
 type Side = 'loopback' | 'lan'
@@ -201,7 +203,12 @@ export function createApp(d: Deps) {
         plugins[p.name] = { error: message }
       }
     }
-    return { jobs, runs, marks, parts: { jobs: js, runs: rs, marks: ms }, playbooks: s.ctx().PB, templates: s.ctx().TPL, bridge: bridgeOf(s), plugins }
+    const agent = s.agent ? await s.agent.current().catch((e) => { console.error(`workspace ${s.id}: the agent's records:`, (e as Error).message); return null }) : null
+    return { jobs, runs, marks, parts: { jobs: js, runs: rs, marks: ms }, playbooks: s.ctx().PB, templates: s.ctx().TPL, bridge: bridgeOf(s), plugins, managed: s.grants !== null, agent }
+  }
+  const agentOf = (s: Space) => {
+    if (!s.agent) throw new HttpError(404, 'not_managed', `workspace ${s.id} has no agent: it has no grants.json`)
+    return s.agent
   }
   async function state(r: Req) {
     const list = d.spaces.list, blocks = await Promise.all(list.map(block)), set = d.settings.read()
@@ -210,6 +217,7 @@ export function createApp(d: Deps) {
       side: r.side, device: r.device, push: d.notify ? { key: d.notify.publicKey() } : null,
       voice: d.voice?.ready() ?? false,
       providers: { auto: set.auto, manual: set.manual, manualLabel: PROVIDERS[set.manual].label },
+      build: d.build?.() ?? null,
       ws: Object.fromEntries(list.map((s, i) => [s.id, blocks[i]])),
     }
   }
@@ -464,6 +472,17 @@ export function createApp(d: Deps) {
       if (!Number.isInteger(v) || v < 1) throw new HttpError(400, 'bad_args', 'a delete names the v it removes')
       await s.notes.remove(r.p[0], v)
       return { ok: true }
+    }],
+    // the workspace agent: its conversation, a message, Stop, a new conversation, an undo and the grants answer
+    ['GET', /^\/agent$/, async (_r, s) => ({ agent: await agentOf(s).current() })],
+    ['POST', /^\/agent$/, async (r, s) => ({ agent: (await agentOf(s).send(str((await r.body()).text, 'text'))).rec })],
+    ['POST', /^\/agent\/stop$/, (_r, s) => { agentOf(s).stop(); return { ok: true } }],
+    ['POST', /^\/agent\/new$/, async (_r, s) => ({ agent: await agentOf(s).fresh() })],
+    ['POST', /^\/agent\/undo$/, async (r, s) => ({ agent: await agentOf(s).undo(str((await r.body()).sha, 'sha')) })],
+    ['POST', /^\/agent\/grants$/, async (r, s) => {
+      const b = await r.body()
+      if (typeof b.accept !== 'boolean') throw new HttpError(400, 'bad_args', 'accept is true or false')
+      return { agent: await agentOf(s).decide(b.accept, typeof b.reason === 'string' ? b.reason : '') }
     }],
     ['GET', /^\/knowledge\/proposals$/, async (_r, s) => ({ proposals: await s.notes.proposals() })],
     ['POST', /^\/knowledge\/proposals\/([^/]+)\/decide$/, async (r, s) => {

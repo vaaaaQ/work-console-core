@@ -16,6 +16,7 @@ import { Ic } from './ui/Icon.tsx'
 import { ModalHost, closeModal, isModalOpen } from './ui/modal.tsx'
 import { openPalette } from './ui/Palette.tsx'
 import { Toasts } from './ui/toasts.tsx'
+import { AgentView } from './views/Agent.tsx'
 import { Approvals } from './views/Approvals.tsx'
 import { BoardView } from './views/Board.tsx'
 import { CalendarView } from './views/Calendar.tsx'
@@ -33,12 +34,12 @@ import { Workspaces } from './views/Workspaces.tsx'
 
 const TITLE: Record<View, string> = {
   jobs: 'Jobs', job: 'Job', approvals: 'Approvals', knowledge: 'Knowledge', today: 'Today', chats: 'Chats', mail: 'Mail',
-  calendar: 'Calendar', board: 'Board', time: 'Time', playbooks: 'Playbooks', workspaces: 'Workspaces', devices: 'Devices', settings: 'Settings',
+  calendar: 'Calendar', board: 'Board', time: 'Time', playbooks: 'Playbooks', workspaces: 'Workspaces', agent: 'Agent', devices: 'Devices', settings: 'Settings',
 }
 const BODY: Record<View, () => React.ReactElement> = {
   jobs: () => <Jobs />, job: () => <JobView />, approvals: () => <Approvals />, knowledge: () => <Knowledge />, today: () => <Today />,
   chats: () => <Chats />, mail: () => <MailView />, calendar: () => <CalendarView />, board: () => <BoardView />, time: () => <TimeView />,
-  playbooks: () => <Playbooks />, workspaces: () => <Workspaces />,
+  playbooks: () => <Playbooks />, workspaces: () => <Workspaces />, agent: () => <AgentView />,
   devices: () => <Devices />,
   settings: () => <Settings />,
 }
@@ -132,6 +133,7 @@ export function App() {
         </> : <button className="demo" title="What is real here" onClick={demoInfo}>Demo</button>}
         <button className="iconbtn" id="theme" aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'} onClick={toggleTheme}><Ic n={dark ? 'sun' : 'moon'} /></button>
       </header>
+      {LIVE.on && LIVE.updated ? <div className="banner note" role="status"><Ic n="refresh" sm />Updated — press Ctrl+F5</div> : null}
       {LIVE.on && L().bridge !== 'ok' ? <div className="banner" role="status"><Ic n="warn" sm />The bridge is unavailable: sources are unavailable and changes are refused until it is back. Nothing is queued.</div> : null}
       {LIVE.on && missingParts().length ? <div className="banner" role="status"><Ic n="warn" sm />The state store did not answer: {missingParts().join(' and ')} are unavailable, not empty. Retrying.</div> : null}
       <Nav />

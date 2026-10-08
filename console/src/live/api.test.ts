@@ -1,10 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { buildId } from '../../server/build.ts'
 import { loadConfig } from '../../server/config.ts'
 import { main } from '../../server/main.ts'
 import type { Sdk } from '../../server/llm/sdk.ts'
@@ -387,4 +389,70 @@ test('providers: the state names them, settings round-trip, a step opens in the 
     assert.equal(o.label, 'Cursor'); assert.equal(o.open.kind, 'link')
     assert.match(o.open.value, /^cursor:\/\/anysphere\.cursor-deeplink\/prompt\?text=/)
   } finally { LIVE.providers = { auto: 'claude', manual: 'claude', manualLabel: 'Claude Code' }; await m.close() }
+})
+
+test("the agent through the page's client: a managed workspace shows it; a message runs a turn; a rejected grants change goes back with its reason", async () => {
+  const home = mkdtempSync(join(tmpdir(), 'wc-api-')), root = mkdtempSync(join(tmpdir(), 'wc-root-'))
+  mkdirSync(join(root, 'workspaces', 'beta'), { recursive: true })
+  writeFileSync(join(root, 'workspaces', 'beta', 'grants.json'), JSON.stringify({ packs: ['p'] }))
+  const prompts: string[] = []
+  const withAgent: Sdk = {
+    ...sdk,
+    async *agent(o) {
+      prompts.push(o.prompt)
+      yield { k: 'session', id: 's1' }
+      if (prompts.length === 1) await o.tools.find((t) => t.name === 'propose_grants')!.run({ change: { packs: ['p'], hosts: ['api.example.com'] }, reason: 'read the tracker' })
+      yield { k: 'text', t: prompts.length === 1 ? 'Asked for the tracker.' : 'Understood.' }
+      yield { k: 'result', ok: true }
+    },
+  }
+  const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
+  const m = await main({ cfg, sdk: withAgent, workspaces: [acmeServer, betaW], root })
+  api.setBase(`http://127.0.0.1:${m.loopbackPort}`)
+  const idle = async () => (await api.state()).ws.beta.agent?.status === 'idle'
+  try {
+    applyState(await api.state())
+    assert.deepEqual([L('acme').managed, L('beta').managed, L('beta').agent], [false, true, null])
+    assert.equal((await api.agentSay('beta', 'set it up')).status, 'running')
+    await until(idle)
+    applyState(await api.state())
+    const a = L('beta').agent!
+    assert.deepEqual(a.turns.map((t) => [t.who, t.t]), [['you', 'set it up'], ['agent', 'Asked for the tracker.']])
+    assert.deepEqual(a.pending?.diff, ['+ host api.example.com'])
+    await assert.rejects(api.agentGrants('beta', false, ' '), (e: api.ApiError) => e.status === 400)
+    assert.equal((await api.agentGrants('beta', false, 'not yet')).pending, undefined)
+    await until(async () => prompts.length === 2 && await idle())
+    assert.match(prompts[1], /Their reason: not yet/)
+    // a new conversation replaces the one on screen; a late frame of the older one does not
+    const fresh = await api.agentNew('beta')
+    onEvent({ kind: 'agent', ws: 'beta', agent: fresh })
+    onEvent({ kind: 'agent', ws: 'beta', agent: a })
+    assert.equal(L('beta').agent!.id, fresh.id)
+    // a reply that arrives after its own conversation's later events does not undo them
+    const later = { ...fresh, status: 'idle' as const, updated: new Date(Date.parse(fresh.updated) + 5).toISOString() }
+    onEvent({ kind: 'agent', ws: 'beta', agent: later })
+    onEvent({ kind: 'agent', ws: 'beta', agent: { ...fresh, status: 'running' } })
+    assert.equal(L('beta').agent!.updated, later.updated)
+  } finally { await m.close() }
+})
+
+test('the state names the build the server serves; a later state with another build flags the page as updated', async () => {
+  const m = await backend()
+  const was = { build: LIVE.build, updated: LIVE.updated }
+  try {
+    const st = await api.state()
+    assert.equal(st.build, buildId(fileURLToPath(new URL('../../dist/index.html', import.meta.url))))
+    LIVE.build = null; LIVE.updated = false
+    applyState({ ...st, build: null })
+    assert.equal(LIVE.updated, false, 'no build (the dev server) is never an update')
+    applyState({ ...st, build: 'a' })
+    applyState({ ...st, build: 'a' })
+    assert.equal(LIVE.build, 'a')
+    assert.equal(LIVE.updated, false, 'the same build again is not an update')
+    applyState({ ...st, build: 'b' })
+    assert.equal(LIVE.updated, true, 'a restart into another build asks for a reload')
+    assert.equal(LIVE.build, 'a', 'the page still runs the build it loaded')
+    applyState({ ...st, build: null })
+    assert.equal(LIVE.updated, true, 'and keeps asking')
+  } finally { Object.assign(LIVE, was); await m.close() }
 })

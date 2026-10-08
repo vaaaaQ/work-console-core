@@ -9,7 +9,7 @@ import { closeModal, modal, modalForm } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
 import { reopenNewJob } from './newjob.tsx'
 
-export const VIEWS: View[] = ['jobs', 'job', 'approvals', 'knowledge', 'today', 'chats', 'mail', 'calendar', 'board', 'time', 'playbooks', 'workspaces', 'devices', 'settings']
+export const VIEWS: View[] = ['jobs', 'job', 'approvals', 'knowledge', 'today', 'chats', 'mail', 'calendar', 'board', 'time', 'playbooks', 'workspaces', 'agent', 'devices', 'settings']
 export const isView = (h: string): h is View => (VIEWS as string[]).includes(h)
 
 /** the hash is a bare token: a job id or a view name */

@@ -1,3 +1,4 @@
+import type { AgentRec } from '../../src/model/agent.ts'
 import type { Job, Playbook, RunRec, Tpl } from '../../src/model/types.ts'
 
 /* The state store as the backend sees it. B will implement it; until then store/file.ts does. */
@@ -26,4 +27,7 @@ export interface Store {
   /** merges into the mark; null deletes it */
   putMark(id: string, m: Mark | null): Promise<void>
   nextJobId(): Promise<string>
+  /** the workspace agent's conversations; a store without them keeps them in a file (agent/records.ts) */
+  agents?(): Promise<AgentRec[]>
+  putAgent?(a: AgentRec): Promise<void>
 }

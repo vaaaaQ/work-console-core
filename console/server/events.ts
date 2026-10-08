@@ -1,3 +1,4 @@
+import type { AgentRec } from '../src/model/agent.ts'
 import type { Job, RunRec } from '../src/model/types.ts'
 
 /* Everything the page hears about travels on a bus; the SSE endpoint and Web Push listen to it. Each workspace
@@ -12,6 +13,8 @@ export type Ev = (
   | { kind: 'build'; id: string; t: string; tool?: string }
   | { kind: 'bridge'; state: BridgeState; concepts: Record<string, string> }
   | { kind: 'source'; concept: string; upserts: unknown[]; removes: string[]; reset?: boolean }
+  /** a managed workspace's agent conversation, whole, on each change */
+  | { kind: 'agent'; agent: AgentRec }
 ) & { ws?: string }
 
 export class Bus {

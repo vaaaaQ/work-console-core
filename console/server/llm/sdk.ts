@@ -1,8 +1,10 @@
 import { createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk'
-import type { McpServerConfig, SDKResultMessage, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk'
+import type { HookCallback, McpServerConfig, SDKMessage, SDKResultMessage, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk'
 import { homedir } from 'node:os'
 import { sep } from 'node:path'
 import { z } from 'zod'
+import { canWrite } from '../agent/limits.ts'
+import type { Limits } from '../agent/limits.ts'
 import type { Hit, Note, ProposalIn } from '../knowledge/notes.ts'
 import type { PromptImage } from './context.ts'
 import type { Shot } from './shot.ts'
@@ -40,7 +42,7 @@ export interface RunTools {
 export type KnowledgeIn = Omit<ProposalIn, 'by'>
 /** a result's t = the session's final text */
 export type SdkEvent = { k: 'session'; id: string } | { k: 'text'; t: string } | { k: 'tool'; name: string; input: string } | { k: 'result'; ok: boolean; error?: string; t?: string }
-/** a tool of a one-shot answer, which only reads: its input as zod fields, its answer as text */
+/** a console tool a session gets (an ask's only read, the workspace agent's change things): its input as zod fields, its answer as text */
 export interface AskTool { name: string; description: string; input: z.ZodRawShape; run(a: Record<string, unknown>): Promise<string> }
 /** tool = a call of one of the ask's own tools, by its bare name; result = the answer in the schema's shape */
 export type AskEvent = { k: 'tool'; name: string; input: Record<string, unknown> } | { k: 'result'; ok: true; out: unknown } | { k: 'result'; ok: false; error: string }
@@ -49,6 +51,9 @@ export interface Sdk {
   start(o: { prompt: string; images?: PromptImage[]; resume?: string; cwd: string; tools: RunTools; abort: AbortController }): AsyncIterable<SdkEvent>
   /** one answer in the schema's shape from a session that has only the given tools; none = this console cannot ask */
   ask?(o: { system: string; prompt: string; schema: Record<string, unknown>; tools: AskTool[]; cwd: string; abort: AbortController }): AsyncIterable<AskEvent>
+  /** one turn of a workspace agent's conversation in limits.cwd: reads anywhere, writes only within limits, and the given tools;
+      system is added to the provider's own; none = this provider cannot be a workspace agent */
+  agent?(o: { prompt: string; resume?: string; limits: Limits; tools: AskTool[]; system: string; abort: AbortController }): AsyncIterable<SdkEvent>
 }
 
 const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status']
@@ -89,6 +94,36 @@ export function askOptions(o: { system: string; schema: Record<string, unknown>;
     permissionMode: 'dontAsk' as const,
     allowedTools: o.tools.map((t) => `mcp__${ASK}__${t}`), disallowedTools: DENY,
     outputFormat: { type: 'json_schema' as const, schema: o.schema }, maxTurns: 30,
+  }
+}
+
+/** the workspace agent's session: the repo's project settings, only Read/Glob/Grep/Edit/Write of the built-ins, edits only
+    within the limits (rules, and a hook in case project settings allow more), and its own tools */
+const AGENT = 'agent'
+export function agentOptions(o: { limits: Limits; tools: string[]; system: string }) {
+  const l = o.limits, rules = (ps: string[]) => ps.flatMap((p) => [`Edit(${p})`, `Write(${p})`])
+  return {
+    cwd: l.cwd,
+    settingSources: ['project'] as SettingSource[],
+    settings: { claudeMdExcludes: USER_MD },
+    strictMcpConfig: true,
+    permissionMode: 'dontAsk' as const,
+    tools: ['Read', 'Glob', 'Grep', 'Edit', 'Write'],
+    allowedTools: ['Read', 'Glob', 'Grep', ...rules(l.write), ...o.tools.map((t) => `mcp__${AGENT}__${t}`)],
+    disallowedTools: [...DENY, 'Bash', 'PowerShell', 'NotebookEdit', ...rules(l.deny)],
+    systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: o.system },
+    hooks: { PreToolUse: [{ matcher: 'Edit|Write|MultiEdit|NotebookEdit', hooks: [agentGuard(l)] }] },
+  }
+}
+
+/** denies a file edit outside the limits whatever the settings allow */
+export function agentGuard(l: Limits): HookCallback {
+  return async (input) => {
+    const ti = (input as { tool_input?: Record<string, unknown> }).tool_input ?? {}
+    const p = ti.file_path ?? ti.notebook_path
+    if (typeof p === 'string' && canWrite(l, p)) return {}
+    return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'deny' as const,
+      permissionDecisionReason: `${String(p)} is not yours to change: only ${l.write.join(', ')}, less ${l.deny.join(', ')}` } }
   }
 }
 
@@ -174,6 +209,23 @@ async function* once<T>(x: T) { yield x }
 /** the Claude Code binary the settings name; none = the SDK's own */
 export const exeOption = (p?: string) => (p ? { pathToClaudeCodeExecutable: p } : {})
 
+/** a session's messages as the console's events; own = the session's own MCP server, whose tools go by their bare names */
+export async function* sessionEvents(q: AsyncIterable<SDKMessage>, own?: string): AsyncIterable<SdkEvent> {
+  const pre = own ? `mcp__${own}__` : null
+  for await (const m of q) {
+    if (m.type === 'system' && m.subtype === 'init') yield { k: 'session', id: m.session_id }
+    else if (m.type === 'assistant') {
+      for (const b of m.message.content) {
+        if (b.type === 'text' && b.text.trim()) yield { k: 'text', t: b.text }
+        else if (b.type === 'tool_use') yield { k: 'tool', name: pre && b.name.startsWith(pre) ? b.name.slice(pre.length) : b.name, input: JSON.stringify(b.input).slice(0, 300) }
+      }
+    } else if (m.type === 'result') {
+      if (m.subtype === 'success' && !m.is_error) yield { k: 'result', ok: true, ...(typeof m.result === 'string' && m.result.trim() ? { t: m.result } : {}) }
+      else yield { k: 'result', ok: false, error: resultError(m) }
+    }
+  }
+}
+
 /** claudePath = read at each session's start */
 export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runTools: string[]; mcp?: Record<string, unknown>; bridge?: boolean; claudePath?: () => string | undefined }): Sdk {
   return {
@@ -189,18 +241,7 @@ export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runToo
           mcpServers: mcpServers(o, run),
         },
       })
-      for await (const m of q) {
-        if (m.type === 'system' && m.subtype === 'init') yield { k: 'session', id: m.session_id }
-        else if (m.type === 'assistant') {
-          for (const b of m.message.content) {
-            if (b.type === 'text' && b.text.trim()) yield { k: 'text', t: b.text }
-            else if (b.type === 'tool_use') yield { k: 'tool', name: b.name, input: JSON.stringify(b.input).slice(0, 300) }
-          }
-        } else if (m.type === 'result') {
-          if (m.subtype === 'success' && !m.is_error) yield { k: 'result', ok: true, ...(typeof m.result === 'string' && m.result.trim() ? { t: m.result } : {}) }
-          else yield { k: 'result', ok: false, error: resultError(m) }
-        }
-      }
+      yield* sessionEvents(q)
     },
     async *ask({ system, prompt, schema, tools, cwd, abort }) {
       const own = createSdkMcpServer({ name: ASK, version: '1.0.0', tools: tools.map((t) => tool(t.name, t.description, t.input, (a) => answer(() => t.run(a))())) })
@@ -214,6 +255,14 @@ export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runToo
           else yield { k: 'result', ok: false, error: m.subtype === 'success' && !m.is_error ? 'the session ended without its answer' : resultError(m) }
         }
       }
+    },
+    async *agent({ prompt, resume, limits, tools, system, abort }) {
+      const own = createSdkMcpServer({ name: AGENT, version: '1.0.0', tools: tools.map((t) => tool(t.name, t.description, t.input, (a) => answer(() => t.run(a))())) })
+      const q = query({ prompt, options: {
+        ...agentOptions({ limits, tools: tools.map((t) => t.name), system }), resume, abortController: abort,
+        ...exeOption(o.claudePath?.()), mcpServers: { [AGENT]: own },
+      } })
+      yield* sessionEvents(q, AGENT)
     },
   }
 }

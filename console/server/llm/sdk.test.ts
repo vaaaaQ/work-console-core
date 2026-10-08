@@ -1,8 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { homedir } from 'node:os'
-import { sep } from 'node:path'
-import { ALLOW, DENY, askOptions, exeOption, mcpServers, permissions, runToolDefs, userMessage } from './sdk.ts'
+import { homedir, tmpdir } from 'node:os'
+import { join, sep } from 'node:path'
+import { ALLOW, DENY, agentOptions, askOptions, exeOption, mcpServers, permissions, runToolDefs, sessionEvents, userMessage } from './sdk.ts'
+import { agentLimits } from '../agent/limits.ts'
 import type { RunTools } from './sdk.ts'
 
 test("a session loads no user or local settings, and may use only its own tools, A's reads and runTools", () => {
@@ -151,4 +152,41 @@ test('the settings\' Claude Code binary goes to the SDK only when one is set', (
   assert.deepEqual(exeOption('C:/x/claude.exe'), { pathToClaudeCodeExecutable: 'C:/x/claude.exe' })
   assert.deepEqual(exeOption(undefined), {})
   assert.deepEqual(exeOption(''), {})
+})
+
+test("the workspace agent's options: project settings, the five file tools, edits only within its limits, its own tools", async () => {
+  const root = join(tmpdir(), 'consumer'), limits = agentLimits(root, 'w1', [])
+  const o = agentOptions({ limits, tools: ['check', 'apply'], system: 'You are the agent.' })
+  assert.equal(o.cwd, root)
+  assert.deepEqual(o.settingSources, ['project'])
+  assert.equal(o.permissionMode, 'dontAsk')
+  assert.equal(o.strictMcpConfig, true)
+  assert.deepEqual(o.tools, ['Read', 'Glob', 'Grep', 'Edit', 'Write'])
+  assert.deepEqual(o.allowedTools, ['Read', 'Glob', 'Grep', 'Edit(workspaces/w1/**)', 'Write(workspaces/w1/**)', 'Edit(tools/**)', 'Write(tools/**)', 'mcp__agent__check', 'mcp__agent__apply'])
+  for (const t of [...DENY, 'Bash', 'PowerShell', 'NotebookEdit', 'Edit(workspaces/w1/grants.json)', 'Write(workspaces/w1/grants.json)', 'Edit(workspaces/page.ts)', 'Write(workspaces/server.ts)', 'Edit(core.lock.json)'])
+    assert.ok(o.disallowedTools.includes(t), `${t} is denied`)
+  assert.deepEqual(o.systemPrompt, { type: 'preset', preset: 'claude_code', append: 'You are the agent.' })
+  const guard = o.hooks.PreToolUse[0].hooks[0], signal = new AbortController().signal
+  const decide = async (tool_name: string, tool_input: Record<string, unknown>) =>
+    ((await guard({ hook_event_name: 'PreToolUse', tool_name, tool_input, tool_use_id: 't', session_id: 's', transcript_path: '', cwd: root } as never, 't', { signal })) as { hookSpecificOutput?: { permissionDecision?: string } }).hookSpecificOutput?.permissionDecision
+  assert.equal(await decide('Write', { file_path: join(root, 'workspaces', 'w1', 'page.ts'), content: '' }), undefined)
+  assert.equal(await decide('Edit', { file_path: join(root, 'workspaces', 'page.ts') }), 'deny')
+  assert.equal(await decide('Write', { file_path: join(root, 'workspaces', 'w1', 'grants.json') }), 'deny')
+  assert.equal(await decide('NotebookEdit', { notebook_path: join(tmpdir(), 'n.ipynb') }), 'deny')
+  assert.equal(await decide('Write', {}), 'deny')
+})
+
+test("the agent's own tools come out by their bare names; built-ins and others' tools keep theirs", async () => {
+  async function* msgs() {
+    yield { type: 'system', subtype: 'init', session_id: 's1' }
+    yield { type: 'assistant', message: { content: [
+      { type: 'tool_use', name: 'mcp__agent__apply', input: { summary: 'x' } },
+      { type: 'tool_use', name: 'Edit', input: {} },
+      { type: 'tool_use', name: 'mcp__other__apply', input: {} },
+    ] } }
+    yield { type: 'result', subtype: 'success', is_error: false, result: 'done' }
+  }
+  const got = []
+  for await (const e of sessionEvents(msgs() as never, 'agent')) got.push(e.k === 'tool' ? e.name : e.k)
+  assert.deepEqual(got, ['session', 'apply', 'Edit', 'mcp__other__apply', 'result'])
 })

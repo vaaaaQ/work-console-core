@@ -3,6 +3,9 @@ import { CORE_PB, CORE_TPL } from '../src/data/playbooks.ts'
 import * as T from '../src/model/transitions.ts'
 import type { Job, Playbook, Tpl } from '../src/model/types.ts'
 import type { WorkspacePage } from '../src/workspace.ts'
+import { agentRecords } from './agent/records.ts'
+import { AgentSession } from './agent/session.ts'
+import type { SessionOps } from './agent/session.ts'
 import { BoardReturns } from './board/returns.ts'
 import { startItem } from './board/start.ts'
 import { startFakeGateway } from './bridge/fake.ts'
@@ -13,6 +16,8 @@ import { shoot } from './llm/shot.ts'
 import { builder } from './llm/builder.ts'
 import type { Build } from './llm/builder.ts'
 import { Bus, HttpError } from './events.ts'
+import { grantsOf, guardedHttp } from './grants.ts'
+import type { Grants } from './grants.ts'
 import { Blockers } from './jobs/blockers.ts'
 import { Jobs } from './jobs/jobs.ts'
 import { notesStore } from './knowledge/notes.ts'
@@ -37,6 +42,10 @@ export type Push = (title: string, body: string, url: string) => Promise<void>
 
 export interface Space {
   id: string; page: WorkspacePage; prefix: string; cfg: WsConfig
+  /** grants.json's; null = an unmanaged workspace */
+  grants: Grants | null
+  /** a managed workspace's agent; none unmanaged */
+  agent: AgentSession | null
   bus: Bus; source: Source; store: Store; jobs: Jobs; runner: Runner
   /** the workspace's knowledge folder */
   notes: Notes
@@ -110,8 +119,12 @@ export function onBridgeBack(bus: Bus, load: () => Promise<void>, backoff = [200
 }
 
 /** a workspace's instance; its source is not started, so the caller can wire what listens first;
-    askDelay = how long auto-ask waits before it asks, tests shorten it */
-type SpaceOpts = { cfg: WsConfig; home: string; artifactsDir: string; sdk?: Sdk; fake: boolean; push: Push; askDelay?: number }
+    askDelay = how long auto-ask waits before it asks, tests shorten it; root = the console's folder, where grants.json is read;
+    agent = what a managed workspace's agent shares with the others: the ops, the restart hold, the registered names */
+export type SpaceOpts = {
+  cfg: WsConfig; home: string; artifactsDir: string; sdk?: Sdk; fake: boolean; push: Push; askDelay?: number; root?: string
+  agent?: { ops: SessionOps; hold(): () => void; taken(): { ids: string[]; prefixes: string[] } }
+}
 
 export async function makeSpace(w: WorkspaceServer, o: SpaceOpts): Promise<Space> {
   const fake = o.fake ? await startFakeGateway({ seed: fakeSeed(w), me: w.page.me, board: w.page.board }) : null
@@ -120,8 +133,10 @@ export async function makeSpace(w: WorkspaceServer, o: SpaceOpts): Promise<Space
 }
 
 function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): Space {
-  const id = w.page.id, bus = new Bus()
-  const cfg: WsConfig = fake ? { ...o.cfg, gatewayUrl: fake.url } : o.cfg
+  const id = w.page.id, bus = new Bus(), grants = grantsOf(id, o.root)
+  // a managed workspace's runs get exactly what its grants name
+  const cfg: WsConfig = { ...o.cfg, ...(fake ? { gatewayUrl: fake.url } : {}), ...(grants ? { runTools: grants.runTools } : {}) }
+  const mcp = grants ? grants.mcp : w.llm?.mcp
   // the fake stands in for whatever source and store the workspace brings
   const source = fake ? gatewaySource(cfg, { bus, token: () => fake.token }) : w.source?.(cfg, { bus }) ?? gatewaySource(cfg, { bus })
   const builtins = { ...CORE_PB, ...w.page.playbooks }
@@ -147,7 +162,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   // a new run takes the auto provider the settings name now; a resume or a reply the one its run recorded
   const settings = new Settings(o.home)
   const sdk = o.sdk ?? providerPick(() => settings.read(), (p) => p.auto!({
-    gatewayUrl: cfg.gatewayUrl, llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools, mcp: w.llm?.mcp, bridge: w.llm?.bridge,
+    gatewayUrl: cfg.gatewayUrl, llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools, mcp, bridge: w.llm?.bridge,
     claudePath: () => settings.read().claudePath,
   }))
   // fake mode touches no real repo
@@ -191,6 +206,9 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     read: async () => { const r = (await source.read(['board'])).board; return r && READY.has(r.status) && Array.isArray(r.items) ? (r.items as { id: string }[]) : null },
   })
   const blockers = new Blockers({ jobs, ctx, push })
+  const agent = grants && o.agent ? new AgentSession({
+    ws: id, title: w.page.pack.n || id, records: agentRecords(store, join(o.home, 'agent', `${id}.json`)), sdk, bus, root: o.root, ...o.agent,
+  }) : null
 
   let recovered = false
   const stopLoading = onBridgeBack(bus, async () => {
@@ -206,13 +224,13 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   })
 
   return {
-    id, page: w.page, prefix: w.jobPrefix, cfg, bus, source, store, jobs, runner, notes, ctx, known, fake, build,
+    id, page: w.page, prefix: w.jobPrefix, cfg, grants, agent, bus, source, store, jobs, runner, notes, ctx, known, fake, build,
     putPlaybook: async (pid, pb, tpl) => { await store.putPlaybook(pid, pb, tpl); await loadPbs() },
     start: startItem({ jobs, ctx, bridge: source, page: w.page }),
-    plugins: w.plugins?.({ id, cfg, home: o.home, jobs, source, artifactsDir: o.artifactsDir }) ?? [],
+    plugins: w.plugins?.({ id, cfg, home: o.home, jobs, source, artifactsDir: o.artifactsDir, http: guardedHttp(grants?.hosts ?? null) }) ?? [],
     // a QA return or a woken blocker pushes its own message; the generic one would say it again
     onNeedsYou: (f) => jobs.onNeedsYou((j) => { if (!returns.handling(j.id) && !blockers.handling(j.id)) f(j) }),
     // the source going away on close is no reason to interrupt the runs
-    async close() { stopLoading(); offInterrupt(); offAuto(); blockers.stop(); source.stop(); await fake?.close() },
+    async close() { stopLoading(); offInterrupt(); offAuto(); blockers.stop(); agent?.close(); source.stop(); await fake?.close() },
   }
 }

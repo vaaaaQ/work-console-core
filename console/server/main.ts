@@ -9,16 +9,20 @@ import * as T from '../src/model/transitions.ts'
 import type { Job } from '../src/model/types.ts'
 import { install } from '../src/workspace.ts'
 import { SERVERS } from '../workspaces/server.ts'
+import { Ops } from './agent/ops.ts'
+import { buildId } from './build.ts'
 import type { FakeGateway } from './bridge/fake.ts'
 import { loadConfig, readRaw, readToken, wsConfigs } from './config.ts'
 import type { Config } from './config.ts'
 import { Bus } from './events.ts'
+import { grantsOf } from './grants.ts'
 import { createApp } from './http/app.ts'
 import type { Sdk } from './llm/sdk.ts'
 import { ensureToken, jobTools, mcpHandler } from './mcp/mcp.ts'
 import { Notify } from './notify/notify.ts'
 import { Reminders } from './notify/reminders.ts'
 import { Pairing } from './pairing/pairing.ts'
+import { RESTART_EXIT, Restarter } from './restart.ts'
 import { hub, makeSpace, Spaces } from './spaces.ts'
 import type { Space } from './spaces.ts'
 import { formatter } from './voice/format.ts'
@@ -51,9 +55,11 @@ async function listen(s: Server, port: number, host: string) {
   return (s.address() as AddressInfo).port
 }
 
-export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceServer[] } = {}) {
-  const workspaces = o.workspaces ?? SERVERS
-  checkWorkspaces(workspaces)
+/** root = the console's folder (grants, the agents' areas, the build); restart = what a change the agent applied ends in,
+    default closing and exiting with RESTART_EXIT for the run script to start the console again */
+export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceServer[]; root?: string; restart?: () => void } = {}) {
+  const workspaces = o.workspaces ?? SERVERS, root = o.root ?? PKG
+  checkWorkspaces(workspaces, (id) => grantsOf(id, root) !== null)
   // the packs, playbooks and demo data come from the registered workspaces
   install(workspaces.map((w) => ({ page: w.page })))
   const cfg = o.cfg ?? loadConfig()
@@ -62,9 +68,17 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
 
   let notify: Notify | null = null
   const push = (t: string, b: string, u: string) => notify!.push(t, b, u)
+  // a restart waits for every agent's turn; set once close exists
+  let restartNow = () => {}
+  const restarter = new Restarter(() => restartNow())
+  const agent = {
+    ops: new Ops({ root, home: cfg.home, fake: cfg.fakeGateway, restart: () => restarter.want() }),
+    hold: () => restarter.hold(),
+    taken: () => ({ ids: workspaces.map((w) => w.page.id), prefixes: workspaces.map((w) => w.jobPrefix) }),
+  }
   const list: Space[] = []
   try {
-    for (const w of workspaces) list.push(await makeSpace(w, { cfg: cfgs[w.page.id], home: cfg.home, artifactsDir, sdk: o.sdk, fake: cfg.fakeGateway, push }))
+    for (const w of workspaces) list.push(await makeSpace(w, { cfg: cfgs[w.page.id], home: cfg.home, artifactsDir, sdk: o.sdk, fake: cfg.fakeGateway, push, root, agent }))
   } catch (e) { for (const s of list) await s.close(); throw e }
   const spaces = new Spaces(list), bus = new Bus(), unhub = hub(list, bus)
   const allKnown = function* () { for (const s of list) yield* s.known.values() }
@@ -92,6 +106,10 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
     const bad = r.find((x) => x.status === 'rejected')
     if (bad) throw bad.reason
   }
+  restartNow = o.restart ?? (() => {
+    console.log('the console restarts on its new code')
+    void close().catch((e) => console.error('closing before the restart:', (e as Error).message)).finally(() => process.exit(RESTART_EXIT))
+  })
 
   const late = (side: 'loopback' | 'lan'): RequestListener => (q, s) => app![side](q, s)
   const loop = createServer(late('loopback'))
@@ -114,6 +132,7 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
     settings: new Settings(cfg.home),
     voice: whisper({ keyPath: cfg.openaiKeyPath }),
     format: formatter({ keyPath: cfg.openaiKeyPath, model: cfg.formatModel }),
+    build: () => buildId(join(PKG, 'dist', 'index.html')),
   })
   for (const s of list) s.source.start()
   const fakes: Record<string, FakeGateway> = Object.fromEntries(list.flatMap((s) => (s.fake ? [[s.id, s.fake]] : [])))

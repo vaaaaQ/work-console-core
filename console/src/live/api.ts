@@ -1,3 +1,4 @@
+import type { AgentRec } from '../model/agent.ts'
 import type { CalEvent, Chat, Cmd, Job, Mail, Msg, Playbook, RunIntent, RunRec, Tpl } from '../model/types.ts'
 import type { NewJob } from '../model/transitions.ts'
 import type { Resolved } from '../model/context.ts'
@@ -25,6 +26,8 @@ export interface WsBlock {
   parts: { jobs: Part; runs: Part; marks: Part }
   bridge: { state: 'ok' | 'unavailable'; concepts: Record<string, string> }
   plugins: Record<string, unknown>
+  /** managed = it has grants.json, and so an agent; agent = its newest conversation */
+  managed?: boolean; agent?: AgentRec | null
 }
 export interface State {
   /** the PC's own zone and name */
@@ -34,6 +37,8 @@ export interface State {
   voice: boolean
   /** who runs by itself, and who a step taken up by hand opens in */
   providers?: Providers
+  /** the page build the server serves; null when it serves none (the dev server) */
+  build?: string | null
   ws: Record<string, WsBlock>
 }
 export type ProviderId = 'claude' | 'cursor'
@@ -50,6 +55,7 @@ export type Ev =
   | { kind: 'bridge'; ws: string; state: 'ok' | 'unavailable'; concepts: Record<string, string> }
   | { kind: 'source'; ws: string; concept: string }
   | { kind: 'build'; id: string; t: string; tool?: string }
+  | { kind: 'agent'; ws: string; agent: AgentRec }
 export type ActRes = { actionId: string; status: 'ok' | 'error' | 'outcome_unknown'; error?: { code: string; message: string }; result?: unknown }
 /** playbooks: keys of the playbooks whose every run reads the note in full */
 export type NoteIndex = { id: string; v: number; title: string; tags: string[]; playbooks: string[]; updated: string; size: number }
@@ -73,10 +79,12 @@ export interface LiveWs {
   parts: Record<string, Part>
   /** each plugin's state block, by plugin name */
   plugins: Record<string, unknown>
+  /** managed = the workspace has an agent; agent = its newest conversation, null before the first */
+  managed: boolean; agent: AgentRec | null
 }
 export const blankWs = (): LiveWs => ({
   bridge: 'ok', concepts: {}, sources: {}, cal: [], time: [], board: [],
-  notes: [], proposals: [], kn: 'loading', parts: { jobs: 'ok', runs: 'ok' }, plugins: {},
+  notes: [], proposals: [], kn: 'loading', parts: { jobs: 'ok', runs: 'ok' }, plugins: {}, managed: false, agent: null,
 })
 
 /** what the page knows about the backend: on = live mode, pc = opened on the PC itself (pairing, devices) */
@@ -87,6 +95,8 @@ export const LIVE = {
   /** the backend can turn speech into text */
   voice: false,
   providers: { auto: 'claude', manual: 'claude', manualLabel: 'Claude Code' } as Providers,
+  /** the page build this page loaded; updated = the server now serves another one */
+  build: null as string | null, updated: false,
   /** one block per workspace the backend serves */
   ws: {} as Record<string, LiveWs>,
 }
@@ -214,6 +224,14 @@ export const format = (ws: string, b: { text: string; ctx?: string; field?: stri
 /** the New job form filled from what was said: say = every say so far, oldest first; id names the build in its events */
 export const build = async (ws: string, id: string, say: string[], form: BuildForm, signal?: AbortSignal) =>
   (await wsCall<{ form: BuildForm }>(ws, 'POST', '/build', { id, say, form }, 150000, signal)).form
+/** the workspace agent: a message starts a turn, whose progress comes as agent events */
+type AgentRes = { agent: AgentRec }
+export const agentSay = async (ws: string, text: string) => (await wsCall<AgentRes>(ws, 'POST', '/agent', { text })).agent
+export const agentStop = (ws: string) => wsCall<object>(ws, 'POST', '/agent/stop')
+export const agentNew = async (ws: string) => (await wsCall<AgentRes>(ws, 'POST', '/agent/new')).agent
+// an undo checks and builds the console again: minutes, not seconds
+export const agentUndo = async (ws: string, sha: string) => (await wsCall<AgentRes>(ws, 'POST', '/agent/undo', { sha }, 20 * 60_000)).agent
+export const agentGrants = async (ws: string, accept: boolean, reason?: string) => (await wsCall<AgentRes>(ws, 'POST', '/agent/grants', { accept, reason }, 60_000)).agent
 export const settings = () => call<{ settings: ProviderSettings; providers: ProviderInfo[] }>('GET', '/api/settings')
 /** b = the keys to change; a path of '' drops it */
 export const putSettings = (b: Partial<ProviderSettings>) => call<{ settings: ProviderSettings; providers: ProviderInfo[] }>('PUT', '/api/settings', b)
@@ -226,7 +244,7 @@ export const revoke = (id: string) => call<object>('DELETE', `/api/devices/${enc
 /** one EventSource for the page's lifetime; it reconnects by itself, and onOpen runs on every (re)connect */
 export function events(on: (e: Ev) => void, onOpen?: () => void) {
   const es = new EventSource(base + '/api/events')
-  for (const k of ['job', 'run', 'feed', 'bridge', 'source', 'build']) {
+  for (const k of ['job', 'run', 'feed', 'bridge', 'source', 'build', 'agent']) {
     es.addEventListener(k, (m) => { try { on({ ...JSON.parse((m as MessageEvent).data), kind: k }) } catch { /* a broken frame is dropped */ } })
   }
   if (onOpen) es.addEventListener('open', onOpen)

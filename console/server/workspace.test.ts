@@ -68,3 +68,12 @@ test('gatewaySource reads through the token it is given, else through the token 
     await assert.rejects(gatewaySource({ ...cfg, consoleTokenPath: join(dir, 'none') }, { bus: new Bus() }).read(['chat']), (e: unknown) => e instanceof GatewayError && e.code === 'unauthorized')
   } finally { a.stop(); b.stop(); await fake.close() }
 })
+
+test('a managed workspace takes runTools and mcp from grants.json, never from its server.ts', () => {
+  const managed = (id: string) => id === 'acme'
+  checkWorkspaces([acmeServer], managed)
+  bad2([{ ...acmeServer, llm: { runTools: ['Read'] } }], managed, 'workspace acme is managed: its runTools come from grants.json, not llm.runTools')
+  bad2([{ ...acmeServer, llm: { mcp: { t: {} } } }], managed, 'workspace acme is managed: its MCP servers come from grants.json, not llm.mcp')
+  checkWorkspaces([{ ...acmeServer, llm: { runTools: ['Read'], mcp: { t: {} } } }], () => false)
+})
+const bad2 = (list: WorkspaceServer[], managed: (id: string) => boolean, message: string) => assert.throws(() => checkWorkspaces(list, managed), { message })
