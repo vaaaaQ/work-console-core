@@ -242,7 +242,9 @@ person's approval.*
   with `RESTART_EXIT` = 75 (`server/restart.ts`), for the process that runs the console to start it
   again. `run.mjs --restart` and `update.mjs` ask the same way through `POST /api/restart {home}`, PC only.
   A core update that changed the npm lock leaves `<home>/update-finish.json`, and `run.mjs` runs `npm ci` and
-  the build (`update.mjs --finish`) between the exit and the next start. The page compares the build id in `/api/state` with the one it loaded and says *Updated — press Ctrl+F5*.
+  the build (`update.mjs --finish`) between the exit and the next start. A finish that fails puts the folder
+  back on its commit and writes `update-failed.json` at step `finish`, with the log's path and no branch, so the
+  banner shows it with Apply and Dismiss and nothing to reintegrate. The page compares the build id in `/api/state` with the one it loaded and says *Updated — press Ctrl+F5*.
 - **Grants.** `grants.json` = `{packs, hosts, acts, runTools, mcp}` (`server/grants.ts`, `grantsOf(id)`). A
   managed workspace's runs get exactly its `runTools` and `mcp`; startup refuses one whose `server.ts` also
   declares `llm.runTools` or `llm.mcp`. A plugin's `ctx.http` reaches only `hosts` (exact or `*.domain`).

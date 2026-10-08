@@ -13,7 +13,8 @@ import { closeModal, modal } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
 
 /* A core update that failed: what failed and its output, then Reintegrate (a workspace agent fixes it on the update's
-   branch), Apply (run the update again) or Give up (drop it and stay on the core the console runs). */
+   branch), Apply (run the update again) or Give up (drop it and stay on the core the console runs). A finish that
+   failed after the restart left no branch: it names its log, and Dismiss drops the record. */
 
 const sha7 = (s: string) => s.slice(0, 7)
 const errText = (e: unknown) => String((e as Error)?.message || e)
@@ -37,7 +38,7 @@ function reintegrate(ws: string) {
 function run(kind: UpdateKind) {
   const u = LIVE.update!
   const send = () => void api.updateRun(kind).then((v) => commit(() => { LIVE.update = v }), (e) => toast(errText(e)))
-  if (kind === 'apply') { send(); return }
+  if (kind === 'apply' || !u.branch) { send(); return }
   modal({
     title: `Give up core ${sha7(u.core)}`, form: 'update-give-up',
     body: <p className="why" style={{ margin: 0 }}>The update's branch {u.branch} and its worktree are dropped, with any fix committed there. The console stays on core {sha7(u.from)}.</p>,
@@ -51,18 +52,20 @@ export function UpdateBanner() {
   if (!LIVE.on || !u) return null
   const ws = fixer(), answering = Object.values(LIVE.ws).some((l) => l.agent?.status === 'running')
   const out = u.last ? u.last.output : u.output
-  const what = u.last && u.last.kind === 'apply' && u.last.code !== 0 ? `failed again at ${u.step}` : `failed at ${u.step}`
+  const step = u.step === 'finish' ? 'npm ci or the build after the restart' : u.step
+  const what = u.last && u.last.kind === 'apply' && u.last.code !== 0 ? `failed again at ${step}` : `failed at ${step}`
   return (
     <div className="banner upd" role="status">
       <Ic n="warn" sm />
       <span className="upd-t">The update to core {sha7(u.core)} {what}; the console runs core {sha7(u.from)}.</span>
       {u.running
-        ? <span className="row"><span className="spin" />{u.running === 'apply' ? 'Updating' : 'Giving up'}{answering ? ', once the agent ends its turn' : ''}…</span>
+        ? <span className="row"><span className="spin" />{u.running === 'apply' ? 'Updating' : u.branch ? 'Giving up' : 'Dismissing'}{answering ? ', once the agent ends its turn' : ''}…</span>
         : <span className="row">
           {u.reintegrable && ws ? <button className="btn sm pri" disabled={LIVE.ws[ws].agent?.status === 'running'} title={`A conversation with ${nameOf(ws)}'s agent fixes it`} onClick={() => reintegrate(ws)}><Ic n="wrench" sm />Reintegrate</button> : null}
           <button className="btn sm" onClick={() => run('apply')}><Ic n="retry" sm />Apply</button>
-          <button className="btn sm ghost" onClick={() => run('give-up')}><Ic n="x" sm />Give up…</button>
+          <button className="btn sm ghost" onClick={() => run('give-up')}><Ic n="x" sm />{u.branch ? 'Give up…' : 'Dismiss'}</button>
         </span>}
+      {u.log ? <span className="upd-log">Log: <span className="mono">{u.log}</span></span> : null}
       {out ? <details><summary>Output</summary><pre className="mono">{out}</pre></details> : null}
     </div>
   )

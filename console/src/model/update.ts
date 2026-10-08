@@ -6,6 +6,8 @@ export const REINTEGRABLE = ['typecheck', 'tests', 'build']
 /** reintegrable = a workspace agent can fix it on its branch (it failed at typecheck, tests or build) */
 export interface UpdateView {
   core: string; from: string; branch: string; step: string; output: string; at: string
+  /** the log with the whole output, when the record names one (a failed finish, with branch '') */
+  log?: string
   reintegrable: boolean
   running: UpdateKind | null
   /** the last run's end: its exit code and the tail of its output */

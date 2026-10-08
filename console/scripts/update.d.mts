@@ -10,6 +10,8 @@ export interface FailedUpdate {
   /** the folder's commit before the update, and the branch's commit the update made */
   pre: string; head: string
   step: string; output: string; at: string
+  /** step finish: npm ci or the build failed after the restart, branch, worktree, dir and head are '', and this log has it all */
+  log?: string
 }
 /** <home>/update-failed.json, null when the last update did not fail */
 export function failedUpdate(home: string): FailedUpdate | null
@@ -19,7 +21,7 @@ export function updatesDir(home: string): string
 export function giveUp(o: { home: string; run?: Runner }): boolean
 /** what update.mjs leaves in <home>/update-finish.json for the supervisor: the merged folder and its commit before */
 export interface FinishUpdate { folder: string; repo: string; pre: string; sha: string }
-/** npm ci and the build for the update left in finishFile(home), back on pre when they fail; none = no record */
+/** npm ci and the build for the update left in finishFile(home); a failure goes back on pre and leaves update-failed.json at step finish */
 export function finish(o: { home: string; run?: Runner; log?: (line: string) => void; build?: (dir: string) => { ok: boolean; output?: string } }):
   { status: 'none' | 'updated' | 'failed'; code: number; sha?: string }
 export function update(o: {

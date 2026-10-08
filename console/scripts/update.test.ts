@@ -182,9 +182,9 @@ test('a lock change from the command line: the console is asked to restart first
   assert.deepEqual(g.npm, [`npm ci @ ${t.to}`, `npm ci @ ${t.to}`])
 })
 
-test('a finish whose build fails puts the folder back on its commit before the update, with npm ci for it', async () => {
-  const s = setup(), h = harness(), pre = git(s.to, 'rev-parse', 'HEAD')
-  advance(s.origin, { 'console/server/a.ts': 'export const a = 2\n', 'console/package-lock.json': '{ "v": 2 }\n' })
+test('a finish whose build fails puts the folder back on its commit before the update, with npm ci for it, and records it for the page', async () => {
+  const s = setup(), h = harness(), pre = git(s.to, 'rev-parse', 'HEAD'), from = JSON.parse(read(s.to, 'core.lock.json')).core
+  const sha = advance(s.origin, { 'console/server/a.ts': 'export const a = 2\n', 'console/package-lock.json': '{ "v": 2 }\n' })
   await update(h.o(s, { restart: null, running: sup(s) }))
   const f = finish({ home: s.home, run: h.o(s).run, log: quiet, build: () => ({ ok: false, output: 'vite: out of memory' }) })
   assert.deepEqual([f.status, f.code], ['failed', 1])
@@ -192,6 +192,35 @@ test('a finish whose build fails puts the folder back on its commit before the u
   assert.equal(read(s.to, 'server/a.ts'), 'export const a = 1\n')
   assert.deepEqual(h.npm, [`npm ci @ ${s.to}`, `npm ci @ ${s.to}`])
   assert.equal(existsSync(finishFile(s.home)), false)
+  // no branch or worktree is left by then: the record names the output and the supervisor's log
+  const rec = failedUpdate(s.home)!
+  assert.match(rec.at, /^\d{4}-/)
+  assert.deepEqual({ ...rec, at: '' }, {
+    core: sha, from, repo: s.to, branch: '', worktree: '', dir: '', pre, head: '', step: 'finish',
+    output: `the build failed in ${s.to}; it is back on its commit before the update:\nvite: out of memory`,
+    log: join(s.home, 'logs', 'console.log'), at: '',
+  })
+  // the next update that passes clears it
+  const r = await update(h.o(s))
+  assert.deepEqual([r.status, r.sha], ['updated', sha])
+  assert.equal(failedUpdate(s.home), null)
+})
+
+test('a finish whose npm ci fails is recorded the same way, and give up dismisses the record', async () => {
+  const s = setup(), h = harness(), pre = git(s.to, 'rev-parse', 'HEAD')
+  advance(s.origin, { 'console/package-lock.json': '{ "v": 2 }\n' })
+  await update(h.o(s, { restart: null, running: sup(s) }))
+  let n = 0
+  const r: Runner = (cmd, args, o) => (cmd === 'npm' && args[0] === 'ci' && n++ === 0 ? { status: 1, stdout: '', stderr: 'npm ERR! ERESOLVE' } : h.o(s).run(cmd, args, o))
+  assert.equal(finish({ home: s.home, run: r, log: quiet }).code, 1)
+  assert.equal(git(s.to, 'rev-parse', 'HEAD'), pre)
+  const rec = failedUpdate(s.home)!
+  assert.equal(rec.step, 'finish')
+  assert.equal(rec.output, `npm ci failed in ${s.to}; it is back on its commit before the update:\nnpm ERR! ERESOLVE`)
+  assert.equal(giveUp({ home: s.home, run: h.o(s).run }), true)
+  assert.equal(failedUpdate(s.home), null)
+  assert.deepEqual(branches(s.to), ['main'])
+  assert.equal(git(s.to, 'rev-parse', 'HEAD'), pre)
 })
 
 test('with no console, or one whose supervisor finishes nothing, npm ci and the build run in place', async () => {

@@ -37,18 +37,19 @@ const coreSync = (r) => ({ core, to, rev }) => {
 }
 const npmBuild = (r) => (dir) => {
   const b = r('npm', ['run', 'build'], { cwd: dir })
-  return { ok: b.status === 0, output: tail(`${b.stdout}\n${b.stderr}`) }
+  return { ok: b.status === 0, output: tail(`${b.stdout}\n${b.stderr}`.trim()) }
 }
 
 /** npm ci when the lock changed, then the build; a failure puts the folder back on pre, so the next start runs what ran before */
 function install(r, build, log, { repo, folder, pre, sha, ci: lockChanged }) {
   const ci = lockChanged ? r('npm', ['ci'], { cwd: folder }) : { status: 0 }
-  const b = ci.status === 0 ? build(folder) : { ok: false, output: tail(`${ci.stdout}\n${ci.stderr}`) }
+  const b = ci.status === 0 ? build(folder) : { ok: false, output: tail(`${ci.stdout}\n${ci.stderr}`.trim()) }
   if (b.ok) return { status: 'updated', code: 0, sha }
   git(r, repo, ['reset', '-q', '--keep', pre])
   if (lockChanged) r('npm', ['ci'], { cwd: folder })
-  log(`${ci.status === 0 ? 'the build' : 'npm ci'} failed in ${folder}; it is back on its commit before the update:\n${b.output}`)
-  return { status: 'failed', code: 1, sha }
+  const output = `${ci.status === 0 ? 'the build' : 'npm ci'} failed in ${folder}; it is back on its commit before the update:\n${b.output}`
+  log(output)
+  return { status: 'failed', code: 1, sha, output }
 }
 
 /** the supervisor's step between the server's exit and its next start: npm ci and the build for an update left to it */
@@ -56,8 +57,11 @@ export function finish({ home, run: r = run, log = console.log, build }) {
   const rec = readJson(finishFile(home), null)
   if (!rec) return { status: 'none', code: 0 }
   try {
-    const x = install(r, build ?? npmBuild(r), log, { ...rec, ci: true })
+    const { output, ...x } = install(r, build ?? npmBuild(r), log, { ...rec, ci: true })
     if (x.code === 0) log(`updated to core ${rec.sha.slice(0, 7)}`)
+    // the page shows it as a failed update with nothing to reintegrate: its worktree went at the merge
+    else writeJson(join(home, RECORD), { core: rec.sha, from: readJson(join(rec.folder, 'core.lock.json'), {}).core ?? '', repo: rec.repo,
+      branch: '', worktree: '', dir: '', pre: rec.pre, head: '', step: 'finish', output, log: join(home, 'logs', 'console.log'), at: new Date().toISOString() })
     return x
   } finally { rmSync(finishFile(home), { force: true }) }
 }
@@ -174,7 +178,7 @@ export async function update(o) {
     log(`updated to core ${sha7}`)
     return { status: 'updated', code: 0, sha }
   }
-  const x = install(r, build, log, { repo, folder, pre, sha, ci: lockChanged })
+  const { output: _, ...x } = install(r, build, log, { repo, folder, pre, sha, ci: lockChanged })
   if (x.code !== 0) return x
   drop(r, repo, { worktree, branch })
   rmSync(join(home, RECORD), { force: true })

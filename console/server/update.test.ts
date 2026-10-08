@@ -72,6 +72,12 @@ test('the view mirrors the record; only typecheck, tests and build are reintegra
   assert.equal(x.u.view(), null)
 })
 
+test('a failed finish shows with the log it names and no branch; it is not reintegrable', () => {
+  const x = setup({ step: 'finish' }), log = join(x.home, 'logs', 'console.log')
+  writeFileSync(join(x.home, 'update-failed.json'), JSON.stringify({ ...x.f, branch: '', worktree: '', dir: '', head: '', log }))
+  assert.deepEqual(x.u.view(), { core: x.f.core, from: x.f.from, branch: '', step: 'finish', output: x.f.output, at: x.f.at, log, reintegrable: false, running: null })
+})
+
 test("the diff is the update's own commit as it lands in the console: the locks, the fix after it and files outside left out", async () => {
   const x = setup()
   const d = await x.u.diff(x.f)

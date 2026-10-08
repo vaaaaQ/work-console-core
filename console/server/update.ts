@@ -48,7 +48,7 @@ export class Updates implements Reintegration {
     const f = this.failed() ?? (this.running ? this.held : null)
     if (!f) return null
     return {
-      core: f.core, from: f.from, branch: f.branch, step: f.step, output: f.output, at: f.at,
+      core: f.core, from: f.from, branch: f.branch, step: f.step, output: f.output, at: f.at, ...(f.log ? { log: f.log } : {}),
       reintegrable: REINTEGRABLE.includes(f.step), running: this.running, ...(this.last ? { last: this.last } : {}),
     }
   }
