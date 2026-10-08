@@ -33,6 +33,9 @@ import type { PluginReq } from '../workspace.ts'
 
 export interface Bridge {
   available(): boolean
+  /** what is down when this is: a gateway (the default) or the workspace's own store; why = its last reason */
+  via?: 'gateway' | 'store'
+  why?(): string
   concepts(): Record<string, string>
   read(concepts: string[]): Promise<Record<string, ConceptReply>>
   get(concept: string, id: string, cursor?: string): Promise<ConceptReply>
@@ -65,6 +68,11 @@ type Side = 'loopback' | 'lan'
 type Req = { side: Side; m: string; path: string; q: URLSearchParams; p: string[]; body: (limit?: number) => Promise<Record<string, unknown>>; device: string | null; req: IncomingMessage; res: ServerResponse }
 type Route<A extends unknown[] = []> = readonly [method: string, path: RegExp, run: (r: Req, ...a: A) => Promise<unknown> | unknown]
 type Part = 'ok' | 'unavailable'
+/** a workspace's bridge block: up or not, its concepts, what it stands on and, while down, why */
+export function bridgeOf(s: { source: Bridge }) {
+  const up = s.source.available()
+  return { state: (up ? 'ok' : 'unavailable') as Part, concepts: s.source.concepts(), via: s.source.via ?? 'gateway', why: up ? '' : s.source.why?.() ?? '' }
+}
 
 const COOKIE = 'wc_dev'
 const MIME: Record<string, string> = {
@@ -189,7 +197,6 @@ export function createApp(d: Deps) {
   const part = async <T>(p: Promise<T>, empty: T): Promise<[T, Part]> => {
     try { return [await p, 'ok'] } catch (e) { if (e instanceof GatewayError) return [empty, 'unavailable']; throw e }
   }
-  const bridgeOf = (s: Space) => ({ state: (s.source.available() ? 'ok' : 'unavailable') as Part, concepts: s.source.concepts() })
 
   /** one workspace's block in /api/state */
   async function block(s: Space) {

@@ -14,7 +14,8 @@ import type { Mark, Store } from './port.ts'
    conflict, never a lost write, and a NOTIFY tells the other writers' consoles what changed. The
    source is up while the database answers; down, the space behaves as if its bridge went away. */
 
-export type PgSourceOpts = { url: string; password?: () => string; schema?: string; ws: string; bus: Bus; checkMs?: number }
+/** url null = no database configured yet: the source stays down and says unset */
+export type PgSourceOpts = { url: string | null; unset?: string; password?: () => string; schema?: string; ws: string; bus: Bus; checkMs?: number }
 export type PgSource = Source & { store(o: { prefix: string; playbooks: Record<string, Playbook> }): Store }
 
 const SCHEMA = /^[a-z_][a-z0-9_]{0,62}$/
@@ -51,21 +52,23 @@ export function pgSource(o: PgSourceOpts): PgSource {
   if (!SCHEMA.test(schema)) throw new Error(`schema ${schema} must match ${SCHEMA}`)
   const t = (name: string) => `"${schema}".${name}`
   const me = randomBytes(6).toString('hex')
-  const conn = { ...pgConn(o.url, o.password), connectionTimeoutMillis: 5000 }
-  const pool = new pg.Pool({ ...conn, max: 5, allowExitOnIdle: true })
+  const unset = o.unset || 'no database is configured'
+  const conn = o.url ? { ...pgConn(o.url, o.password), connectionTimeoutMillis: 5000 } : null
+  const pool = conn && new pg.Pool({ ...conn, max: 5, allowExitOnIdle: true })
   let up = false, timer: ReturnType<typeof setInterval> | undefined, ready: Promise<void> | null = null
   let listener: pg.Client | null = null, checking = false, stopped = false, said = ''
 
   function set(next: boolean) {
     if (next === up) return
     up = next
-    o.bus.emit({ kind: 'bridge', state: up ? 'ok' : 'unavailable', concepts: {} })
+    o.bus.emit({ kind: 'bridge', state: up ? 'ok' : 'unavailable', concepts: {}, via: 'store', ...(up ? {} : { why: said }) })
   }
-  pool.on('error', () => { void check() })
+  pool?.on('error', () => { void check() })
 
   /** the schema, made once per process; a failure is retried at the next call */
   function ensure() {
     ready ??= (async () => {
+      if (!pool) throw new Error(unset)
       const c = await pool.connect()
       try {
         await c.query('begin')
@@ -84,7 +87,7 @@ export function pgSource(o: PgSourceOpts): PgSource {
   async function q(sql: string, params: unknown[] = []): Promise<Row[]> {
     try {
       await ensure()
-      return (await pool.query(sql, params)).rows as Row[]
+      return (await pool!.query(sql, params)).rows as Row[]
     } catch (e) {
       if (!away(e)) throw e
       void check()
@@ -94,7 +97,7 @@ export function pgSource(o: PgSourceOpts): PgSource {
 
   async function listen() {
     if (listener) return
-    const c = new pg.Client(conn)
+    const c = new pg.Client(conn!)
     c.on('error', () => { if (listener === c) listener = null; void c.end().catch(() => {}); void check() })
     c.on('notification', (m) => { void heard(m.payload) })
     try {
@@ -124,7 +127,7 @@ export function pgSource(o: PgSourceOpts): PgSource {
     checking = true
     try {
       await ensure()
-      await pool.query('select 1')
+      await pool!.query('select 1')
       await listen()
       said = ''
       set(true)
@@ -197,6 +200,9 @@ export function pgSource(o: PgSourceOpts): PgSource {
 
   return {
     available: () => up,
+    via: 'store',
+    // an unset source knows why before its first check
+    why: () => said || (pool ? '' : unset),
     concepts: () => ({}),
     read: async (cs) => Object.fromEntries(cs.map((c) => [c, none(c)])),
     get: async (c) => none(c),
@@ -212,7 +218,7 @@ export function pgSource(o: PgSourceOpts): PgSource {
       stopped = true
       clearInterval(timer)
       if (listener) { const c = listener; listener = null; void c.end().catch(() => {}) }
-      void pool.end().catch(() => {})
+      void pool?.end().catch(() => {})
     },
     store,
   }

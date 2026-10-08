@@ -4,6 +4,7 @@ import { PRI } from '../data/demo.ts'
 import { PACKS } from '../data/packs.ts'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
+import { down } from '../live/boot.ts'
 import { actFor, addrs, isAddr } from '../live/adapt.ts'
 import {
   S, TPL, allSent, applyLocal, byId, chName, chatOf, clearNew, ctxRows, isLive, keyShort, llmText, plainT, postToChat, putJob,
@@ -32,7 +33,7 @@ const TIMERS: Record<string, ReturnType<typeof setTimeout>> = {}
 /** what the page says when the backend refuses */
 export function failText(e: unknown) {
   if (e instanceof api.ApiError) {
-    if (e.status === 503) return 'The bridge is unavailable; nothing was changed.'
+    if (e.status === 503) return `${down().off}; nothing was changed.`
     if (e.status === 409) return 'Changed elsewhere — reloaded.'
     return e.message
   }

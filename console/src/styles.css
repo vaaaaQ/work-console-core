@@ -513,7 +513,7 @@ p.cx-t{font-family:var(--font)}
 .errs{margin:0;padding:10px 12px 10px 28px;border:1px solid var(--bad);border-radius:var(--r);color:var(--bad);background:color-mix(in oklab,var(--bad) 6%,var(--raised));font-size:12.5px}
 @media (max-width:860px){.top{position:static}}
 /* live mode */
-.banner{display:flex;gap:8px;align-items:center;padding:8px 16px;background:color-mix(in oklab,var(--bad) 10%,var(--raised));color:var(--bad);border-bottom:1px solid var(--bad);font-size:13px}
+.banner{grid-column:1/-1;display:flex;gap:8px;align-items:center;padding:8px 16px;background:color-mix(in oklab,var(--bad) 10%,var(--raised));color:var(--bad);border-bottom:1px solid var(--bad);font-size:13px}
 .banner.note{background:color-mix(in oklab,var(--cur) 10%,var(--raised));color:var(--cur);border-bottom-color:var(--cur)}
 .feed{max-height:220px;overflow:auto;font:11.5px/1.5 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;padding:8px;border:1px solid var(--line-soft);border-radius:var(--r);background:var(--bg)}
 .feed .tool{color:var(--muted)}

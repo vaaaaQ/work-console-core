@@ -24,7 +24,7 @@ export interface WsBlock {
   marks: Record<string, { done?: boolean; job?: string }>
   /** a part B could not give comes back empty and unavailable */
   parts: { jobs: Part; runs: Part; marks: Part }
-  bridge: { state: 'ok' | 'unavailable'; concepts: Record<string, string> }
+  bridge: { state: 'ok' | 'unavailable'; concepts: Record<string, string>; via?: 'gateway' | 'store'; why?: string }
   plugins: Record<string, unknown>
   /** managed = it has grants.json, and so an agent; agent = its newest conversation */
   managed?: boolean; agent?: AgentRec | null
@@ -52,7 +52,7 @@ export type Open = { kind: 'link' | 'command'; value: string }
 /** every frame but a build's names the workspace it came from; a build's names the build, which the page named */
 export type Ev =
   | { kind: 'job'; ws: string; job: Job } | { kind: 'run'; ws: string; run: RunRec } | { kind: 'feed'; ws: string; run: string; t: string; tool?: string }
-  | { kind: 'bridge'; ws: string; state: 'ok' | 'unavailable'; concepts: Record<string, string> }
+  | { kind: 'bridge'; ws: string; state: 'ok' | 'unavailable'; concepts: Record<string, string>; via?: 'gateway' | 'store'; why?: string }
   | { kind: 'source'; ws: string; concept: string }
   | { kind: 'build'; id: string; t: string; tool?: string }
   | { kind: 'agent'; ws: string; agent: AgentRec }
@@ -72,6 +72,8 @@ export class ApiError extends Error {
 /** what the page knows of one workspace: its bridge, its sources and its knowledge */
 export interface LiveWs {
   bridge: 'ok' | 'unavailable'; concepts: Record<string, string>
+  /** what the workspace stands on: its gateway (the bridge) or its own store (the database); why = the reason it is down */
+  via: 'gateway' | 'store'; why: string
   /** per concept: ok, loading, or why it is unavailable */
   sources: Record<string, string>; cal: CalItem[]; time: TimeItem[]; board: BoardItem[]
   /** knowledge, the workspace's notes folder: the note index, proposals waiting in Approvals, and 'ok', 'loading' or why not */
@@ -83,7 +85,7 @@ export interface LiveWs {
   managed: boolean; agent: AgentRec | null
 }
 export const blankWs = (): LiveWs => ({
-  bridge: 'ok', concepts: {}, sources: {}, cal: [], time: [], board: [],
+  bridge: 'ok', concepts: {}, via: 'gateway', why: '', sources: {}, cal: [], time: [], board: [],
   notes: [], proposals: [], kn: 'loading', parts: { jobs: 'ok', runs: 'ok' }, plugins: {}, managed: false, agent: null,
 })
 

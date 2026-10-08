@@ -142,18 +142,20 @@ test('a database that goes away while up flips the source to unavailable, and ba
   let proxy = await listen()
   const port = (proxy.address() as net.AddressInfo).port
   const via = new globalThis.URL(URL!); via.port = String(port)
-  const schema = `wc_test_${randomBytes(4).toString('hex')}`, bus = new Bus(), states: string[] = []
-  bus.on((e) => { if (e.kind === 'bridge') states.push(e.state) })
+  const schema = `wc_test_${randomBytes(4).toString('hex')}`, bus = new Bus(), states: string[] = [], whys: string[] = []
+  bus.on((e) => { if (e.kind === 'bridge') { states.push(e.state); whys.push(e.why ?? '') } })
   const src = pgSource({ url: via.toString(), schema, ws: 'w', bus, checkMs: 100 })
   try {
     src.start()
     await until(() => src.available())
     await new Promise<void>((r) => { proxy.close(() => r()); for (const s of socks) s.destroy() })
     await until(() => !src.available())
+    assert.ok(src.why!(), 'down, it says why')
     await assert.rejects(src.store({ prefix: 'AD', playbooks: {} }).jobs(), (e) => (e as { status?: number }).status === 503)
     proxy = await listen(port)
     await until(() => src.available(), 10000)
     assert.deepEqual(states, ['ok', 'unavailable', 'ok'])
+    assert.ok(whys[1] && !whys[0] && !whys[2], 'the reason travels with the unavailable event only')
   } finally {
     src.stop()
     for (const s of socks) s.destroy()
@@ -161,6 +163,23 @@ test('a database that goes away while up flips the source to unavailable, and ba
     const c = new pg.Client({ connectionString: URL })
     await c.connect(); await c.query(`drop schema if exists "${schema}" cascade`); await c.end()
   }
+})
+
+test('a source without a url stays down with the reason it was given, says it once, and its store answers 503 with it', async (t) => {
+  const said = t.mock.method(console, 'error', () => undefined)
+  const bus = new Bus(), evs: Ev[] = []
+  bus.on((e) => evs.push(e))
+  const src = pgSource({ url: null, unset: 'Postgres not running', ws: 'home', bus, checkMs: 50 })
+  try {
+    assert.equal(src.via, 'store')
+    src.start()
+    await new Promise((r) => setTimeout(r, 200))
+    assert.equal(src.available(), false)
+    assert.equal(src.why!(), 'Postgres not running')
+    assert.deepEqual(said.mock.calls.map((c) => String(c.arguments[0])), ['home: the database is unavailable: Postgres not running'])
+    await assert.rejects(src.store({ prefix: 'H', playbooks: {} }).jobs(), (e) => (e as { status?: number }).status === 503 && /Postgres not running/.test((e as Error).message))
+    assert.equal(evs.length, 0, 'never up, so nothing flipped')
+  } finally { src.stop() }
 })
 
 test('a password function is the password, even where the url has none; the url then goes in as fields', () => {
