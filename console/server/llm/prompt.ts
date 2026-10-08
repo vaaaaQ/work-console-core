@@ -68,8 +68,12 @@ function parts(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn) {
 
 const join = (bs: string[]) => bs.filter(Boolean).join('\n\n')
 
+/** the steps whose planned messages carry this step's accepted draft, by title */
+const sentBy = (x: T.Ctx, j: Job, v: string) =>
+  T.steps(x, j.pb).filter((t) => (x.TPL[t.id] || []).some((m) => m[2].includes(`{${v}}`))).map((t) => `"${t.t}"`)
+
 export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn = {}): string {
-  const p = parts(x, j, step, q, o), w = who(o)
+  const p = parts(x, j, step, q, o), w = who(o), v = T.stepOf(x, j, step)?.out, by = v ? sentBy(x, j, v) : []
   return join([
     `You are working one step of a job in ${w}'s Work Console.`,
     ...p.data,
@@ -83,6 +87,7 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: Prompt
       `- Write progress with the run tool journal(observed, changed, next) at meaningful points.`,
       `- Save files the step expects with add_artifact(name, content), or with add_artifact_file(path) for a file already under your working dir; images show on the page.`,
       `- Finish by calling submit_draft(text) exactly once with the draft for ${w} to review. Without it the run counts as failed.`,
+      ...(by.length ? [`- Once accepted, the draft is the message ${by.join(', ')} sends, word for word: submit_draft carries that message alone, in the language it goes out in, with nothing around it (no notes to ${w}, headings or separators). Remarks for ${w} go in journal().`] : []),
     ]),
     ...p.user,
   ])

@@ -1,7 +1,7 @@
 import '../testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { JOBS, LOG, PB, S, applyLocal, atOf, byId, createJob, initFlow, isClosed, jobAtAct, jobForAct, keySrc, nextJobId, pbs, putJob, restore, setJobs, snap, timesheetJob } from './world.ts'
+import { CHATS, JOBS, LOG, PB, S, applyLocal, atOf, byId, chatOf, createJob, initFlow, isClosed, jobAtAct, jobForAct, keySrc, nextJobId, pbs, putJob, restore, setJobs, snap, timesheetJob } from './world.ts'
 
 JOBS.forEach(initFlow)
 
@@ -139,4 +139,14 @@ test('no playbook list offers a once playbook; PB still holds it for its job', (
     assert.equal(pbs().includes('once-x'), false)
     assert.ok(pbs().length > 0)
   } finally { delete PB['once-x'] }
+})
+
+test('a planned chat message goes to the chat its label names, else to the job\'s own chat', () => {
+  const j = JOBS.find((j) => (CHATS[j.ws] || []).length >= 2)!, [a, b] = CHATS[j.ws]
+  const job = (o: Partial<typeof j>) => ({ ...j, chat: undefined, ctx: [], ...o })
+  assert.deepEqual(chatOf(job({ chat: b.id }), a.name.toUpperCase()), { id: a.id, name: a.name }, 'a label naming a chat wins')
+  assert.deepEqual(chatOf(job({ chat: b.id }), 'reply in the thread'), { id: b.id, name: b.name })
+  assert.deepEqual(chatOf(job({ ctx: [{ k: 'chat', id: 'x1', n: 10, name: 'Sam' }] }), 'reply in the thread'), { id: 'x1', name: 'Sam' }, 'the one chat in its context')
+  assert.equal(chatOf(job({ ctx: [{ k: 'chat', id: 'x1', n: 10 }, { k: 'chat', id: 'x2', n: 10 }] }), 'reply in the thread'), undefined, 'two chats: no guess')
+  assert.equal(chatOf(job({}), 'reply in the thread'), undefined)
 })

@@ -45,3 +45,9 @@ test('a reply prompt with blocker on says when to call open_blocker', () => {
   assert.match(replyPrompt('wait for Imre', 'revise', 'Valery', true), /open_blocker/)
   assert.doesNotMatch(replyPrompt('shorter', 'revise'), /open_blocker/)
 })
+
+test('a step whose draft a later step sends is told to submit the message alone', () => {
+  const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
+  assert.match(buildPrompt(x, j, 'dr', 'go', { me: 'Valery' }), /the draft is the message "Send it" sends, word for word: submit_draft carries that message alone.*Remarks for Valery go in journal\(\)/)
+  assert.doesNotMatch(buildPrompt(x, j, 'tr', 'go', {}), /word for word/)
+})

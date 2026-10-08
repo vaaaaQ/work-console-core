@@ -90,7 +90,15 @@ export const ctxName = (j: Job, it: CtxItem) => it.name || (it.k === 'chat' && (
 export const ctxRows = (j: Job): [string, string][] => ctxOf(j).map((it) => [KINDS[it.k].ic, `${KINDS[it.k].l} ${ctxName(j, it)} · ${ctxUnit(it)}`])
 
 /* ===== changing jobs ===== */
-export const chName = (j: Job, k: string, lbl: string) => `${PACKS[j.ws].src[k as SrcKey]?.n || k} · ${lbl}`
+/** the chat a planned chat message goes to: the one its label names, else the job's own (its chat, or the one
+    chat in its context). A label like "reply in the thread" names no chat; undefined when there is no single one */
+export function chatOf(j: Job, lbl: string): { id: string; name: string } | undefined {
+  const L = CHATS[j.ws] || [], named = L.find((c) => norm(c.name) === norm(lbl))
+  if (named) return { id: named.id, name: named.name }
+  const its = ctxOf(j).filter((it) => it.k === 'chat'), it = j.chat ? its.find((x) => x.id === j.chat) || { k: 'chat' as const, id: j.chat, n: 0 } : its.length === 1 ? its[0] : undefined
+  return it && { id: it.id, name: ctxName(j, it) }
+}
+export const chName = (j: Job, k: string, lbl: string) => `${PACKS[j.ws].src[k as SrcKey]?.n || k} · ${(k === 'chat' && chatOf(j, lbl)?.name) || lbl}`
 /** a job from a workspace that no longer exists lands in the default one */
 const known = (j: Job) => { if (!Object.hasOwn(PACKS, j.ws)) j.ws = DEFAULT_WS; return j }
 /** puts a changed job in place and adds its new journal entries to the workspace log */
@@ -164,7 +172,7 @@ export function tvars(j: Job) {
 export const plainT = (j: Job, t: string) => { const v = tvars(j); return t.replace(/\{(\w+)\}/g, (m, k) => v[k] || m) }
 export function postToChat(j: Job, k: string, lbl: string, t: string) {
   if (k !== 'chat') return
-  const L = CHATS[j.ws] || [], c = L.find((c) => norm(c.name) === norm(lbl)) || (j.chat && L.find((c) => c.id === j.chat))
+  const id = chatOf(j, lbl)?.id, c = (CHATS[j.ws] || []).find((c) => c.id === id)
   if (c) { c.msgs.push({ who: 'You', me: 1, at: hm(), t }); c.unread = 0 }
 }
 

@@ -6,7 +6,7 @@ import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
 import { actFor, addrs, isAddr } from '../live/adapt.ts'
 import {
-  S, TPL, allSent, applyLocal, byId, chName, clearNew, ctxRows, isLive, keyShort, llmText, plainT, postToChat, putJob,
+  S, TPL, allSent, applyLocal, byId, chName, chatOf, clearNew, ctxRows, isLive, keyShort, llmText, plainT, postToChat, putJob,
   restore, rvState, snap, stepOf, steps,
 } from '../model/world.ts'
 import { openOf } from '../model/blockers.ts'
@@ -231,8 +231,8 @@ export function editDraft(id: string, sid: string) {
 }
 
 /* ----- planned messages ----- */
-/** where a planned message goes: a chat by name, the job's work item, or the mail it came from */
-const targetOf = (j: Job, k: string, lbl: string) => k === 'work' ? keyShort(j) : k === 'mail' ? j.mail || '' : lbl
+/** where a planned message goes: a chat by id (chatOf), the job's work item, or the mail it came from */
+const targetOf = (j: Job, k: string, lbl: string) => k === 'work' ? keyShort(j) : k === 'mail' ? j.mail || '' : k === 'chat' ? chatOf(j, lbl)?.id || '' : lbl
 
 export function tplSend(id: string, sid: string, i: number) {
   const j0 = byId(id)
@@ -264,7 +264,9 @@ export function tplSend(id: string, sid: string, i: number) {
         if (!addrs(mail.to).length || !mail.subject) { toast('A new mail needs To and a subject.'); return }
         if (bad.length) { toast(`Not a mail address: ${bad.join(', ')}`); return }
       }
-      if (!(await sendVia(k, targetOf(j, k, lbl), t, id, mail))) return
+      const to0 = targetOf(j, k, lbl)
+      if (k === 'chat' && !to0) { toast(`No chat to send to: no chat is named ${lbl}, and the job has no single chat of its own. Add one to its context.`); return }
+      if (!(await sendVia(k, to0, t, id, mail))) return
       closeModal()
       const to = mail ? chName(j, k, addrs(mail.to).join(', ') + (addrs(mail.cc).length ? `; cc ${addrs(mail.cc).join(', ')}` : '')) : chName(j, k, lbl)
       const r = await doCmd(id, { op: 'sent', step: sid, i, t, to }, null)
