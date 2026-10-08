@@ -105,7 +105,7 @@ export function canMcp(p: Policy, server: string, tool: string): boolean {
 const str = (x: unknown) => (typeof x === 'string' ? x : '')
 function no(p: Policy, what: string, change = false): Verdict {
   const l = p.mode.kind === 'agent' && change ? p.mode.limits : null
-  const why = l ? `${what} is not yours to change: only ${l.write.join(', ')}, less ${l.deny.join(', ')}` : `${what} is not allowed in this session`
+  const why = l ? `${what} is not yours to change: only ${l.write.join(', ')}${l.deny.length ? `, less ${l.deny.join(', ')}` : ''}` : `${what} is not allowed in this session`
   return { permission: 'deny', user_message: why, agent_message: why }
 }
 
