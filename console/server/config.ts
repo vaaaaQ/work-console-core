@@ -29,6 +29,8 @@ const PC_KEYS = new Set(['home', 'loopbackPort', 'lanPort', 'pcName', 'fakeGatew
 
 /** the console's own folder: console/server → console */
 export const CONSOLE = dirname(dirname(fileURLToPath(import.meta.url)))
+/** the core's packs/ and schemas/: a consumer's synced copy in its own folder, else the core's beside console/ */
+export const coreDir = (name: 'packs' | 'schemas', dir = CONSOLE) => (existsSync(join(dir, name)) ? join(dir, name) : join(dir, '..', name))
 
 /** the repo the console sits in: the console's folder or the nearest one above it with a .git (a file in a worktree),
     else the folder above the console */

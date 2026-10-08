@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url'
 
 /* Vendors the core into a consumer repo:
      node <core>/console/scripts/sync-core.mjs --to <consumer console dir> [--ref <rev>] [--force]
-   It copies the core's console/ at a commit (HEAD unless --ref) except the consumer's own files, writes
+   It copies the core's console/ at a commit (HEAD unless --ref) except the consumer's own files, and the core's packs/
+   and schemas/ into the consumer's packs/ and schemas/; it writes
    core.lock.json (the commit and a hash per file) and deletes core files the commit dropped. The lock is how
    the consumer's tests (server/core-lock.test.ts) and the next sync tell an edited core file from a clean one.
    The consumer must already have its own workspaces/page.ts and workspaces/server.ts. */
@@ -40,16 +41,21 @@ function git(cwd, args, input) {
   return r.stdout
 }
 
-/** the core's console/ at rev, read with `git ls-tree -r -z` + one `git cat-file --batch` (no tar on Windows);
-    the paths are relative to console/, and the consumer's own files (OWN) are left out */
+/** the core's console/ at rev, plus its packs/ and schemas/, read with `git ls-tree -r -z` + one `git cat-file --batch`
+    (no tar on Windows); console/ paths lose their console/ prefix, packs/ and schemas/ keep theirs, so the consumer holds
+    them in its own folder. The consumer's own files (OWN) are left out */
 export function readCore(coreRoot, rev) {
   const sha = String(git(coreRoot, ['rev-parse', '--verify', `${rev}^{commit}`])).trim()
-  const entries = []
+  const entries = [], seen = new Set()
   // each record is "<mode> <type> <oid>\t<path>", NUL-terminated and unquoted
-  for (const rec of String(git(coreRoot, ['ls-tree', '-r', '-z', `${sha}:console`])).split('\0')) {
+  for (const rec of String(git(coreRoot, ['ls-tree', '-r', '-z', '--full-tree', sha, '--', 'console', 'packs', 'schemas'])).split('\0')) {
     if (!rec) continue
-    const tab = rec.indexOf('\t'), [, type, oid] = rec.slice(0, tab).split(' '), path = rec.slice(tab + 1)
-    if (type === 'blob' && !OWN(path)) entries.push({ path, oid })
+    const tab = rec.indexOf('\t'), [, type, oid] = rec.slice(0, tab).split(' '), full = rec.slice(tab + 1)
+    const path = full.startsWith('console/') ? full.slice('console/'.length) : /^(packs|schemas)\//.test(full) ? full : null
+    if (type !== 'blob' || path === null || OWN(path)) continue
+    if (seen.has(path)) throw new Error(`the core has both console/${path} and ${path}; one of them has to go`)
+    seen.add(path)
+    entries.push({ path, oid })
   }
   const files = new Map()
   if (!entries.length) return { sha, files }

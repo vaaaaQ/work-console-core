@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { coreDir } from '../config.ts'
 
 /* The concept schemas' keyword subset, the one packs/example/test/validate.mjs checks: what a pack's read
    and get must look like before the console takes them. */
 
-export const SCHEMAS_DIR = fileURLToPath(new URL('../../../schemas/', import.meta.url))
+export const SCHEMAS_DIR = coreDir('schemas')
 
 type Schema = { type?: string | string[]; properties?: Record<string, Schema>; required?: string[]; additionalProperties?: boolean; items?: Schema; enum?: unknown[]; minimum?: number; maxItems?: number; format?: string }
 

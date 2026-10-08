@@ -278,6 +278,30 @@ test('bytes survive intact: binary, newlines inside, an empty file, a name with 
   assert.equal(read(to, 'public/with space.txt'), 'a\n\nb\n')
 })
 
+test("the core's packs/ and schemas/ come along into the consumer's own packs/ and schemas/, locked like any core file", () => {
+  const core = makeCore(), to = makeTo()
+  put(core, 'packs/p/pack.json', '{"name":"p"}\n')
+  put(core, 'packs/q/q.js', 'q\n')
+  put(core, 'schemas/x.item.schema.json', '{}\n')
+  git(core, 'add', '-A'); git(core, 'commit', '-q', '-m', 'packs')
+  sync({ core, to, log: () => {} })
+  assert.equal(read(to, 'packs/p/pack.json'), '{"name":"p"}\n')
+  assert.equal(read(to, 'schemas/x.item.schema.json'), '{}\n')
+  assert.ok(['packs/p/pack.json', 'packs/q/q.js', 'schemas/x.item.schema.json'].every((p) => keysOf(to).includes(p)))
+  git(core, 'rm', '-q', '-r', 'packs/q'); git(core, 'commit', '-q', '-m', 'drop q')
+  sync({ core, to, log: () => {} })
+  assert.equal(existsSync(join(to, 'packs', 'q')), false, 'a pack the core dropped goes')
+  assert.equal(read(to, 'src/a.ts'), A1)
+})
+
+test('a core whose console/ also has a packs/ or schemas/ file of the same path is refused', () => {
+  const core = makeCore({ 'packs/p/pack.json': 'inner\n' }), to = makeTo()
+  put(core, 'packs/p/pack.json', 'outer\n')
+  git(core, 'add', '-A'); git(core, 'commit', '-q', '-m', 'both')
+  assert.throws(() => sync({ core, to, log: () => {} }), /packs\/p\/pack\.json/)
+  assert.equal(existsSync(join(to, 'core.lock.json')), false)
+})
+
 test('inside accepts plain relative paths and rejects every way out', () => {
   const dest = resolve(tmp('inside'), 'console')
   for (const p of ['a.ts', 'src/a.ts', 'workspaces/acme/page.ts', 'public/with space.txt', 'a/b/c.d.e']) assert.ok(inside(dest, p), p)

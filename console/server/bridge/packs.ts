@@ -1,9 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CONSOLE } from '../config.ts'
+import { coreDir } from '../config.ts'
 
-/** the core's packs, beside console/ */
-export const PACKS_DIR = join(CONSOLE, '..', 'packs')
+export const PACKS_DIR = coreDir('packs')
 
 /** one setting a pack takes from its workspace; the workspace's value reaches the script as call.config */
 export type ConfigKey = { about: string; list?: boolean; required?: boolean; pattern?: string; enum?: string[]; default?: string | string[] }
