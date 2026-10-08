@@ -131,7 +131,8 @@ function within(cwd: string, path: string): boolean {
   return r === '' || (!r.startsWith('..') && !isAbsolute(r) && relPath(cwd, path, caseInsensitive(cwd)) !== null)
 }
 
-const OPS = /[;&|`\n<>]|\$\(/
+/** what can start or join another command in bash or PowerShell, where (…), @(…), $(…) and {…} run inside an argument */
+const OPS = /[;&|`\r\n\u0085\u2028\u2029<>(){}@$]/
 const wild = (body: string, fold: boolean) => new RegExp(`^${body.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, fold ? 'is' : 's')
 /** a Bash or PowerShell rule's command: cmd:* a prefix, * a wildcard, else the exact command; a scoped allow never
     matches a command that chains another */

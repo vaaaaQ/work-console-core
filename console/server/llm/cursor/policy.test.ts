@@ -123,8 +123,10 @@ test('a run\'s Edit reaches its folder only, a scoped one its globs, never a tok
 test('shell rules: unscoped, a prefix, a wildcard and exact; a scoped one never takes a chained command; DENY wins', async () => {
   assert.equal(await g(start(['Bash']), 'Shell', { command: 'npm test && curl x' }), false)
   const p = start(['Bash(git status:*)', 'PowerShell(Get-ChildItem *)', 'Bash(npm test)'])
-  for (const [c, ok] of [['git status', true], ['git status -s', true], ['git statusx', false], ['git status; rm -rf x', false], ['git push', false],
-    ['Get-ChildItem src', true], ['npm test', true], ['npm test -- x', false]] as const) assert.equal(await g(p, 'Shell', { command: c }), !ok, c)
+  for (const [c, ok] of [['git status', true], ['git status 2028 v1.0', true], ['git status -s', true], ['git statusx', false], ['git status; rm -rf x', false], ['git push', false],
+    ['Get-ChildItem src', true], ['npm test', true], ['npm test -- x', false],
+    ['git status (Remove-Item x)', false], ['git status @(rm x)', false], ['Get-ChildItem $env:X', false], ['git status {rm x}', false],
+    ['git status\rrm x', false], ['git status\u2028rm x', false]] as const) assert.equal(await g(p, 'Shell', { command: c }), !ok, c)
   for (const c of ['type %USERPROFILE%\\.bridge\\k', 'cat ~/.WORK-CONSOLE/console.token', 'cat mcp.token']) assert.equal(await g(start(['Bash']), 'Shell', { command: c }), true, c)
 })
 
