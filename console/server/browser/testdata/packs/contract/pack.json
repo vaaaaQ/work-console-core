@@ -1,0 +1,19 @@
+{
+  "name": "contract",
+  "zone": "UTC",
+  "script": "contract.js",
+  "hosts": ["contract.example"],
+  "tabs": {
+    "app": { "match": "^https://contract\\.example/", "open": "https://contract.example/app" }
+  },
+  "concepts": {
+    "chat": { "tab": "app", "interval": 1, "cap": 100 },
+    "mail": { "tab": "app", "interval": 1, "cap": 100 },
+    "cal": { "tab": "app", "interval": 1, "cap": 100 },
+    "work": { "tab": "app", "interval": 1, "cap": 100 },
+    "review": { "tab": "app", "interval": 1, "cap": 100 },
+    "ci": { "tab": "app", "interval": 1, "cap": 100 },
+    "time": { "tab": "app", "interval": 1, "cap": 100 },
+    "board": { "tab": "app", "interval": 1, "cap": 100 }
+  }
+}
