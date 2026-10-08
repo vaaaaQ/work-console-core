@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import type { IncomingMessage } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadConfig } from './config.ts'
 import type { Sdk } from './llm/sdk.ts'
 import { main } from './main.ts'
 import { ensureCerts } from './tls/mkcert.ts'
+import { tempDir } from './testdirs.ts'
 import * as T from '../src/model/transitions.ts'
 import acmeServer from '../workspaces/acme/server.ts'
 
@@ -30,7 +30,7 @@ const read = (res: IncomingMessage) => new Promise<Res>((ok) => { let t = ''; re
 const step = (name: string) => console.log(`  ok  ${name}`)
 
 async function run() {
-  const home = mkdtempSync(join(tmpdir(), 'wc-smoke-'))
+  const home = tempDir('smoke')
   ensureCerts(join(home, 'tls'), { host: 'localhost', ips: [] })
   const ca = readFileSync(join(home, 'tls', 'ca.crt'))
   const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0, lanPort: 0, pcName: 'localhost' }

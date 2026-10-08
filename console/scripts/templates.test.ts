@@ -1,7 +1,6 @@
-import { after, test } from 'node:test'
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { CORE_PB } from '../src/data/playbooks.ts'
@@ -15,16 +14,13 @@ import { WORKSPACES } from '../consumer/page.ts'
 import { SERVERS } from '../consumer/server.ts'
 import { consoleHome } from './lib.mjs'
 import { EMPTY_GRANTS_JSON, HOME, PG_DOWN, render } from './workspaces.mjs'
+import { tempDir } from '../server/testdirs.ts'
 
 /* consumer/ holds what install.mjs and create_workspace write into a console's workspaces/: two empty registries and
    the one workspace template, here rendered for home into a temp dir whose imports point back at this console. */
 
-const made: string[] = []
-after(() => { for (const d of made) rmSync(d, { recursive: true, force: true }) })
-
 async function renderHome(): Promise<{ page: WorkspacePage; server: WorkspaceServer }> {
-  const dir = mkdtempSync(join(tmpdir(), 'wc-template-')), ws = join(dir, 'home')
-  made.push(dir)
+  const dir = tempDir('template'), ws = join(dir, 'home')
   mkdirSync(ws)
   const root = pathToFileURL(CONSOLE).href + '/'
   for (const f of ['page.ts', 'server.ts']) {
@@ -62,8 +58,7 @@ test('the template rendered for home is one valid workspace that starts a core p
 
 test('home is a local source; without a database address it is down, as its store, saying what install says', async () => {
   const { server } = await renderHome()
-  const home = mkdtempSync(join(tmpdir(), 'wc-template-home-'))
-  made.push(home)
+  const home = tempDir('template-home')
   for (const own of [{}, { pgUrl: 'postgres://u@127.0.0.1:1/x' }, { pgPasswordPath: 'x' }]) {
     const src = server.source!(cfg(server, own), { bus: new Bus(), ws: 'home', home })
     assert.ok(isLocal(src))
@@ -80,8 +75,7 @@ test('home is a local source; without a database address it is down, as its stor
 
 test("with a pack granted, home serves the run MCP's read tools on a free port and its own token; with none it serves nothing", async () => {
   const { server } = await renderHome()
-  const home = mkdtempSync(join(tmpdir(), 'wc-template-home-')), token = join(home, 'llm.token')
-  made.push(home)
+  const home = tempDir('template-home'), token = join(home, 'llm.token')
   const granted = () => ({ packs: ['not-installed'], hosts: [], config: {} })
   const none = server.source!(cfg(server, { llmTokenPath: token }), { bus: new Bus(), ws: 'home', home, grants: () => ({ packs: [], hosts: [], config: {} }) })
   assert.ok(isLocal(none) && none.mcp === false)
@@ -100,8 +94,7 @@ test("with a pack granted, home serves the run MCP's read tools on a free port a
 })
 
 test("an empty grants.json from install is the one the console writes for a new workspace", () => {
-  const root = mkdtempSync(join(tmpdir(), 'wc-template-grants-'))
-  made.push(root)
+  const root = tempDir('template-grants')
   mkdirSync(join(root, 'workspaces', 'x'), { recursive: true })
   writeGrants(root, 'x', EMPTY_GRANTS)
   assert.equal(readFileSync(join(root, 'workspaces', 'x', 'grants.json'), 'utf8'), EMPTY_GRANTS_JSON)

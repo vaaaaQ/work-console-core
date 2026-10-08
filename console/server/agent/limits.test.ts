@@ -1,9 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { agentLimits, canWrite, caseInsensitive, linksUnder, lockedFiles } from './limits.ts'
+import { tempDir } from '../testdirs.ts'
 
 const root = join(tmpdir(), 'consumer')
 
@@ -20,7 +21,7 @@ test('limits: its folder and tools/, less its grants.json, the registries, core.
 })
 
 test('lockedFiles reads core.lock.json; none without it', () => {
-  const r = mkdtempSync(join(tmpdir(), 'wc-lock-'))
+  const r = tempDir('lock')
   assert.deepEqual(lockedFiles(r), [])
   writeFileSync(join(r, 'core.lock.json'), JSON.stringify({ core: 'abc', files: { 'server/main.ts': 'x', 'workspaces/acme/page.ts': 'y' } }))
   assert.deepEqual(lockedFiles(r), ['server/main.ts', 'workspaces/acme/page.ts'])
@@ -28,7 +29,7 @@ test('lockedFiles reads core.lock.json; none without it', () => {
 
 /** a real consumer folder: w1 with its grants.json, the registries, a core dir */
 function consumer() {
-  const r = mkdtempSync(join(tmpdir(), 'wc-limits-'))
+  const r = tempDir('limits')
   mkdirSync(join(r, 'workspaces', 'w1'), { recursive: true }); mkdirSync(join(r, 'server')); mkdirSync(join(r, 'tools'))
   writeFileSync(join(r, 'workspaces', 'w1', 'grants.json'), '{}'); writeFileSync(join(r, 'workspaces', 'server.ts'), '')
   writeFileSync(join(r, 'server', 'main.ts'), '')

@@ -1,11 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Pairing, qrSvg } from './pairing.ts'
+import { tempDir } from '../testdirs.ts'
 
-const dir = () => mkdtempSync(join(tmpdir(), 'wc-pair-'))
+const dir = () => tempDir('pair')
 
 test('a code is 32 random bytes and redeems exactly once', () => {
   const p = new Pairing(dir()), { code } = p.newCode()

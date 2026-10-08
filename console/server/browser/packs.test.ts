@@ -1,18 +1,18 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { cpSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { PACKS_DIR, configGrants, grantedPacks, grantsFrom } from './packs.ts'
 import type { PackGrants } from './packs.ts'
 import { validator } from './schema.ts'
 import type { WsConfig } from '../workspace.ts'
+import { tempDir } from '../testdirs.ts'
 
 const FIXTURE_PACKS = join(import.meta.dirname, 'testdata', 'packs')
 const grants = (o: Partial<PackGrants> = {}): PackGrants => ({ packs: ['fixture'], hosts: ['board.example', 'mail.example'], config: { fixture: { org: 'acme' } }, ...o })
 /** a packs dir holding the fixture pack, its pack.json changed by edit */
 const dirWith = (edit: (p: any) => void = () => {}, name = 'fixture') => {
-  const d = mkdtempSync(join(tmpdir(), 'wc-packs-'))
+  const d = tempDir('packs')
   cpSync(join(FIXTURE_PACKS, 'fixture'), join(d, name), { recursive: true })
   const f = join(d, name, 'pack.json'), p = JSON.parse(readFileSync(f, 'utf8'))
   p.name = name; edit(p); writeFileSync(f, JSON.stringify(p))

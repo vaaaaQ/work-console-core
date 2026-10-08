@@ -1,8 +1,7 @@
-import { after, test } from 'node:test'
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { run, type Ran, type Runner } from './lib.mjs'
@@ -11,6 +10,7 @@ import { TEMPLATE_FILES } from './workspaces.mjs'
 import { sync } from './sync-core.mjs'
 import { finishFile } from './run.mjs'
 import { EXIT_REINTEGRATE, failedUpdate, finish, giveUp, update, updatesDir } from './update.mjs'
+import { tempDir } from '../server/testdirs.ts'
 
 /* update.mjs against throwaway repos: an origin core, a clone of it as the person's core, and a consumer folder
    made by install's folder(). Git runs for real; npm is a fake, and the checks are a stand-in that fails while
@@ -22,9 +22,7 @@ process.env.GIT_CONFIG_VALUE_0 = 'false'
 process.env.GIT_CONFIG_KEY_1 = 'core.autocrlf'
 process.env.GIT_CONFIG_VALUE_1 = 'false'
 
-const made: string[] = []
-after(() => { for (const d of made) rmSync(d, { recursive: true, force: true }) })
-const tmp = (what: string) => { const d = mkdtempSync(join(tmpdir(), `wc-update-${what}-`)); made.push(d); return d }
+const tmp = (what: string) => tempDir(`update-${what}`)
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.name=Update Test', '-c', 'user.email=update@example.test', ...args],
   { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 const put = (dir: string, p: string, body: string) => { mkdirSync(dirname(join(dir, p)), { recursive: true }); writeFileSync(join(dir, p), body) }

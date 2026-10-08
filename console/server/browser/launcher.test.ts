@@ -1,14 +1,14 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { edgeBrowser, findEdge, holdsProfile, keepBrowsers, parsePolicy, sharedBrowser } from './launcher.ts'
 import type { Browser, BrowserStatus } from './launcher.ts'
+import { tempDir } from '../testdirs.ts'
 
 const FAKE = join(import.meta.dirname, 'fake-edge.mjs')
 const dirs: string[] = []
-const fresh = () => { const d = mkdtempSync(join(tmpdir(), 'wc-edge-')); dirs.push(d); return d }
+const fresh = () => { const d = tempDir('edge'); dirs.push(d); return d }
 type Run = { pid: number; args: string[]; env: string[] }
 const runs = (dir: string): Run[] => {
   const f = join(dir, 'fake-edge-runs.jsonl')
@@ -31,7 +31,6 @@ const closes = (dir: string) => { const f = join(dir, 'fake-edge-closes.jsonl');
 after(() => {
   for (const d of dirs) {
     for (const r of runs(d)) if (alive(r.pid)) process.kill(r.pid)
-    try { rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) } catch { /* a dying fake may still hold it */ }
   }
 })
 

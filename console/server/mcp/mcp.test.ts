@@ -1,6 +1,5 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -21,6 +20,7 @@ import type { Space } from '../spaces.ts'
 import { fileStore } from '../store/file.ts'
 import { acme, demoCtx, demoSeed, fakeSdk } from '../testkit.ts'
 import { jobTools, mcpHandler } from './mcp.ts'
+import { tempDir } from '../testdirs.ts'
 
 const TOKEN = 'a'.repeat(64)
 
@@ -33,13 +33,13 @@ const beta: WorkspacePage = {
 /** a workspace's space reduced to what the tools read: its jobs on a file store, its start, its page.
     Acme's prefix is J, the one the demo seed's jobs carry. */
 function stubSpace(page: WorkspacePage, prefix: string, open: { v: boolean }, seed?: typeof demoSeed) {
-  const store = fileStore(join(mkdtempSync(join(tmpdir(), 'wc-mcp-')), 's.json'), seed, prefix)
+  const store = fileStore(join(tempDir('mcp'), 's.json'), seed, prefix)
   const bus = new Bus(), { sdk, sessions } = fakeSdk()
   const jobs = new Jobs({ store, bus, ctx: demoCtx, gate: () => open.v })
-  const runner = new Runner({ store, jobs, bus, sdk, cwd: tmpdir(), gate: () => open.v, artifactsDir: join(tmpdir(), 'wc-mcp-arts'), ctx: demoCtx })
+  const runner = new Runner({ store, jobs, bus, sdk, cwd: tmpdir(), gate: () => open.v, artifactsDir: tempDir('mcp-arts'), ctx: demoCtx })
   const acts: ActReq[] = []
   const bridge = { available: () => true, read: async () => ({}), act: async (a: ActReq) => { acts.push(a); return { status: 'ok' as const, result: { title: `Item ${a.args.id}` } } } }
-  const notes = notesStore(join(mkdtempSync(join(tmpdir(), 'wc-kn-')), 'kn'))
+  const notes = notesStore(join(tempDir('kn'), 'kn'))
   const space = { id: page.id, prefix, page, jobs, runner, ctx: demoCtx, notes, start: startItem({ jobs, ctx: demoCtx, bridge, page }) } as unknown as Space
   return { space, jobs, acts, notes, sessions, runner }
 }

@@ -1,22 +1,19 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { alive } from './lib.mjs'
 import { RESTART, backoff, finishFile, requestRestart, stopConsole, supervise, supervisorOf, waitUp } from './run.mjs'
+import { tempDir } from '../server/testdirs.ts'
 
 /* run.mjs with a stand-in server: a script that counts its starts in a file, exits with the codes it is given
    and then stays up until it is killed. */
 
-const made: string[] = [], edges: number[] = []
-after(() => {
-  for (const pid of edges) if (alive(pid)) process.kill(pid)
-  for (const d of made) rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
-})
-const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'wc-run-')); made.push(d); return d }
+const edges: number[] = []
+after(() => { for (const pid of edges) if (alive(pid)) process.kill(pid) })
+const tmp = () => tempDir('run')
 /** a console home whose port answers nothing, so no request reaches a real console */
 const homeDir = () => { const d = tmp(); writeFileSync(join(d, 'config.json'), JSON.stringify({ loopbackPort: 1 })); return d }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))

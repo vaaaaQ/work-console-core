@@ -1,10 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildId } from '../../server/build.ts'
@@ -25,6 +24,7 @@ import { LIVE } from './api.ts'
 import { setZone, zone } from '../lib/zone.ts'
 import { HID, hiddenOf, hideIn, loadHidden, unhideIn } from '../actions/hidden.ts'
 import { L, applyState, buildFeed, down, fromQuery, loadSources, onEvent, pbWs, signinHost, srcState } from './boot.ts'
+import { tempDir } from '../../server/testdirs.ts'
 
 /* The page's client against the real backend (fake gateways, scripted SDK): the shapes the page
    sends and reads are the ones the server speaks. Two workspaces: acme mints A-NNNN, beta is Acme
@@ -51,7 +51,7 @@ async function until(f: () => boolean | Promise<boolean>, ms = 3000) {
 }
 
 async function backend() {
-  const home = mkdtempSync(join(tmpdir(), 'wc-api-'))
+  const home = tempDir('api')
   const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
   const m = await main({ cfg, sdk, workspaces: [acmeServer, betaW] })
   api.setBase(`http://127.0.0.1:${m.loopbackPort}`)
@@ -396,7 +396,7 @@ test('providers: the state names them, settings round-trip, a step opens in the 
 })
 
 test("the agent through the page's client: a managed workspace shows it; a message runs a turn; a rejected grants change goes back with its reason", async () => {
-  const home = mkdtempSync(join(tmpdir(), 'wc-api-')), root = mkdtempSync(join(tmpdir(), 'wc-root-'))
+  const home = tempDir('api'), root = tempDir('root')
   mkdirSync(join(root, 'workspaces', 'beta'), { recursive: true })
   writeFileSync(join(root, 'workspaces', 'beta', 'grants.json'), JSON.stringify({ packs: ['p'] }))
   const prompts: string[] = []
@@ -495,7 +495,7 @@ test("a source waiting for a sign-in names its host; Sign in brings that tab of 
       docs: { load: async () => ({ docs: {}, seq: 0 }), put: async () => {}, seq: async () => {} },
     }),
   }
-  const home = mkdtempSync(join(tmpdir(), 'wc-api-'))
+  const home = tempDir('api')
   const m = await main({ cfg: { ...loadConfig({ WORK_CONSOLE_HOME: home }), loopbackPort: 0 }, sdk, workspaces: [w] })
   api.setBase(`http://127.0.0.1:${m.loopbackPort}`)
   try {
@@ -525,7 +525,7 @@ test('the event stream hands the page each kind the server sends: an update that
 })
 
 test("a failed core update through the page's client: the state and its events carry it; Reintegrate opens a conversation; Give up drops it", async () => {
-  const home = mkdtempSync(join(tmpdir(), 'wc-api-')), root = mkdtempSync(join(tmpdir(), 'wc-root-')), wt = mkdtempSync(join(tmpdir(), 'wc-wt-'))
+  const home = tempDir('api'), root = tempDir('root'), wt = tempDir('wt')
   mkdirSync(join(root, 'workspaces', 'beta'), { recursive: true })
   writeFileSync(join(root, 'workspaces', 'beta', 'grants.json'), JSON.stringify({ packs: ['p'] }))
   mkdirSync(join(root, 'scripts'))

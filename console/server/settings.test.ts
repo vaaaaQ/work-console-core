@@ -1,12 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { HttpError } from './events.ts'
 import { Settings } from './settings.ts'
+import { tempDir } from './testdirs.ts'
 
-const home = () => mkdtempSync(join(tmpdir(), 'wc-set-'))
+const home = () => tempDir('set')
 const bad = (e: unknown) => e instanceof HttpError && e.status === 400 && e.code === 'bad_args'
 
 test('no file: Claude Code for both', () => {

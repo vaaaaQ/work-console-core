@@ -1,14 +1,13 @@
-import { after, test } from 'node:test'
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
-import { homedir, tmpdir } from 'node:os'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { alive, consoleHome, firstFree, gitId, isFree, npmChecks, readJson, writeJson, type Ran } from './lib.mjs'
+import { tempDir } from '../server/testdirs.ts'
 
-const made: string[] = []
-after(() => { for (const d of made) rmSync(d, { recursive: true, force: true }) })
-const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'wc-lib-')); made.push(d); return d }
+const tmp = () => tempDir('lib')
 const ok = (stdout = ''): Ran => ({ status: 0, stdout, stderr: '' })
 const bad = (stderr: string): Ran => ({ status: 1, stdout: '', stderr })
 

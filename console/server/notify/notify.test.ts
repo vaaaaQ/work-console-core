@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Job, RunRec } from '../../src/model/types.ts'
 import { Bus } from '../events.ts'
@@ -10,12 +9,13 @@ import { install } from '../../src/workspace.ts'
 import beta from '../../workspaces/beta/page.ts'
 import { Notify } from './notify.ts'
 import type { Sender, Sub } from './notify.ts'
+import { tempDir } from '../testdirs.ts'
 
 const JOBS = demoSeed().jobs as Job[]
 const sub = (n: number): Sub => ({ endpoint: `https://push.example/${n}`, keys: { p256dh: 'p', auth: 'a' } })
 
 function setup(status: (s: Sub) => number = () => 201) {
-  const dir = mkdtempSync(join(tmpdir(), 'wc-push-')), bus = new Bus()
+  const dir = tempDir('push'), bus = new Bus()
   const sent: { to: string; title: string; body: string; url: string }[] = []
   const sender: Sender = { async send(s, p) { sent.push({ to: s.endpoint, ...JSON.parse(p) }); return { status: status(s) } } }
   let needs: ((j: Job) => void) | null = null, settled: ((r: RunRec) => void) | null = null

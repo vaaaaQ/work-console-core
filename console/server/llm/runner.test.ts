@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, readFileSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import * as T from '../../src/model/transitions.ts'
@@ -16,12 +15,13 @@ import { notesStore } from '../knowledge/notes.ts'
 import { resolveContext } from './context.ts'
 import { buildPrompt } from './prompt.ts'
 import { Runner, safeName } from './runner.ts'
+import { tempDir } from '../testdirs.ts'
 
 const tick = () => new Promise((r) => setTimeout(r, 20))
 async function until(f: () => boolean | Promise<boolean>) { const t0 = Date.now(); while (!(await f())) { if (Date.now() - t0 > 2000) throw new Error('timed out'); await tick() } }
 
 function setup(open = { v: true }, extra: Partial<ConstructorParameters<typeof Runner>[0]> = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'wc-run-'))
+  const dir = tempDir('run')
   const store = fileStore(join(dir, 's.json'), demoSeed)
   const bus = new Bus(), evs: Ev[] = []
   bus.on((e) => evs.push(e))
@@ -286,7 +286,7 @@ test('recover after a reconnect leaves the runs this process still holds', async
 })
 
 test('a store that fails while a run settles does not take the console down', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'wc-run-'))
+  const dir = tempDir('run')
   const base = fileStore(join(dir, 's.json'), demoSeed), fail = { v: false }
   const store = { ...base, putRun: async (r: Parameters<typeof base.putRun>[0]) => { if (fail.v) throw new Error('B is away'); return base.putRun(r) } }
   const bus = new Bus(), jobs = new Jobs({ store, bus, ctx: demoCtx, gate: () => true })
@@ -304,7 +304,7 @@ test('a store that fails while a run settles does not take the console down', as
 })
 
 test('interruptAll aborts every live session even when the store rejects every write', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'wc-run-'))
+  const dir = tempDir('run')
   const base = fileStore(join(dir, 's.json'), demoSeed), fail = { v: false }
   const store = { ...base, putRun: async (r: Parameters<typeof base.putRun>[0]) => { if (fail.v) throw new Error('B is away'); return base.putRun(r) } }
   const bus = new Bus(), jobs = new Jobs({ store, bus, ctx: demoCtx, gate: () => true })
@@ -548,7 +548,7 @@ test('add_artifact_file keeps a file from under the run dir; outside it, through
   const arts = (await jobs.get(t.job))!.flow[t.step].arts.map((a) => a.n)
   assert.ok(arts.includes('home.png') && arts.includes('again.png'), arts.join())
   assert.deepEqual(readFileSync(join(dir, 'arts', t.job, 'home.png')), png)
-  const out = mkdtempSync(join(tmpdir(), 'wc-out-')), secret = join(out, 'secret.txt')
+  const out = tempDir('out'), secret = join(out, 'secret.txt')
   writeFileSync(secret, 's')
   await assert.rejects(tools.addArtifactFile(relative(dir, secret)), /outside the work dir/)
   await assert.rejects(tools.addArtifactFile(secret), /outside the work dir/)
@@ -576,7 +576,7 @@ test('screenshot keeps a png of a page as the step\'s artifact; a file outside t
   await tools.screenshot!({ url: pathToFileURL(join(s.dir, 'page.html')).href, name: 'page' })
   const arts = (await s.jobs.get(t.job))!.flow[t.step].arts.map((a) => a.n)
   assert.deepEqual(arts.filter((n) => n.endsWith('.png')).sort(), ['board.png', 'page.png'])
-  const out = mkdtempSync(join(tmpdir(), 'wc-out-')); writeFileSync(join(out, 'x.html'), 'x')
+  const out = tempDir('out'); writeFileSync(join(out, 'x.html'), 'x')
   await assert.rejects(tools.screenshot!({ url: pathToFileURL(join(out, 'x.html')).href, name: 'x' }), /outside the work dir/)
   await assert.rejects(tools.screenshot!({ url: 'javascript:alert(1)', name: 'x' }), /only http, https and file urls/)
   assert.equal(seen.length, 2, 'refused before any browser started')

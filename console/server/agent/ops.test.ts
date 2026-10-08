@@ -1,17 +1,17 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { realExec, Ops } from './ops.ts'
 import type { Exec } from './ops.ts'
 import { RESTART_EXIT } from '../restart.ts'
 import { EMPTY_GRANTS } from '../grants.ts'
+import { tempDir } from '../testdirs.ts'
 
 /** a consumer folder under git: w1 with its grants, the registries, a core file, tools/ and a served build */
 function repo() {
-  const r = mkdtempSync(join(tmpdir(), 'wc-ops-'))
+  const r = tempDir('ops')
   const put = (p: string, t: string) => { mkdirSync(dirname(join(r, p)), { recursive: true }); writeFileSync(join(r, p), t) }
   put('.gitignore', 'node_modules/\ndist/\ndist.old/\n')
   put('workspaces/w1/page.ts', 'export const A = 1\n')
@@ -271,7 +271,7 @@ test('ops run one at a time', async () => {
 })
 
 function withHome(ws: Record<string, unknown>) {
-  const home = mkdtempSync(join(tmpdir(), 'wc-ops-home-')), text = JSON.stringify({ lanPort: 7411, workspaces: ws }, null, 2)
+  const home = tempDir('ops-home'), text = JSON.stringify({ lanPort: 7411, workspaces: ws }, null, 2)
   writeFileSync(join(home, 'config.json'), text)
   return { home, text, cfg: () => JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')) }
 }

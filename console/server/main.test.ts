@@ -2,9 +2,8 @@ import { acme, acmeServer } from './testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Job } from '../src/model/types.ts'
 import { startFakeGateway } from './bridge/fake.ts'
@@ -14,6 +13,7 @@ import { jobByText, main } from './main.ts'
 import { onBridgeBack } from './spaces.ts'
 import type { Sdk } from './llm/sdk.ts'
 import type { WorkspaceServer } from './workspace.ts'
+import { tempDir } from './testdirs.ts'
 
 async function until(f: () => boolean, ms = 2000) {
   const t0 = Date.now()
@@ -76,7 +76,7 @@ test('a failed load is retried with backoff until it succeeds, and stops when th
 })
 
 test('main starts on loopback with a fake gateway per workspace, recovers runs, and closes', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'wc-main-'))
+  const home = tempDir('main')
   const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
   const m = await main({ cfg, sdk: unused, workspaces: [acmeServer] })
   try {
@@ -93,7 +93,7 @@ test('main starts on loopback with a fake gateway per workspace, recovers runs, 
 })
 
 test('the job MCP behind main serves every workspace: ws picks the space, none named is refused naming them', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'wc-main-'))
+  const home = tempDir('main')
   const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
   const m = await main({ cfg, sdk: unused, workspaces: [acmeServer, beta2] })
   try {
@@ -113,7 +113,7 @@ test('the job MCP behind main serves every workspace: ws picks the space, none n
 })
 
 test('the console starts while the workplace is away', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'wc-main-'))
+  const home = tempDir('main')
   const free = createServer()
   await new Promise<void>((r) => free.listen(0, '127.0.0.1', r))
   const port = (free.address() as { port: number }).port
@@ -141,7 +141,7 @@ test('the console starts while the workplace is away', async () => {
 })
 
 test('a workspace config: core defaults, then its llm runTools, its defaults, legacy keys, its config section', () => {
-  const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: mkdtempSync(join(tmpdir(), 'wc-cfg-')) }), workspaces: { acme: { maxSessions: 5 } } }
+  const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: tempDir('cfg') }), workspaces: { acme: { maxSessions: 5 } } }
   const quiet = () => undefined
   const core = wsConfig({ ...cfg, workspaces: {} }, acmeServer, {}, quiet)
   assert.deepEqual([core.runTools, core.teamTz, core.maxSessions], [['Read', 'Glob', 'Grep'], null, 3])
@@ -152,7 +152,7 @@ test('a workspace config: core defaults, then its llm runTools, its defaults, le
 })
 
 test('autoAsk is off unless a workspace turns it on; its config section turns it off again', () => {
-  const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: mkdtempSync(join(tmpdir(), 'wc-cfg-')) }), workspaces: {} }
+  const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: tempDir('cfg') }), workspaces: {} }
   const quiet = () => undefined, on = { ...acmeServer, defaults: { autoAsk: true } }
   assert.equal(wsConfig(cfg, acmeServer, {}, quiet).autoAsk, false)
   assert.equal(wsConfig(cfg, on, {}, quiet).autoAsk, true)
@@ -160,7 +160,7 @@ test('autoAsk is off unless a workspace turns it on; its config section turns it
 })
 
 test("the env given to loadConfig sets every workspace's gateway and work dir", () => {
-  const cfg = loadConfig({ WORK_CONSOLE_HOME: mkdtempSync(join(tmpdir(), 'wc-cfg-')), GATEWAY_URL: 'http://127.0.0.1:47999', WORK_CONSOLE_CWD: 'C:/work' })
+  const cfg = loadConfig({ WORK_CONSOLE_HOME: tempDir('cfg'), GATEWAY_URL: 'http://127.0.0.1:47999', WORK_CONSOLE_CWD: 'C:/work' })
   const c = wsConfig(cfg, acmeServer, {}, () => undefined)
   assert.deepEqual([c.gatewayUrl, c.workDir], ['http://127.0.0.1:47999', 'C:/work'])
 })
@@ -172,7 +172,7 @@ test('a taken port rejects main() and leaves nothing listening behind', async ()
   const taken = createServer()
   await new Promise<void>((r) => taken.listen(0, '127.0.0.1', r))
   try {
-    const home = mkdtempSync(join(tmpdir(), 'wc-main-'))
+    const home = tempDir('main')
     const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: (taken.address() as { port: number }).port }
     await assert.rejects(main({ cfg, sdk: unused, workspaces: [acmeServer, beta2] }), /EADDRINUSE/)
     // only the server holding the port is left
@@ -183,7 +183,7 @@ test('a taken port rejects main() and leaves nothing listening behind', async ()
 test('a workspace key at the top of config.json goes to the one workspace with a line saying where; with two, startup refuses', async (t) => {
   const lines: string[] = []
   t.mock.method(console, 'log', (...a: unknown[]) => { lines.push(a.join(' ')) })
-  const home = mkdtempSync(join(tmpdir(), 'wc-main-'))
+  const home = tempDir('main')
   writeFileSync(join(home, 'config.json'), JSON.stringify({ runTools: ['Bash'] }))
   const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
   const m = await main({ cfg, sdk: unused, workspaces: [acmeServer] })
@@ -195,7 +195,7 @@ test('a workspace key at the top of config.json goes to the one workspace with a
 })
 
 test("a managed workspace has an agent behind /api/ws/<id>/agent and in /api/state; an unmanaged one has none", async () => {
-  const home = mkdtempSync(join(tmpdir(), 'wc-main-')), root = mkdtempSync(join(tmpdir(), 'wc-root-'))
+  const home = tempDir('main'), root = tempDir('root')
   mkdirSync(join(root, 'workspaces', 'beta2'), { recursive: true })
   writeFileSync(join(root, 'workspaces', 'beta2', 'grants.json'), JSON.stringify({ packs: ['p'] }))
   const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
@@ -231,7 +231,7 @@ test("a managed workspace has an agent behind /api/ws/<id>/agent and in /api/sta
 })
 
 test('a failed core update shows in /api/state; a managed workspace reintegrates it, and Give up runs update.mjs and closes the conversation', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'wc-main-')), root = mkdtempSync(join(tmpdir(), 'wc-root-')), wt = mkdtempSync(join(tmpdir(), 'wc-wt-'))
+  const home = tempDir('main'), root = tempDir('root'), wt = tempDir('wt')
   mkdirSync(join(root, 'workspaces', 'beta2'), { recursive: true })
   writeFileSync(join(root, 'workspaces', 'beta2', 'grants.json'), JSON.stringify({ packs: ['p'] }))
   // a stand-in update.mjs: it drops the record when given up, as the real one does

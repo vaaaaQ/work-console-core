@@ -1,11 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { EMPTY_GRANTS, grantsDiff, grantsOf, guardedHttp, hostAllowed, normGrants, writeGrants } from './grants.ts'
+import { tempDir } from './testdirs.ts'
 
-const root = () => { const r = mkdtempSync(join(tmpdir(), 'wc-grants-')); mkdirSync(join(r, 'workspaces', 'w1'), { recursive: true }); return r }
+const root = () => { const r = tempDir('grants'); mkdirSync(join(r, 'workspaces', 'w1'), { recursive: true }); return r }
 
 test('normGrants fills what is missing and refuses unknown keys and wrong types', () => {
   assert.deepEqual(normGrants({}), EMPTY_GRANTS)

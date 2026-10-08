@@ -1,8 +1,5 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { loadConfig } from '../../server/config.ts'
 import { main } from '../../server/main.ts'
 import { fakeSdk } from '../../server/testkit.ts'
@@ -10,8 +7,9 @@ import type { FakeSession } from '../../server/testkit.ts'
 import type { WorkspacePage } from '../../src/workspace.ts'
 import acmeServer from '../acme/server.ts'
 import betaServer from './server.ts'
+import { tempDir } from '../../server/testdirs.ts'
 
-const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: mkdtempSync(join(tmpdir(), 'wc-seam-')), WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
+const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: tempDir('seam'), WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
 const sessions: FakeSession[] = []
 const m = await main({ cfg, sdk: fakeSdk(sessions).sdk, workspaces: [acmeServer, betaServer] })
 after(() => m.close())

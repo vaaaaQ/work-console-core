@@ -1,7 +1,5 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as T from '../../src/model/transitions.ts'
 import type { Cmd, Job } from '../../src/model/types.ts'
@@ -12,6 +10,7 @@ import { fileStore } from '../store/file.ts'
 import { demoCtx, demoSeed, fakeSdk } from '../testkit.ts'
 import { autoAsk, madeCurrent } from './autoAsk.ts'
 import { Runner } from './runner.ts'
+import { tempDir } from '../testdirs.ts'
 
 const X = demoCtx()
 /** the steps the last of these commands made current, on a fresh action job: tr and dr are llm, sn is yours */
@@ -47,7 +46,7 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms))
 async function until(f: () => boolean | Promise<boolean>) { const t0 = Date.now(); while (!(await f())) { if (Date.now() - t0 > 2000) throw new Error('timed out'); await tick() } }
 
 function setup(delay = 0) {
-  const dir = mkdtempSync(join(tmpdir(), 'wc-auto-'))
+  const dir = tempDir('auto')
   const store = fileStore(join(dir, 's.json'), demoSeed)
   const bus = new Bus(), jobs = new Jobs({ store, bus, ctx: demoCtx, gate: () => true })
   const { sdk, sessions } = fakeSdk()
@@ -138,7 +137,7 @@ test('madeCurrent counts a blockerClosed that turned the step current', () => {
 })
 
 test('a woken llm step is asked; a woken you step is not', async () => {
-  const store = fileStore(join(mkdtempSync(join(tmpdir(), 'wc-aab-')), 's.json'), demoSeed)
+  const store = fileStore(join(tempDir('aab'), 's.json'), demoSeed)
   const jobs = new Jobs({ store, bus: new Bus(), ctx: demoCtx, gate: () => true }), asked: string[] = []
   const off = autoAsk({ jobs, runner: { ask: async (_id: string, sid: string) => { asked.push(sid) } } as unknown as Runner, ctx: demoCtx, delay: 0 })
   const mk = async (t: string) => { const j = await jobs.create({ t, key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' }); return (await jobs.cmd(j.id, { op: 'start' }, j.v)).job }
@@ -155,7 +154,7 @@ test('a woken llm step is asked; a woken you step is not', async () => {
 })
 
 test('a drafted waiter whose blocker closes: one goes-on push, the note clears, and its session revises the draft with the outcome', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'wc-wake-'))
+  const dir = tempDir('wake')
   const store = fileStore(join(dir, 's.json'), demoSeed), bus = new Bus()
   const jobs = new Jobs({ store, bus, ctx: demoCtx, gate: () => true })
   const { sdk, sessions } = fakeSdk()

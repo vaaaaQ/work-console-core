@@ -1,14 +1,14 @@
 import { acme, acmeServer } from './testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { startFakeGateway } from './bridge/fake.ts'
 import { GatewayError } from './bridge/wire.ts'
 import { Bus } from './events.ts'
 import { checkWorkspaces, fakeSeed, gatewaySource } from './workspace.ts'
 import type { WorkspaceServer, WsConfig } from './workspace.ts'
+import { tempDir } from './testdirs.ts'
 
 /** acme under another id; its prefix is A, so give it its own unless a test wants the clash */
 const copy = (id: string, o: Partial<WorkspaceServer> = {}): WorkspaceServer => ({ ...acmeServer, jobPrefix: 'B', page: { ...acme, id, playbooks: {} }, ...o })
@@ -59,7 +59,7 @@ test('without fake() the seed is derived from the demo; an own fake() wins', () 
 
 test('gatewaySource reads through the token it is given, else through the token file', async () => {
   const fake = await startFakeGateway({ seed: fakeSeed(acmeServer) })
-  const dir = mkdtempSync(join(tmpdir(), 'wc-src-')), tok = join(dir, 'console.token')
+  const dir = tempDir('src'), tok = join(dir, 'console.token')
   writeFileSync(tok, fake.token + '\n')
   const cfg: WsConfig = { gatewayUrl: fake.url, consoleTokenPath: tok, llmTokenPath: tok, workDir: dir, runTools: [], teamTz: null, maxSessions: 1 }
   const a = gatewaySource(cfg, { bus: new Bus(), token: () => fake.token }), b = gatewaySource(cfg, { bus: new Bus() })

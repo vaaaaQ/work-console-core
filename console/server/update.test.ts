@@ -1,14 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { FailedUpdate } from '../scripts/update.mjs'
 import type { UpdateView } from '../src/model/update.ts'
 import { realExec } from './agent/ops.ts'
 import type { Exec } from './agent/ops.ts'
 import { Updates } from './update.ts'
+import { tempDir } from './testdirs.ts'
 
 /* Updates over a throwaway repo: a folder commit, the update's "core" commit and a fix after it. git runs for real;
    update.mjs is a stand-in that does what the real one would to the record and the lock. */
@@ -17,7 +17,7 @@ const git = (cwd: string, ...a: string[]) => execFileSync('git', ['-C', cwd, ...
 const put = (root: string, p: string, body: string) => { mkdirSync(join(root, p, '..'), { recursive: true }); writeFileSync(join(root, p), body) }
 
 function setup(o: { step?: string } = {}) {
-  const repo = mkdtempSync(join(tmpdir(), 'wc-updates-')), dir = join(repo, 'console'), home = join(repo, 'home')
+  const repo = tempDir('updates'), dir = join(repo, 'console'), home = join(repo, 'home')
   mkdirSync(home)
   git(repo, 'init', '-q', '-b', 'main')
   git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't')

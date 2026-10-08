@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { FMT, freeKey } from '../../src/model/pbFormat.ts'
 import type { PbFile } from '../../src/model/pbFormat.ts'
@@ -16,6 +15,7 @@ import { acme, demoCtx } from '../testkit.ts'
 import { FORM_SCHEMA, OPEN_MAX, SYSTEM, buildIn, buildPrompt, buildTools, builder, checkForm, dueAt, formIn, formOut, nowLine, toolLine } from './builder.ts'
 import type { BuildForm, BuilderOpts, SourceReader } from './builder.ts'
 import type { AskEvent, AskTool, Sdk } from './sdk.ts'
+import { tempDir } from '../testdirs.ts'
 
 const HOME = 'America/Sao_Paulo'
 /** a Sunday, 14:05 at home */
@@ -232,7 +232,7 @@ function reader(lists: Record<string, ConceptReply>, items: Record<string, Conce
 }
 const tool = (ts: AskTool[], name: string) => ts.find((t) => t.name === name)!
 async function notes() {
-  const kn = notesStore(join(mkdtempSync(join(tmpdir(), 'wc-build-')), 'kn'))
+  const kn = notesStore(join(tempDir('build'), 'kn'))
   await kn.save(null, { title: 'How login works', tags: ['auth', 'web'], playbooks: ['dev-item'], text: 'The login page calls the auth service.' }, null)
   await kn.save(null, { title: 'Style', tags: [], playbooks: [], text: 'Short sentences.' }, null)
   return kn
@@ -323,7 +323,7 @@ function askSdk(script: (o: AskOpts) => AsyncIterable<AskEvent>) {
 const hang = (o: AskOpts) => new Promise<never>((_ok, no) => o.abort.signal.addEventListener('abort', () => no(new Error('aborted')), { once: true }))
 const ANSWER = { ...ANS, title: 'Fix login', key: 'ACME-7', project: 'web', playbook: 'dev-item', description: 'Fix it', context: [{ k: 'work', id: 'ACME-7' }] }
 function setup(sdk: Sdk, o: Partial<BuilderOpts> = {}) {
-  const bus = new Bus(), evs: Ev[] = [], dir = mkdtempSync(join(tmpdir(), 'wc-build-'))
+  const bus = new Bus(), evs: Ev[] = [], dir = tempDir('build')
   bus.on((e) => evs.push(e))
   const build = builder({ ws: 'acme', page: acme, sdk, notes: notesStore(join(dir, 'kn')), source: null, ctx: () => ({ ...demoCtx(), PB }), bus, cwd: join(dir, 'run'), now: () => NOW, ...o })
   return { build, evs, dir }

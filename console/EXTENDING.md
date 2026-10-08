@@ -54,7 +54,8 @@ A plugin gets `PluginCtx` (`server/workspace.ts`):
 
 Each pattern names the test that proves it. Tests sit beside the code as `workspaces/<id>/*.test.ts`
 or `tools/**/*.test.ts`; `npm test` runs them, and `check` runs the workspace's and `tools/`'s with the drift
-and registry tests, not the rest of the core's.
+and registry tests, not the rest of the core's. A test that needs a folder takes it from `tempDir()` of
+`server/testdirs.ts`, which removes it when the test file's process exits.
 
 ### UI section
 

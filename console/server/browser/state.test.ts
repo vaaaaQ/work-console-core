@@ -1,7 +1,6 @@
-import { after, test } from 'node:test'
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Bus } from '../events.ts'
 import { bridgeStore } from '../store/bridge.ts'
@@ -9,9 +8,9 @@ import { Conflict } from '../store/port.ts'
 import type { Job } from '../../src/model/types.ts'
 import { StateB, fileDocs } from './state.ts'
 import type { Doc, StateDocs } from './state.ts'
+import { tempDir } from '../testdirs.ts'
 
-const root = mkdtempSync(join(tmpdir(), 'wc-state-'))
-after(() => rmSync(root, { recursive: true, force: true }))
+const root = tempDir('state')
 let n = 0
 const file = () => join(root, `s${++n}`, 'ws.json')
 const at = () => Date.parse('2026-10-08T12:00:00Z')

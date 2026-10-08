@@ -1,7 +1,5 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { demoSeed, demoCtx } from '../testkit.ts'
 import * as T from '../../src/model/transitions.ts'
@@ -9,9 +7,10 @@ import { Bus, HttpError } from '../events.ts'
 import type { Ev } from '../events.ts'
 import { fileStore } from '../store/file.ts'
 import { Jobs } from './jobs.ts'
+import { tempDir } from '../testdirs.ts'
 
 function setup(open = { v: true }) {
-  const store = fileStore(join(mkdtempSync(join(tmpdir(), 'wc-jobs-')), 's.json'), demoSeed)
+  const store = fileStore(join(tempDir('jobs'), 's.json'), demoSeed)
   const bus = new Bus(), evs: Ev[] = []
   bus.on((e) => evs.push(e))
   const jobs = new Jobs({ store, bus, ctx: demoCtx, gate: () => open.v })
@@ -135,7 +134,7 @@ test('a run may create a job, signed LLM, and start one; nothing else', async ()
 })
 
 async function two() {
-  const store = fileStore(join(mkdtempSync(join(tmpdir(), 'wc-bl-')), 's.json'), demoSeed)
+  const store = fileStore(join(tempDir('bl'), 's.json'), demoSeed)
   const jobs = new Jobs({ store, bus: new Bus(), ctx: demoCtx, gate: () => true })
   const mk = async (t: string) => { const j = await jobs.create({ t, key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' }); return (await jobs.cmd(j.id, { op: 'start' }, j.v)).job }
   return { jobs, a: await mk('Local stand'), b: await mk('Ask Imre') }

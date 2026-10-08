@@ -1,17 +1,17 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Job } from '../../src/model/types.ts'
 import { gitWorktrees } from './worktree.ts'
+import { tempDir } from '../testdirs.ts'
 
 const git = (cwd: string, ...a: string[]) => execFileSync('git', ['-C', cwd, '-c', 'core.autocrlf=false', '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...a], { encoding: 'utf8' }).trim()
 
 /** a repo on main with one commit, an ignored node_modules holding one file, and an empty root for job dirs */
 function setup() {
-  const top = mkdtempSync(join(tmpdir(), 'wc-wt-')), repo = join(top, 'repo'), root = join(top, 'jobs')
+  const top = tempDir('wt'), repo = join(top, 'repo'), root = join(top, 'jobs')
   mkdirSync(join(repo, 'node_modules', 'pkg'), { recursive: true })
   git(top, 'init', '-q', '-b', 'main', repo)
   // the worktrees share this config, so their checkouts match the test's own git calls

@@ -1,8 +1,7 @@
 import { test } from 'node:test'
 import type { TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as T from '../src/model/transitions.ts'
 import type { Playbook, RunRec, Tpl } from '../src/model/types.ts'
@@ -24,6 +23,7 @@ import { localSource } from './bridge/local.ts'
 import type { Browser } from './browser/launcher.ts'
 import type { StateDocs } from './browser/state.ts'
 import type { PgSource } from './store/pg.ts'
+import { tempDir } from './testdirs.ts'
 
 /** Acme under another id and prefix; its playbooks stay Acme's, so it brings none of its own */
 const beta2: WorkspaceServer = { ...acmeServer, page: { ...acme, id: 'beta2', playbooks: {}, me: 'Alex' }, jobPrefix: 'B' }
@@ -40,7 +40,7 @@ function expectErrors(t: TestContext, ...pats: RegExp[]) {
 
 async function twoSpaces(a: WorkspaceServer, b: WorkspaceServer) {
   install([{ page: a.page }, { page: b.page }])
-  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-'))
+  const dir = tempDir('spaces')
   const make = async (w: WorkspaceServer) => {
     const f = fakeSdk(), space = await makeSpace(w, { cfg: wsCfg(dir), home: dir, artifactsDir: join(dir, 'arts'), sdk: f.sdk, fake: true, push: async () => {} })
     const settled = new Set<string>()
@@ -131,7 +131,7 @@ test("each space mints its own prefix, names its own user, and interrupts only i
 })
 
 test('on the default source and store, gateways that mint J-NNNN give each space its own prefix, and byJob routes each job home', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-')), ws = [acmeServer, beta2]
+  const dir = tempDir('spaces'), ws = [acmeServer, beta2]
   install(ws.map((w) => ({ page: w.page })))
   // started as spaces.ts starts a fake, which mints J- ids only, as the real gateway does
   const fakes = await Promise.all(ws.map((w) => startFakeGateway({ seed: fakeSeed(w), me: w.page.me, board: w.page.board })))
@@ -179,7 +179,7 @@ test('a workspace hook that throws after its fake gateway started closes the fak
   install([{ page: acme }])
   // the servers earlier tests closed go a turn of the loop after their close callbacks
   await until(() => servers() === 0)
-  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-'))
+  const dir = tempDir('spaces')
   const broken: WorkspaceServer = { ...acmeServer, plugins: () => { throw new Error('plugin broke') } }
   await assert.rejects(makeSpace(broken, { cfg: wsCfg(dir), home: dir, artifactsDir: join(dir, 'arts'), sdk: fakeSdk().sdk, fake: true, push: async () => {} }), /plugin broke/)
   await until(() => servers() === 0)
@@ -187,7 +187,7 @@ test('a workspace hook that throws after its fake gateway started closes the fak
 
 test('the store hook gets the workspace id, its prefix and its built-in playbooks', async () => {
   install([{ page: acme }])
-  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-'))
+  const dir = tempDir('spaces')
   let got: { ws: string; prefix: string; playbooks: Record<string, Playbook> } | undefined
   const w: WorkspaceServer = { ...acmeServer, store: (_s, _c, o) => { got = o; return {} as Store } }
   const space = await makeSpace(w, { cfg: wsCfg(dir), home: dir, artifactsDir: join(dir, 'arts'), sdk: fakeSdk().sdk, fake: false, push: async () => {} })
@@ -201,7 +201,7 @@ test('the store hook gets the workspace id, its prefix and its built-in playbook
 
 test('in fake mode the fake stands in for the store too: the store hook is not called', async () => {
   install([{ page: acme }])
-  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-'))
+  const dir = tempDir('spaces')
   const w: WorkspaceServer = { ...acmeServer, store: () => { throw new Error('the store hook was called') } }
   const space = await makeSpace(w, { cfg: wsCfg(dir), home: dir, artifactsDir: join(dir, 'arts'), sdk: fakeSdk().sdk, fake: true, push: async () => {} })
   try {
@@ -213,7 +213,7 @@ test('in fake mode the fake stands in for the store too: the store hook is not c
 
 test("a job's work dir: runs get it, closing the job cleans it once, a load cleans closed jobs, fake mode has none", async () => {
   install([{ page: acme }])
-  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-')), calls: string[] = []
+  const dir = tempDir('spaces'), calls: string[] = []
   const fakeGw = await startFakeGateway({ seed: fakeSeed(acmeServer), me: acme.me, board: acme.board })
   const tokenPath = join(dir, 'acme.token')
   writeFileSync(tokenPath, fakeGw.token)
@@ -264,7 +264,7 @@ test("a job's work dir: runs get it, closing the job cleans it once, a load clea
 test('with autoAsk a space asks the llm step a job moves onto and resumes a due run when its bridge is back; without it, neither', async (t) => {
   expectErrors(t, /run\(s\) not marked interrupted/, /runEnd on .* failed/, /loading the state from the bridge failed/)
   install([{ page: acme }])
-  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-'))
+  const dir = tempDir('spaces')
   const make = async (autoAsk: boolean) => {
     const f = fakeSdk(), space = await makeSpace(acmeServer, { cfg: { ...wsCfg(dir), autoAsk }, home: dir, artifactsDir: join(dir, 'arts'), sdk: f.sdk, fake: true, push: async () => {}, askDelay: 0 })
     space.source.start()
@@ -301,7 +301,7 @@ test('with autoAsk a space asks the llm step a job moves onto and resumes a due 
 
 test("a stored playbook's planned messages outlive a restart: sent works on the space made anew over the same B", async () => {
   install([{ page: acme }])
-  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-'))
+  const dir = tempDir('spaces')
   const fake = await startFakeGateway({ seed: fakeSeed(acmeServer), me: acme.me, board: acme.board })
   const tokenPath = join(dir, 'acme.token')
   writeFileSync(tokenPath, fake.token)
@@ -333,7 +333,7 @@ test("a stored playbook's planned messages outlive a restart: sent works on the 
 
 test("a workspace's source learns its id, the home and, managed, its grants; a local source's packs give its actions", async () => {
   install([{ page: acme }])
-  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-')), root = join(dir, 'console')
+  const dir = tempDir('spaces'), root = join(dir, 'console')
   mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })
   const hosts = ['outlook.office.com', 'graph.microsoft.com']
   writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ packs: ['m365-mail'], hosts, acts: ['mail.send', 'chat.post'] }))
@@ -353,7 +353,7 @@ test("a workspace's source learns its id, the home and, managed, its grants; a l
 })
 
 test("a run's bridge: the workspace's own say, else a local source's run MCP, at the address it serves on when the run starts", async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-'))
+  const dir = tempDir('spaces')
   const docs: StateDocs = { load: async () => ({ docs: {}, seq: 0 }), put: async () => {}, seq: async () => {} }
   const cfg = { ...wsCfg(dir), gatewayUrl: 'http://127.0.0.1:0', llmTokenPath: join(dir, 'llm.token') }
   const none = () => ({ packs: [], hosts: [], config: {} })
@@ -375,7 +375,7 @@ test("a run's bridge: the workspace's own say, else a local source's run MCP, at
 
 test("a managed workspace's runs get exactly its grants' runTools, and its plugins reach only its granted hosts", async () => {
   install([{ page: acme }])
-  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-')), root = join(dir, 'console')
+  const dir = tempDir('spaces'), root = join(dir, 'console')
   mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })
   writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ runTools: ['Grep'], hosts: ['api.example.com', 'outlook.office.com', 'graph.microsoft.com'], packs: ['m365-mail'], acts: ['mail.send', 'chat.post'] }))
   let http: PluginCtx['http'] | undefined
@@ -398,7 +398,7 @@ test("a managed workspace's runs get exactly its grants' runTools, and its plugi
 
 test('a workspace on its own database names the database when it is down, not the bridge', async () => {
   install([{ page: acme }])
-  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-'))
+  const dir = tempDir('spaces')
   const w: WorkspaceServer = {
     ...acmeServer,
     source: (_c, { bus }) => pgSource({ url: null, unset: 'Postgres not running', ws: 'acme', bus }),

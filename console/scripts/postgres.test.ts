@@ -1,17 +1,15 @@
-import { after, test } from 'node:test'
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Ran } from './lib.mjs'
 import { containers, dockerRunner, engine, ensurePassword, envNames, pgDown, pgNames, postgres, published, type Docker } from './postgres.mjs'
+import { tempDir } from '../server/testdirs.ts'
 
 /* postgres.mjs against a scripted docker: each rule answers the first call whose argv, joined by spaces, matches it.
    The live test at the end starts a real -test container and needs WORK_CONSOLE_LIVE_DOCKER=1. */
 
-const made: string[] = []
-after(() => { for (const d of made) rmSync(d, { recursive: true, force: true }) })
-const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'wc-pg-')); made.push(d); return d }
+const tmp = () => tempDir('pg')
 const ok = (stdout = ''): Ran => ({ status: 0, stdout, stderr: '' })
 const bad = (stderr: string, status = 1): Ran => ({ status, stdout: '', stderr })
 

@@ -1,14 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Restarter, swapDist } from './restart.ts'
+import { tempDir } from './testdirs.ts'
 
 const dir = (r: string, name: string, text: string) => { mkdirSync(join(r, name)); writeFileSync(join(r, name, 'index.html'), text) }
 
 test('swapDist puts the staged build in place; done() drops the old one, back() restores it', async () => {
-  const r = mkdtempSync(join(tmpdir(), 'wc-swap-'))
+  const r = tempDir('swap')
   dir(r, 'dist', 'old'); dir(r, 'stage', 'new')
   const s = await swapDist(join(r, 'stage'), join(r, 'dist'))
   assert.equal(readFileSync(join(r, 'dist', 'index.html'), 'utf8'), 'new')
@@ -22,7 +22,7 @@ test('swapDist puts the staged build in place; done() drops the old one, back() 
 })
 
 test('swapDist with no build served yet', async () => {
-  const r = mkdtempSync(join(tmpdir(), 'wc-swap-'))
+  const r = tempDir('swap')
   dir(r, 'stage', 'first')
   const s = await swapDist(join(r, 'stage'), join(r, 'dist'))
   assert.equal(readFileSync(join(r, 'dist', 'index.html'), 'utf8'), 'first')

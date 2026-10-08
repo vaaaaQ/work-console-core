@@ -1,13 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { HttpError } from '../events.ts'
 import { noteIn, notesStore, parseNote } from './notes.ts'
+import { tempDir } from '../testdirs.ts'
 
 function setup() {
-  const dir = join(mkdtempSync(join(tmpdir(), 'wc-notes-')), 'kn')
+  const dir = join(tempDir('notes'), 'kn')
   const changes: [string, unknown[], string[]][] = []
   let t = 0
   const now = () => new Date(Date.UTC(2026, 9, 4, 12, 0, t++)).toISOString()

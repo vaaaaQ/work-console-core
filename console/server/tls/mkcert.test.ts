@@ -1,16 +1,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { X509Certificate } from 'node:crypto'
-import { mkdtempSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { connect, createServer } from 'node:tls'
 import forge from 'node-forge'
 import { ensureCerts } from './mkcert.ts'
+import { tempDir } from '../testdirs.ts'
 
 test('the server certificate chains to a kept local CA and names every address', () => {
-  const dir = join(mkdtempSync(join(tmpdir(), 'wc-tls-')), 'tls')
+  const dir = join(tempDir('tls'), 'tls')
   ensureCerts(dir, { host: 'My-PC', ips: ['192.168.1.20'] })
   const ca = new X509Certificate(readFileSync(join(dir, 'ca.crt')))
   const crt = new X509Certificate(readFileSync(join(dir, 'server.crt')))
@@ -43,7 +43,7 @@ async function handshake(key: string, crt: string, ca: string, servername: strin
 }
 
 test('the CA can only vouch for this PC: a certificate it signs for another name or a public address fails', async () => {
-  const dir = join(mkdtempSync(join(tmpdir(), 'wc-tls-')), 'tls')
+  const dir = join(tempDir('tls'), 'tls')
   ensureCerts(dir, { host: 'my-pc', ips: ['192.168.1.20', '8.8.8.8'] })
   const rd = (f: string) => readFileSync(join(dir, f), 'utf8'), ca = rd('ca.crt')
   assert.equal(await handshake(rd('server.key'), rd('server.crt'), ca, 'my-pc'), null)

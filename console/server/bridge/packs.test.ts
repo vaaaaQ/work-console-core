@@ -1,11 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkPack, loadPacks, packConfig, readPack, renderPack, schemasIn } from './packs.ts'
 import type { PackManifest } from './packs.ts'
+import { tempDir } from '../testdirs.ts'
 
 const sound = (): PackManifest => ({
   name: 'tracker', zone: 'UTC', script: 'tracker.js',
@@ -23,7 +23,7 @@ const sound = (): PackManifest => ({
 const all = () => true
 
 function packDir(p: unknown, script = true): string {
-  const root = mkdtempSync(join(tmpdir(), 'wc-packs-'))
+  const root = tempDir('packs')
   const dir = join(root, 'tracker')
   mkdirSync(dir)
   writeFileSync(join(dir, 'pack.json'), JSON.stringify(p))

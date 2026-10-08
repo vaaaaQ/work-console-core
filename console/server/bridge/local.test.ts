@@ -1,7 +1,6 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { Bus } from '../events.ts'
 import type { Ev } from '../events.ts'
@@ -13,6 +12,7 @@ import type { GrantsFn, PackGrants } from '../browser/packs.ts'
 import type { StateDocs } from '../browser/state.ts'
 import { isLocal, localSource } from './local.ts'
 import type { LocalSource } from './local.ts'
+import { tempDir } from '../testdirs.ts'
 
 const FIXTURE_PACKS = join(import.meta.dirname, '..', 'browser', 'testdata', 'packs')
 const CFG = { gatewayUrl: 'http://127.0.0.1:1', consoleTokenPath: '', llmTokenPath: '', workDir: '', runTools: [], teamTz: null, maxSessions: 1 } as WsConfig
@@ -198,7 +198,7 @@ test('down, it names its own state store and why, and says each new reason once'
 })
 
 test('its run MCP on port 0 takes a free port, and its status names it', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'wc-local-mcp-'))
+  const dir = tempDir('local-mcp')
   const src = localSource({ ...CFG, gatewayUrl: 'http://127.0.0.1:0', llmTokenPath: join(dir, 'llm.token') }, { bus: new Bus(), ws: 'w', grants: grants({ packs: [] }), docs: memDocs(), mcp: true, log: () => {} })
   live.push(src)
   assert.equal(src.mcp, true)

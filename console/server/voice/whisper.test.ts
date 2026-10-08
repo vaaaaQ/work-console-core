@@ -1,17 +1,17 @@
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { HttpError } from '../events.ts'
 import { whisper } from './whisper.ts'
+import { tempDir } from '../testdirs.ts'
 
 const KEY = 'sk-proj-0123456789abcdefghijklmnopqrstuvwxyz'
 const AUDIO = Buffer.from('not really opus').toString('base64')
 
 /** a key file in a temp folder, and an OpenAI stand-in that records each call */
 function setup(answer: (init: RequestInit) => Response | Promise<Response> = () => Response.json({ text: ' Hola, armá el job. ' })) {
-  const dir = mkdtempSync(join(tmpdir(), 'wc-voice-')), keyPath = join(dir, 'openai.key')
+  const dir = tempDir('voice'), keyPath = join(dir, 'openai.key')
   const calls: { url: string; init: RequestInit }[] = []
   const fetch = (async (url: string, init: RequestInit) => { calls.push({ url, init }); return answer(init) }) as unknown as typeof globalThis.fetch
   return { keyPath, calls, v: whisper({ keyPath, fetch, url: 'http://openai.test/v1/audio/transcriptions', timeoutMs: 200 }) }

@@ -1,7 +1,5 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as T from '../../src/model/transitions.ts'
 import type { Job } from '../../src/model/types.ts'
@@ -10,11 +8,12 @@ import { Jobs } from '../jobs/jobs.ts'
 import { fileStore } from '../store/file.ts'
 import { acme, demoCtx, demoSeed } from '../testkit.ts'
 import { BoardReturns } from './returns.ts'
+import { tempDir } from '../testdirs.ts'
 
 type Col = { id: string; column: string | null }
 
 function setup(first: Col[]) {
-  const store = fileStore(join(mkdtempSync(join(tmpdir(), 'wc-ret-')), 's.json'), demoSeed)
+  const store = fileStore(join(tempDir('ret'), 's.json'), demoSeed)
   const bus = new Bus(), jobs = new Jobs({ store, bus, ctx: demoCtx, gate: () => true })
   const pushes: { title: string; body: string; url: string }[] = [], generic: string[] = []
   let board = first

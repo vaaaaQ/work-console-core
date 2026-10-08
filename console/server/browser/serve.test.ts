@@ -1,8 +1,7 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { createServer } from 'node:net'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Bus } from '../events.ts'
 import type { Source, WsConfig } from '../workspace.ts'
@@ -11,10 +10,11 @@ import { localSource } from '../bridge/local.ts'
 import type { StateDocs } from './state.ts'
 import { serveBridge } from './serve.ts'
 import { browserPlugin } from './plugin.ts'
+import { tempDir } from '../testdirs.ts'
 
-const root = mkdtempSync(join(tmpdir(), 'wc-serve-'))
+const root = tempDir('serve')
 const closing: (() => Promise<void> | void)[] = []
-after(async () => { for (const c of closing.reverse()) await c(); rmSync(root, { recursive: true, force: true }) })
+after(async () => { for (const c of closing.reverse()) await c() })
 
 /** a Source that answers the same things every time */
 function stubSource() {

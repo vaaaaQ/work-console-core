@@ -1,9 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Bus } from '../events.ts'
 import type { WsConfig } from '../workspace.ts'
@@ -11,6 +10,7 @@ import { localSource } from '../bridge/local.ts'
 import { killProfile, profileHeld } from '../../scripts/edge.mjs'
 import { edgeBrowser, findEdge } from './launcher.ts'
 import type { StateDocs } from './state.ts'
+import { tempDir } from '../testdirs.ts'
 
 /* One read through a real Edge: a headless Edge on a temp profile, a page on 127.0.0.1 that hands its tab a cookie,
    and a pack that reads with it. WC_TEST_NO_EDGE=1 skips it; WC_TEST_EDGE_DIR names the profile dir to use. */
@@ -36,7 +36,7 @@ const CFG = { gatewayUrl: 'http://127.0.0.1:1', consoleTokenPath: '', llmTokenPa
 
 test('a live read from a local test page through a real Edge on a temp profile', { skip, timeout: 120_000 }, async () => {
   const given = process.env.WC_TEST_EDGE_DIR
-  const dir = given || mkdtempSync(join(tmpdir(), 'wc-edge-'))
+  const dir = given || tempDir('edge')
   mkdirSync(dir, { recursive: true })
   let port = 0
   const items = () => ['W-1', 'W-2'].map((id) => ({

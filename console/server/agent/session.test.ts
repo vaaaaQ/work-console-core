@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { FailedUpdate } from '../../scripts/update.mjs'
 import type { AgentRec, Grants } from '../../src/model/agent.ts'
@@ -14,6 +13,7 @@ import { agentRecords } from './records.ts'
 import { AgentSession } from './session.ts'
 import type { Reintegration, SessionOps, UpdateEnd } from './session.ts'
 import type { Limits } from './limits.ts'
+import { tempDir } from '../testdirs.ts'
 
 type Turn = { prompt: string; resume?: string; system: string; tools: AskTool[]; limits: Limits; abort: AbortController }
 type Script = (t: Turn) => AsyncIterable<SdkEvent>
@@ -30,7 +30,7 @@ const failedAt = (root: string, o: Partial<FailedUpdate> = {}): FailedUpdate => 
 }
 
 function setup(o: { grants?: Partial<Grants>; script?: Script[]; recs?: AgentRec[]; update?: Partial<FailedUpdate>; ends?: ((f: FailedUpdate) => FailedUpdate | null)[] } = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'wc-session-'))
+  const root = tempDir('session')
   mkdirSync(join(root, 'workspaces', 'w1'), { recursive: true })
   if (o.grants) writeFileSync(join(root, 'workspaces', 'w1', 'grants.json'), JSON.stringify(o.grants))
   const file = join(root, 'home', 'agent', 'w1.json')

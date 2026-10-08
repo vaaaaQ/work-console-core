@@ -1,14 +1,13 @@
 import '../testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CtxItem, Job } from '../../src/model/types.ts'
 import { GatewayError } from '../bridge/wire.ts'
 import type { ConceptReply } from '../bridge/wire.ts'
 import { notesStore } from '../knowledge/notes.ts'
 import { IMG_MAX, resolveContext, resolveItem } from './context.ts'
+import { tempDir } from '../testdirs.ts'
 
 const mail: CtxItem = { k: 'mail', id: 'm-17', n: 1, name: 'Quota' }
 const note: CtxItem = { k: 'note', id: 'tracker-rest', n: 1 }
@@ -16,7 +15,7 @@ const note: CtxItem = { k: 'note', id: 'tracker-rest', n: 1 }
 test("a mail is read through the bridge's mail get; a note from the workspace's notes, never the bridge", async () => {
   const asked: string[] = []
   const b = { get: async (concept: string, id: string): Promise<ConceptReply> => { asked.push(`${concept}/${id}`); return { status: 'ok', rev: 1, items: { body: 'Quota is 5.', attachments: ['q.xlsx'] } } } }
-  const notes = notesStore(join(mkdtempSync(join(tmpdir(), 'wc-ctx-')), 'kn'))
+  const notes = notesStore(join(tempDir('ctx'), 'kn'))
   await notes.save(null, { title: 'Tracker REST', tags: [], playbooks: [], text: 'Use a token header.' }, null)
   const m = await resolveItem(b, mail, undefined, notes)
   assert.deepEqual([m.status, m.text], ['ok', 'Quota is 5.\n\nAttachments: q.xlsx'])

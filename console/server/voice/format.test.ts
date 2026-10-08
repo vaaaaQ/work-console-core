@@ -1,15 +1,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { HttpError } from '../events.ts'
 import { formatter } from './format.ts'
+import { tempDir } from '../testdirs.ts'
 
 const KEY = 'sk-proj-0123456789abcdefghij'
 type Call = { url: string; init: RequestInit; body: Record<string, unknown> }
 function setup(answer: (c: Call) => Response | Promise<Response>, o: { key?: string | null; timeoutMs?: number } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'wc-fmt-')), keyPath = join(dir, 'openai.key')
+  const dir = tempDir('fmt'), keyPath = join(dir, 'openai.key')
   if (o.key !== null) writeFileSync(keyPath, o.key ?? KEY)
   const calls: Call[] = []
   const f = (async (url: string, init: RequestInit) => {

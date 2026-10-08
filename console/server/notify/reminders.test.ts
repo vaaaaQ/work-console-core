@@ -1,19 +1,19 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as T from '../../src/model/transitions.ts'
 import type { Job } from '../../src/model/types.ts'
 import { demoCtx } from '../testkit.ts'
 import { Reminders } from './reminders.ts'
+import { tempDir } from '../testdirs.ts'
 
 const MIN = 60e3, DUE = Date.parse('2026-10-01T15:00:00Z') // 12:00 at home (UTC−3)
 
 const job = (id: string, due: number, o: Partial<Job> = {}): Job =>
   ({ ...T.freshJob(demoCtx(), id, { t: `Prep ${id}`, key: 'NEW', pb: 'action', prj: 'p', ws: 'acme', due: new Date(due).toISOString() }), ...o })
 
-function setup(jobs: Job[], dir = mkdtempSync(join(tmpdir(), 'wc-rem-'))) {
+function setup(jobs: Job[], dir = tempDir('rem')) {
   const clock = { t: 0 }, sent: { title: string; body: string; url: string }[] = []
   const r = new Reminders({ dir, jobs: () => jobs, push: async (title, body, url) => { sent.push({ title, body, url }) }, now: () => clock.t })
   return { r, clock, sent, dir }
@@ -51,7 +51,7 @@ test('stale, closed and undated jobs stay quiet; remind 0 still has its hour aft
 })
 
 test('entries older than 40 days are pruned from reminded.json', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'wc-rem-')), now = DUE
+  const dir = tempDir('rem'), now = DUE
   writeFileSync(join(dir, 'reminded.json'), JSON.stringify({ 'J-9@old': now - 41 * 86400e3, 'J-8@recent': now - 86400e3 }))
   const { r, clock } = setup([], dir)
   clock.t = now; await r.tick()
@@ -59,7 +59,7 @@ test('entries older than 40 days are pruned from reminded.json', async () => {
 })
 
 test('started, the loop ticks on its own until stopped', async () => {
-  const sent: string[] = [], dir = mkdtempSync(join(tmpdir(), 'wc-rem-'))
+  const sent: string[] = [], dir = tempDir('rem')
   const r = new Reminders({ dir, jobs: () => [job('J-1', DUE)], push: async (t) => { sent.push(t) }, now: () => DUE - 10 * MIN, every: 5 }).start()
   try {
     const t0 = Date.now()

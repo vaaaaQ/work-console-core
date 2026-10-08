@@ -1,14 +1,14 @@
-import { after, test } from 'node:test'
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { run, type Ran, type Runner } from './lib.mjs'
 import { AUTO_PROVIDERS, chooseProvider, consolePort, folder, install, parseArgs, provider, PROVIDER_IDS as IDS, tools, voice, writeConfig } from './install.mjs'
 import { PROVIDER_IDS, PROVIDERS } from '../server/llm/providers.ts'
 import { addRegistry, EMPTY_GRANTS_JSON, HOME, render, TEMPLATE_FILES } from './workspaces.mjs'
+import { tempDir } from '../server/testdirs.ts'
 
 /* install.mjs against throwaway git repos: a "core" whose console/ carries the real consumer/ templates and a few
    stub files, and a consumer folder. Git runs for real; npm, docker and the provider CLIs are fakes. */
@@ -19,9 +19,7 @@ process.env.GIT_CONFIG_VALUE_0 = 'false'
 process.env.GIT_CONFIG_KEY_1 = 'core.autocrlf'
 process.env.GIT_CONFIG_VALUE_1 = 'false'
 
-const made: string[] = []
-after(() => { for (const d of made) rmSync(d, { recursive: true, force: true }) })
-const tmp = (what: string) => { const d = mkdtempSync(join(tmpdir(), `wc-install-${what}-`)); made.push(d); return d }
+const tmp = (what: string) => tempDir(`install-${what}`)
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.name=Install Test', '-c', 'user.email=install@example.test', ...args],
   { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 const put = (dir: string, p: string, body: string) => { mkdirSync(dirname(join(dir, p)), { recursive: true }); writeFileSync(join(dir, p), body) }

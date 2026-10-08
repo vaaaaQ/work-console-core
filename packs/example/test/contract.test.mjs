@@ -1,7 +1,7 @@
 // The contract run over the example pack, and proof that it catches a pack that breaks a schema.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -21,8 +21,9 @@ test('the example pack keeps the contract', async (t) => {
   await contract(t, spec({ json: { issues: [issue] } }));
 });
 
-test('the contract fails a pack whose read item breaks the schema', async () => {
+test('the contract fails a pack whose read item breaks the schema', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'wc-contract-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   copyFileSync(new URL('../pack.json', import.meta.url), join(dir, 'pack.json'));
   const src = readFileSync(new URL('../example.js', import.meta.url), 'utf8');
   writeFileSync(join(dir, 'example.js'), src.replace("link: origin() + '/browse/' + i.key,", ''));

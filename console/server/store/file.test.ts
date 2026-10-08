@@ -1,13 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readdirSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Job, Tpl } from '../../src/model/types.ts'
 import { fileStore } from './file.ts'
 import { Conflict } from './port.ts'
+import { tempDir } from '../testdirs.ts'
 
-const dir = () => mkdtempSync(join(tmpdir(), 'wc-store-'))
+const dir = () => tempDir('store')
 const job = (id: string): Job => ({ id, ws: 'acme', key: 'K-1', pb: 'action', prj: 'p', t: 'T', st: 'active', at: null, upd: 0, slug: 's', flow: {}, ts: 0, jr: [] })
 
 test('seeds on first open and keeps writes across a reopen', async () => {

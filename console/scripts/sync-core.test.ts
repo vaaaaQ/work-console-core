@@ -1,20 +1,18 @@
-import { after, test } from 'node:test'
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, rmdirSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { drift, hash, inside, isCoreLayout, prune, sync } from './sync-core.mjs'
+import { tempDir } from '../server/testdirs.ts'
 
 /* sync-core.mjs against throwaway git repos under the OS temp dir: a "core" with a console/ and a "consumer"
    console dir. Git runs with autocrlf off and a local identity, so a CRLF checkout cannot change what is committed. */
 
 const SCRIPT = fileURLToPath(new URL('./sync-core.mjs', import.meta.url))
-const made: string[] = []
-after(() => { for (const d of made) rmSync(d, { recursive: true, force: true }) })
 
-const tmp = (what: string) => { const d = mkdtempSync(join(tmpdir(), `wc-sync-${what}-`)); made.push(d); return d }
+const tmp = (what: string) => tempDir(`sync-${what}`)
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'core.autocrlf=false', '-c', 'commit.gpgsign=false', '-c', 'user.name=Sync Test', '-c', 'user.email=sync@example.test', ...args],
   { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 const plumb = (cwd: string, args: string[], input: string) => execFileSync('git', ['-C', cwd, ...args], { input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim()

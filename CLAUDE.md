@@ -41,6 +41,8 @@ node console/scripts/sync-core.mjs --to <consumer console dir> [--ref <rev>] [--
   and `console/server/workspace.ts`; the contract is in [docs/architecture.md](docs/architecture.md#workspaces).
 - Home time zone: `console/src/lib/zone.ts`. It uses the runtime zone unless `WORK_CONSOLE_TZ` is
   set. A pack's `tz` is the team's second clock.
+- A test's folder in the OS temp dir comes from `tempDir()` of `console/server/testdirs.ts`: it goes when the
+  test file's process exits, and one that will not go fails that file.
 
 ## Adding a workspace
 

@@ -1,7 +1,5 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Job } from '../../src/model/types.ts'
 import { Bus } from '../events.ts'
@@ -9,9 +7,10 @@ import { fileStore } from '../store/file.ts'
 import { demoCtx, demoSeed } from '../testkit.ts'
 import { Blockers, outcomeOf } from './blockers.ts'
 import { Jobs } from './jobs.ts'
+import { tempDir } from '../testdirs.ts'
 
 function setup(react = true) {
-  const store = fileStore(join(mkdtempSync(join(tmpdir(), 'wc-blk-')), 's.json'), demoSeed)
+  const store = fileStore(join(tempDir('blk'), 's.json'), demoSeed)
   const jobs = new Jobs({ store, bus: new Bus(), ctx: demoCtx, gate: () => true })
   const pushes: { title: string; body: string; url: string }[] = [], generic: string[] = []
   const mkB = () => new Blockers({ jobs, ctx: demoCtx, push: async (title, body, url) => { pushes.push({ title, body, url }) } })

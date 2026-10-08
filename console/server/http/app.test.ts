@@ -1,11 +1,10 @@
 import { test } from 'node:test'
 import type { TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, request } from 'node:http'
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as T from '../../src/model/transitions.ts'
 import type { Job } from '../../src/model/types.ts'
@@ -24,6 +23,7 @@ import { Settings } from '../settings.ts'
 import type { Plugin, WorkspaceServer, WsConfig } from '../workspace.ts'
 import { bridgeOf, createApp } from './app.ts'
 import type { Bridge } from './app.ts'
+import { tempDir } from '../testdirs.ts'
 
 /* The whole backend over real sockets: two workspaces, each on its own fake gateway with its store in B,
    and a scripted SDK that drafts at once and builds a form from the first say. acme mints A-NNNN and mounts a test plugin; beta is Acme under
@@ -70,7 +70,7 @@ type Fakes = Record<string, FakeGateway>
 /** acme and beta (or acme alone), each on its own fake gateway; `before` runs before the sources start.
     A setup that fails partway closes what it opened, so a red run fails instead of hanging. */
 async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[]; before?: (f: Fakes) => void; voice?: Voice; format?: Format; root?: string; restart?: () => void } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'wc-http-')), web = join(dir, 'web')
+  const dir = tempDir('http'), web = join(dir, 'web')
   const list: Space[] = [], servers: Server[] = []
   let h: ReturnType<typeof createApp> | null = null, unhub = () => {}
   const stop = async () => {
@@ -438,7 +438,7 @@ test('sources come in page shapes; an act resolves the chat name and reaches onl
 })
 
 test("a managed workspace acts only through what its granted packs declare and its grants name", async () => {
-  const root = mkdtempSync(join(tmpdir(), 'wc-root-'))
+  const root = tempDir('root')
   mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })
   writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({
     packs: ['m365-teams', 'm365-mail'], hosts: ['teams.microsoft.com', 'outlook.office.com', 'graph.microsoft.com'], acts: ['chat.post'],

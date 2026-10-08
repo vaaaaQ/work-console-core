@@ -1,12 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildId } from './build.ts'
+import { tempDir } from './testdirs.ts'
 
 test('buildId hashes the file, follows a rewrite, and is null without one', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'wc-build-')), f = join(dir, 'index.html')
+  const dir = tempDir('build'), f = join(dir, 'index.html')
   try {
     assert.equal(buildId(f), null)
     writeFileSync(f, '<p>one</p>')

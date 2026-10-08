@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { importCheck, importIssues } from './imports.ts'
+import { tempDir } from '../testdirs.ts'
 
 const issues = (t: string) => importIssues('x.ts', t)
 
@@ -52,7 +52,7 @@ test('fetch and the other network globals are refused; ctx.http, a local fetch a
 })
 
 test('importCheck walks the agent areas, names file and line, skips node_modules', () => {
-  const r = mkdtempSync(join(tmpdir(), 'wc-imports-'))
+  const r = tempDir('imports')
   mkdirSync(join(r, 'workspaces', 'w1', 'sub'), { recursive: true })
   mkdirSync(join(r, 'tools', 'node_modules', 'x'), { recursive: true })
   writeFileSync(join(r, 'workspaces', 'w1', 'page.ts'), "export const a = 1\n")

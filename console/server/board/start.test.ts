@@ -1,7 +1,5 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ActReq, ActRes, ConceptReply } from '../bridge/wire.ts'
 import { Bus, HttpError } from '../events.ts'
@@ -9,9 +7,10 @@ import { Jobs } from '../jobs/jobs.ts'
 import { fileStore } from '../store/file.ts'
 import { acme, demoCtx, demoSeed } from '../testkit.ts'
 import { startItem } from './start.ts'
+import { tempDir } from '../testdirs.ts'
 
 function setup(o: { act?: ActRes; board?: ConceptReply; up?: boolean } = {}) {
-  const store = fileStore(join(mkdtempSync(join(tmpdir(), 'wc-start-')), 's.json'), demoSeed)
+  const store = fileStore(join(tempDir('start'), 's.json'), demoSeed)
   const jobs = new Jobs({ store, bus: new Bus(), ctx: demoCtx, gate: () => true })
   const acts: ActReq[] = []
   const bridge = {
