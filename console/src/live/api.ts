@@ -4,6 +4,7 @@ import type { NewJob } from '../model/transitions.ts'
 import type { Resolved } from '../model/context.ts'
 import type { TrackerView } from '../model/tracker.ts'
 import type { BuildForm } from '../model/njForm.ts'
+import type { UpdateKind, UpdateView } from '../model/update.ts'
 import type { BoardItem } from '../data/board.ts'
 import type { TimeItem } from '../data/time.ts'
 import { S } from '../model/world.ts'
@@ -39,6 +40,8 @@ export interface State {
   providers?: Providers
   /** the page build the server serves; null when it serves none (the dev server) */
   build?: string | null
+  /** the core update that failed and waits: Reintegrate, Apply or Give up */
+  update?: UpdateView | null
   ws: Record<string, WsBlock>
 }
 export type ProviderId = 'claude' | 'cursor'
@@ -56,6 +59,7 @@ export type Ev =
   | { kind: 'source'; ws: string; concept: string }
   | { kind: 'build'; id: string; t: string; tool?: string }
   | { kind: 'agent'; ws: string; agent: AgentRec }
+  | { kind: 'update'; update: UpdateView | null }
 export type ActRes = { actionId: string; status: 'ok' | 'error' | 'outcome_unknown'; error?: { code: string; message: string }; result?: unknown }
 /** playbooks: keys of the playbooks whose every run reads the note in full */
 export type NoteIndex = { id: string; v: number; title: string; tags: string[]; playbooks: string[]; updated: string; size: number }
@@ -101,6 +105,8 @@ export const LIVE = {
   providers: { auto: 'claude', manual: 'claude', manualLabel: 'Claude Code' } as Providers,
   /** the page build this page loaded; updated = the server now serves another one */
   build: null as string | null, updated: false,
+  /** the failed core update; null = none waits */
+  update: null as UpdateView | null,
   /** one block per workspace the backend serves */
   ws: {} as Record<string, LiveWs>,
 }
@@ -235,6 +241,10 @@ type AgentRes = { agent: AgentRec }
 export const agentSay = async (ws: string, text: string) => (await wsCall<AgentRes>(ws, 'POST', '/agent', { text })).agent
 export const agentStop = (ws: string) => wsCall<object>(ws, 'POST', '/agent/stop')
 export const agentNew = async (ws: string) => (await wsCall<AgentRes>(ws, 'POST', '/agent/new')).agent
+/** a new conversation that fixes the failed core update; the core's diff is read first */
+export const agentReintegrate = async (ws: string) => (await wsCall<AgentRes>(ws, 'POST', '/agent/reintegrate', undefined, 60_000)).agent
+/** the failed core update run again, or dropped; it runs on, and its end arrives as an update event */
+export const updateRun = async (kind: UpdateKind) => (await call<{ update: UpdateView | null }>('POST', `/api/update/${kind}`)).update
 // an undo checks and builds the console again: minutes, not seconds
 export const agentUndo = async (ws: string, sha: string) => (await wsCall<AgentRes>(ws, 'POST', '/agent/undo', { sha }, 20 * 60_000)).agent
 export const agentGrants = async (ws: string, accept: boolean, reason?: string) => (await wsCall<AgentRes>(ws, 'POST', '/agent/grants', { accept, reason }, 60_000)).agent

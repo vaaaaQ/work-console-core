@@ -66,7 +66,8 @@ export function AgentView() {
       <div className="why">{a.pending.reason}</div>
       <div className="row"><button className="btn sm pri" onClick={() => go('approvals')}><Ic n="check" sm />Open Approvals</button></div></div> : null}
     <div className="cols ag">
-      <section className="panel"><header><Ic n="bot" /><h3>Conversation</h3>{a?.interview ? <span className="tag">first conversation</span> : null}<span className="src">{a?.provider ?? ''}</span></header>
+      <section className="panel"><header><Ic n="bot" /><h3>Conversation</h3>{a?.interview ? <span className="tag">first conversation</span> : null}
+        {a?.reintegrate ? <span className="tag" title={`on ${a.reintegrate.branch}`}>core update {a.reintegrate.core.slice(0, 7)}</span> : null}<span className="src">{a?.provider ?? ''}</span></header>
         <div className="pb ag-talk">
           {a?.turns.length ? a.turns.map((x, i) => <Turn key={i} t={x} />)
             : <p className="why" style={{ margin: 0 }}>{a?.interview

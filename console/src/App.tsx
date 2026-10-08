@@ -17,6 +17,7 @@ import { ModalHost, closeModal, isModalOpen } from './ui/modal.tsx'
 import { openPalette } from './ui/Palette.tsx'
 import { Toasts } from './ui/toasts.tsx'
 import { AgentView } from './views/Agent.tsx'
+import { UpdateBanner } from './views/Update.tsx'
 import { Approvals } from './views/Approvals.tsx'
 import { BoardView } from './views/Board.tsx'
 import { CalendarView } from './views/Calendar.tsx'
@@ -134,6 +135,7 @@ export function App() {
         <button className="iconbtn" id="theme" aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'} onClick={toggleTheme}><Ic n={dark ? 'sun' : 'moon'} /></button>
       </header>
       {LIVE.on && LIVE.updated ? <div className="banner note" role="status"><Ic n="refresh" sm />Updated — press Ctrl+F5</div> : null}
+      <UpdateBanner />
       {LIVE.on && L().bridge !== 'ok' ? <div className="banner" role="status"><Ic n="warn" sm />{down().banner}</div> : null}
       {LIVE.on && missingParts().length ? <div className="banner" role="status"><Ic n="warn" sm />The state store did not answer: {missingParts().join(' and ')} are unavailable, not empty. Retrying.</div> : null}
       <Nav />

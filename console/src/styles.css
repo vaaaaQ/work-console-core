@@ -515,6 +515,11 @@ p.cx-t{font-family:var(--font)}
 /* live mode */
 .banner{grid-column:1/-1;display:flex;gap:8px;align-items:center;padding:8px 16px;background:color-mix(in oklab,var(--bad) 10%,var(--raised));color:var(--bad);border-bottom:1px solid var(--bad);font-size:13px}
 .banner.note{background:color-mix(in oklab,var(--cur) 10%,var(--raised));color:var(--cur);border-bottom-color:var(--cur)}
+.banner.upd{flex-wrap:wrap}
+.banner.upd .upd-t{flex:1 1 240px;min-width:0}
+.banner.upd details{flex-basis:100%;color:var(--fg)}
+.banner.upd details:not([open]){flex-basis:auto}
+.banner.upd pre{margin:6px 0 0;max-height:240px;overflow:auto;padding:8px;background:var(--raised);border:1px solid var(--line);border-radius:6px;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
 .feed{max-height:220px;overflow:auto;font:11.5px/1.5 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;padding:8px;border:1px solid var(--line-soft);border-radius:var(--r);background:var(--bg)}
 .feed .tool{color:var(--muted)}
 .qr{width:220px;max-width:100%;aspect-ratio:1;background:#fff;padding:8px;border-radius:var(--r)}

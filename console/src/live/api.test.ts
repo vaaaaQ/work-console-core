@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -508,4 +509,36 @@ test("a source waiting for a sign-in names its host; Sign in brings that tab of 
     assert.deepEqual(cdp.activated, [inbox.id])
     await assert.rejects(api.front('own', 'elsewhere.example'), /no tab/)
   } finally { api.LIVE.on = false; await m.close(); await cdp.close() }
+})
+
+test("a failed core update through the page's client: the state and its events carry it; Reintegrate opens a conversation; Give up drops it", async () => {
+  const home = mkdtempSync(join(tmpdir(), 'wc-api-')), root = mkdtempSync(join(tmpdir(), 'wc-root-')), wt = mkdtempSync(join(tmpdir(), 'wc-wt-'))
+  mkdirSync(join(root, 'workspaces', 'beta'), { recursive: true })
+  writeFileSync(join(root, 'workspaces', 'beta', 'grants.json'), JSON.stringify({ packs: ['p'] }))
+  mkdirSync(join(root, 'scripts'))
+  writeFileSync(join(root, 'scripts', 'update.mjs'), "import { rmSync } from 'node:fs'\nif (process.argv.includes('--give-up')) rmSync(process.env.WORK_CONSOLE_HOME + '/update-failed.json')\n")
+  const git = (...a: string[]) => execFileSync('git', ['-C', wt, ...a], { encoding: 'utf8' }).trim()
+  git('init', '-q'); git('config', 'user.email', 't@t'); git('config', 'user.name', 't')
+  writeFileSync(join(wt, 'a.ts'), 'export const a = 1\n'); git('add', '-A'); git('commit', '-q', '-m', 'folder')
+  const pre = git('rev-parse', 'HEAD')
+  writeFileSync(join(wt, 'a.ts'), 'export const a = 2\n'); git('add', '-A'); git('commit', '-q', '-m', 'core eeeeeee')
+  writeFileSync(join(home, 'update-failed.json'), JSON.stringify({ core: 'e'.repeat(40), from: 'f'.repeat(40), repo: wt, branch: 'update/eeeeeee', worktree: wt, dir: wt, pre, head: pre, step: 'build', output: 'vite: beta/ui.tsx failed', at: '2026-10-08T12:00:00.000Z' }))
+  const withAgent: Sdk = { ...sdk, async *agent() { yield { k: 'session', id: 's1' }; yield { k: 'text', t: 'Fixing.' }; yield { k: 'result', ok: true } } }
+  const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
+  const m = await main({ cfg, sdk: withAgent, workspaces: [acmeServer, betaW], root })
+  api.setBase(`http://127.0.0.1:${m.loopbackPort}`)
+  try {
+    applyState(await api.state())
+    assert.deepEqual([LIVE.update?.step, LIVE.update?.reintegrable, LIVE.update?.running], ['build', true, null])
+    const a = await api.agentReintegrate('beta')
+    assert.equal(a.reintegrate?.branch, 'update/eeeeeee')
+    await until(async () => (await api.state()).ws.beta.agent?.status === 'idle')
+    assert.equal((await api.updateRun('give-up'))?.running, 'give-up')
+    await until(async () => (await api.state()).update === null)
+    applyState(await api.state())
+    assert.equal(LIVE.update, null)
+    await assert.rejects(api.updateRun('apply'), (e: api.ApiError) => e.status === 409 && e.code === 'no_update')
+    onEvent({ kind: 'update', update: { core: 'c', from: 'f', branch: 'update/c', step: 'sync', output: '', at: '', reintegrable: false, running: null } })
+    assert.equal((LIVE.update as api.State['update'])?.step, 'sync', 'an update event replaces it')
+  } finally { LIVE.update = null; await m.close() }
 })

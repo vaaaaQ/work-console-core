@@ -65,6 +65,7 @@ export function applyState(st: State) {
   if (st.providers) LIVE.providers = st.providers
   // the first build seen is the one this page runs; another one means the server restarted into a new build
   if (st.build) { if (!LIVE.build) LIVE.build = st.build; else if (st.build !== LIVE.build) LIVE.updated = true }
+  LIVE.update = st.update ?? null
   const blocks = Object.entries(st.ws)
   for (const k of Object.keys(PB)) delete PB[k]
   for (const k of Object.keys(PB_WS)) delete PB_WS[k]
@@ -174,6 +175,7 @@ export function onEvent(e: Ev) {
     if (f.length > 300) f.splice(0, f.length - 300)
     repaint()
   } else if (e.kind === 'agent') showAgent(e.ws, e.agent)
+  else if (e.kind === 'update') commit(() => { LIVE.update = e.update })
   else if (e.kind === 'bridge') {
     const l = LIVE.ws[e.ws]
     if (!l) return
