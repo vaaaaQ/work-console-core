@@ -121,7 +121,7 @@ test('tokens: an expired one, one for another resource, or one without the scope
 });
 
 test('cal read: two weeks from Monday in the call zone, times in UTC', async () => {
-  const r = await run(read('cal', { config: cfg, zone: 'America/Argentina/Buenos_Aires' }), { ...graphTab, routes: [['GET', re(GRAPH + '/me/calendarView?'), { json: EVENTS }]] });
+  const r = await run(read('cal', { config: cfg, zone: 'America/Sao_Paulo' }), { ...graphTab, routes: [['GET', re(GRAPH + '/me/calendarView?'), { json: EVENTS }]] });
   const data = ok(r);
   const u = new URL(r.requests[0].url);
   assert.equal(u.searchParams.get('startDateTime'), '2026-09-28T03:00:00.000Z');
