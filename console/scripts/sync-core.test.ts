@@ -302,6 +302,14 @@ test('a core whose console/ also has a packs/ or schemas/ file of the same path 
   assert.equal(existsSync(join(to, 'core.lock.json')), false)
 })
 
+test("console/CLAUDE.md and console/AGENTS.md are core files: synced, locked, and an edit to them stops the sync", () => {
+  const core = makeCore({ 'CLAUDE.md': 'read EXTENDING.md\n', 'AGENTS.md': 'read EXTENDING.md\n', 'EXTENDING.md': 'where things go\n' }), to = makeTo()
+  sync({ core, to, log: () => {} })
+  for (const p of ['CLAUDE.md', 'AGENTS.md', 'EXTENDING.md']) assert.ok(keysOf(to).includes(p), p)
+  writeFileSync(join(to, 'CLAUDE.md'), 'my own rules\n')
+  assert.throws(() => sync({ core, to, log: () => {} }), /CLAUDE\.md/)
+})
+
 test('inside accepts plain relative paths and rejects every way out', () => {
   const dest = resolve(tmp('inside'), 'console')
   for (const p of ['a.ts', 'src/a.ts', 'workspaces/acme/page.ts', 'public/with space.txt', 'a/b/c.d.e']) assert.ok(inside(dest, p), p)
