@@ -1,8 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { cpSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Bus } from '../events.ts'
 import { demoFake } from '../testkit.ts'
@@ -10,7 +8,6 @@ import type { WsConfig } from '../workspace.ts'
 import { localSource } from '../bridge/local.ts'
 import { startFakeCdp } from './fake-cdp.ts'
 import type { Browser } from './launcher.ts'
-import { SCHEMAS_DIR } from './schema.ts'
 import { serveBridge } from './serve.ts'
 import type { StateDocs } from './state.ts'
 
@@ -33,10 +30,6 @@ test('the gateway contract test passes against localSource', { timeout: 90_000 }
       type: w.type, title: w.title, state: w.state, assignedTo: w.assignedTo ?? null, description: '', reproSteps: '', acceptanceCriteria: '', comments: [],
     }])),
   }
-  // main's work.get schema lacks the header the contract asks a work get for, so work gets go unchecked here
-  const schemas = mkdtempSync(join(tmpdir(), 'wc-contract-schemas-'))
-  cpSync(SCHEMAS_DIR, schemas, { recursive: true })
-  rmSync(join(schemas, 'work.get.schema.json'))
 
   const cdp = await startFakeCdp(), bus = new Bus()
   cdp.addTab('https://contract.example/app', { DATA, GETS })
@@ -44,7 +37,7 @@ test('the gateway contract test passes against localSource', { timeout: 90_000 }
   const docs: StateDocs = { load: async () => ({ docs: {}, seq: 0 }), put: async () => {}, seq: async () => {} }
   const src = localSource(CFG, {
     bus, ws: 'contract', grants: () => ({ packs: ['contract'], hosts: ['contract.example'], config: {} }),
-    docs, browser, packsDir: PACKS, schemasDir: schemas, tickMs: 50,
+    docs, browser, packsDir: PACKS, tickMs: 50,
   })
   src.start()
   const served = await serveBridge({ source: src, bus, port: 0, llmToken: () => 'llm-contract', consoleToken: () => 'console-contract', statusMs: 2000 })
@@ -75,6 +68,5 @@ test('the gateway contract test passes against localSource', { timeout: 90_000 }
     src.stop()
     await served.close()
     await cdp.close()
-    rmSync(schemas, { recursive: true, force: true })
   }
 })

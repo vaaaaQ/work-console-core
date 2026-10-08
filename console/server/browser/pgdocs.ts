@@ -1,9 +1,9 @@
 import pg from 'pg'
-import { pgConn } from '../store/pg.ts'
+import { ensureSchema, pgConn } from '../store/pg.ts'
 import type { Doc, StateDocs } from './state.ts'
 
 /* B's documents as Postgres rows: kind 'state', id '<concept>/<id>', and the job seq in the row with id 'seq'.
-   The table is the console's docs table, made here as the pg store makes it. */
+   The table is the console's docs table, made by the pg store's ensureSchema. */
 
 const SCHEMA = /^[a-z_][a-z0-9_]{0,62}$/
 
@@ -16,17 +16,7 @@ export function pgDocs(o: { url: string; password?: () => string; schema?: strin
   let ready: Promise<void> | null = null
 
   const ensure = () => {
-    ready ??= (async () => {
-      const c = await pool.connect()
-      try {
-        await c.query('begin')
-        await c.query(`select pg_advisory_xact_lock(hashtext('work_console_schema'))`)
-        await c.query(`create schema if not exists "${schema}"`)
-        await c.query(`create table if not exists ${docs} (ws text not null, kind text not null, id text not null, v integer not null,
-          doc jsonb not null, updated timestamptz not null default now(), primary key (ws, kind, id))`)
-        await c.query('commit')
-      } catch (e) { await c.query('rollback').catch(() => {}); throw e } finally { c.release() }
-    })().catch((e) => { ready = null; throw e })
+    ready ??= ensureSchema(pool, schema).catch((e) => { ready = null; throw e })
     return ready
   }
   const q = async (sql: string, params: unknown[]) => { await ensure(); return (await pool.query(sql, params)).rows }

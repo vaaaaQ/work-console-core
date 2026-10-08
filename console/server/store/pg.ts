@@ -47,6 +47,22 @@ export function pgConn(url: string, password?: () => string): pg.ClientConfig {
     database: decodeURIComponent(u.pathname.slice(1)) || undefined, password }
 }
 
+/** the console's tables in schema, made once by whichever console gets there first: every user of the database calls this */
+export async function ensureSchema(pool: pg.Pool, schema: string) {
+  if (!SCHEMA.test(schema)) throw new Error(`schema ${schema} must match ${SCHEMA}`)
+  const c = await pool.connect()
+  try {
+    await c.query('begin')
+    // two consoles creating the schema at once would collide on its catalog row
+    await c.query(`select pg_advisory_xact_lock(hashtext('work_console_schema'))`)
+    await c.query(`create schema if not exists "${schema}"`)
+    await c.query(`create table if not exists "${schema}".docs (ws text not null, kind text not null, id text not null, v integer not null,
+      doc jsonb not null, updated timestamptz not null default now(), primary key (ws, kind, id))`)
+    await c.query(`create table if not exists "${schema}".seq (ws text primary key, n integer not null)`)
+    await c.query('commit')
+  } catch (e) { await c.query('rollback').catch(() => {}); throw e } finally { c.release() }
+}
+
 export function pgSource(o: PgSourceOpts): PgSource {
   const schema = o.schema ?? 'work_console'
   if (!SCHEMA.test(schema)) throw new Error(`schema ${schema} must match ${SCHEMA}`)
@@ -69,17 +85,7 @@ export function pgSource(o: PgSourceOpts): PgSource {
   function ensure() {
     ready ??= (async () => {
       if (!pool) throw new Error(unset)
-      const c = await pool.connect()
-      try {
-        await c.query('begin')
-        // two consoles creating the schema at once would collide on its catalog row
-        await c.query(`select pg_advisory_xact_lock(hashtext('work_console_schema'))`)
-        await c.query(`create schema if not exists "${schema}"`)
-        await c.query(`create table if not exists ${t('docs')} (ws text not null, kind text not null, id text not null, v integer not null,
-          doc jsonb not null, updated timestamptz not null default now(), primary key (ws, kind, id))`)
-        await c.query(`create table if not exists ${t('seq')} (ws text primary key, n integer not null)`)
-        await c.query('commit')
-      } catch (e) { await c.query('rollback').catch(() => {}); throw e } finally { c.release() }
+      await ensureSchema(pool, schema)
     })().catch((e) => { ready = null; throw e })
     return ready
   }
