@@ -1,5 +1,6 @@
 import { CHATS, JOBS, MAIL, PB, S, TPL, byId, putJob, setJobs } from '../model/world.ts'
 import type { Chat, Mail, Ws } from '../model/types.ts'
+import type { AgentRec } from '../model/agent.ts'
 import { DEFAULT_WS, PACKS } from '../data/packs.ts'
 import type { BoardItem } from '../data/board.ts'
 import { setZone } from '../lib/zone.ts'
@@ -137,6 +138,11 @@ function soon(k: string, f: () => void) {
   clearTimeout(pending.get(k))
   pending.set(k, setTimeout(() => { pending.delete(k); f() }, 400))
 }
+/** the conversation on screen gives way to a newer one or a later frame of itself; a reply that lost the race to its events does not */
+export function showAgent(ws: string, a: AgentRec) {
+  const l = LIVE.ws[ws], cur = l?.agent
+  if (l && (!cur || (cur.id === a.id ? a.updated >= cur.updated : a.created >= cur.created))) commit(() => { l.agent = a })
+}
 /** a build's progress lines, by the id the page gave it while it runs */
 export const buildFeed = new Map<string, (t: string, tool?: string) => void>()
 export function onEvent(e: Ev) {
@@ -148,11 +154,8 @@ export function onEvent(e: Ev) {
     f.push(e.tool ? `→ ${e.tool} ${e.t}` : e.t)
     if (f.length > 300) f.splice(0, f.length - 300)
     repaint()
-  } else if (e.kind === 'agent') {
-    const l = LIVE.ws[e.ws]
-    // a new conversation replaces the one on screen; an older one's late frame does not
-    if (l && (!l.agent || l.agent.id === e.agent.id || e.agent.created >= l.agent.created)) commit(() => { l.agent = e.agent })
-  } else if (e.kind === 'bridge') {
+  } else if (e.kind === 'agent') showAgent(e.ws, e.agent)
+  else if (e.kind === 'bridge') {
     const l = LIVE.ws[e.ws]
     if (!l) return
     const back = l.bridge !== 'ok' && e.state === 'ok'

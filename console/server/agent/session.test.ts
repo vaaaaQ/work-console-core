@@ -67,6 +67,8 @@ test("a turn is recorded: the person's text, the agent's answer and tools, the s
   assert.equal(x.turns[0].prompt, 'check it')
   assert.equal(x.turns[0].resume, undefined)
   assert.ok(x.events.some((e) => e.kind === 'agent' && e.agent.status === 'idle'))
+  const ups = x.events.flatMap((e) => (e.kind === 'agent' ? [e.agent.updated] : []))
+  assert.ok(ups.every((u, i) => i === 0 || u > ups[i - 1]), 'each frame is later than the one before')
   await (await x.s.send('more')).done
   assert.equal(x.turns[1].resume, 's1', 'the next turn resumes the session')
   const stored = await x.records.all()

@@ -428,6 +428,11 @@ test("the agent through the page's client: a managed workspace shows it; a messa
     onEvent({ kind: 'agent', ws: 'beta', agent: fresh })
     onEvent({ kind: 'agent', ws: 'beta', agent: a })
     assert.equal(L('beta').agent!.id, fresh.id)
+    // a reply that arrives after its own conversation's later events does not undo them
+    const later = { ...fresh, status: 'idle' as const, updated: new Date(Date.parse(fresh.updated) + 5).toISOString() }
+    onEvent({ kind: 'agent', ws: 'beta', agent: later })
+    onEvent({ kind: 'agent', ws: 'beta', agent: { ...fresh, status: 'running' } })
+    assert.equal(L('beta').agent!.updated, later.updated)
   } finally { await m.close() }
 })
 

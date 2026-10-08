@@ -69,9 +69,10 @@ export function AgentView() {
       <section className="panel"><header><Ic n="bot" /><h3>Conversation</h3>{a?.interview ? <span className="tag">first conversation</span> : null}<span className="src">{a?.provider ?? ''}</span></header>
         <div className="pb ag-talk">
           {a?.turns.length ? a.turns.map((x, i) => <Turn key={i} t={x} />)
-            : <p className="why" style={{ margin: 0 }}>{a?.interview || !a
+            : <p className="why" style={{ margin: 0 }}>{a?.interview
               ? 'This workspace is new. Say hello: the agent asks which tools you work in, what a work item is for you and which jobs repeat, then proposes what the workspace may reach and sets up its board and playbooks.'
-              : 'Say what to change in this workspace.'}</p>}
+              : a ? 'Say what to change in this workspace.'
+                : 'Say hello to start. In a new workspace the agent first asks which tools you work in, what a work item is for you and which jobs repeat.'}</p>}
           {running ? <div className="why ag-run"><span className="spin" />The agent is answering…</div> : null}
           {a?.status === 'failed' ? <div className="errs">The last turn failed: {a.error || 'no reason given'}</div> : null}
           <VoiceField value={t} onChange={setT} target="llm" rows={3} placeholder={running ? 'The agent is answering; your next message waits for it' : 'What to change, or a question'} />

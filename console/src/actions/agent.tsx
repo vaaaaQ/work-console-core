@@ -1,8 +1,7 @@
 import * as React from 'react'
 import * as api from '../live/api.ts'
-import { LIVE } from '../live/api.ts'
-import type { AgentCommit, AgentRec } from '../model/agent.ts'
-import { commit } from '../store.ts'
+import { showAgent } from '../live/boot.ts'
+import type { AgentCommit } from '../model/agent.ts'
 import { CancelBtn } from '../ui/bits.tsx'
 import { Ic } from '../ui/Icon.tsx'
 import { closeModal, modal } from '../ui/modal.tsx'
@@ -13,8 +12,7 @@ import { VoiceField } from '../ui/VoiceField.tsx'
 
 const short = (sha: string) => sha.slice(0, 8)
 const errText = (e: unknown) => String((e as Error)?.message || e)
-/** the server's answer replaces the conversation on screen, as its agent event will */
-function put(ws: string, a: AgentRec) { const l = LIVE.ws[ws]; if (l) commit(() => { l.agent = a }) }
+const put = showAgent
 
 /** true when the message was taken */
 export async function agentSend(ws: string, text: string): Promise<boolean> {

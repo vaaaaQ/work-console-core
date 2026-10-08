@@ -242,7 +242,8 @@ export class AgentSession {
     return p
   }
   private persist(rec: AgentRec): Promise<void> {
-    rec.updated = iso()
+    // strictly later than the last save, so the page can tell which of two frames of a conversation is newer
+    rec.updated = new Date(Math.max(Date.now(), Date.parse(rec.updated) + 1)).toISOString()
     this.o.bus.emit({ kind: 'agent', agent: clone(rec) })
     return this.put(rec)
   }
