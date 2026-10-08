@@ -1,17 +1,19 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Grants } from '../../src/model/agent.ts'
 import { CONSOLE } from '../config.ts'
-import { grantsOf, grantsPath, normGrants, writeGrants } from '../grants.ts'
+import { EMPTY_GRANTS, grantsOf, grantsPath, normGrants, writeGrants } from '../grants.ts'
 import { swapDist } from '../restart.ts'
 import { importCheck } from './imports.ts'
 import { agentLimits, canWrite, lockedFiles, linksUnder, relPath, writeAreas } from './limits.ts'
+import { addRegistry, newWorkspaceIssue, render, TEMPLATE } from './template.ts'
+import type { NewWorkspace } from './template.ts'
 
 /* What the agent's console tools do, over git and an injectable exec: check, apply (check, build, commit, restart),
-   undo one of its commits, and write accepted grants. One at a time; a failed step leaves no commit and the served build. */
+   undo one of its commits, write accepted grants and add a workspace. One at a time; a failed step leaves no commit and the served build. */
 
 export type Exec = (cmd: string, args: string[], o: { cwd: string; timeoutMs?: number }) => Promise<{ code: number; out: string }>
 export type Applied = { ok: true; sha: string; files: string[]; summary: string } | { ok: false; error: string; failures?: string[] }
@@ -34,6 +36,7 @@ export const realExec: Exec = (cmd, args, o) => new Promise((ok) => {
 
 const tail = (out: string, n = 40) => out.split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean).slice(-n)
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim()
+const DB_KEYS = ['pgUrl', 'pgPasswordPath', 'pgSchema']
 const fail = (error: string, failures?: string[]): Applied => (failures ? { ok: false, error, failures } : { ok: false, error })
 
 export class Ops {
@@ -42,14 +45,21 @@ export class Ops {
   private stage: string
   private dist: string
   private restart?: () => void
+  private home: string
+  private fake: boolean
+  private template: string
   private queue: Promise<unknown> = Promise.resolve()
 
-  constructor(o: { root?: string; exec?: Exec; stage?: string; dist?: string; restart?: () => void } = {}) {
+  /** home = where config.json is; fake = the workspaces run on fake gateways, so a new one needs no database */
+  constructor(o: { root?: string; exec?: Exec; stage?: string; dist?: string; restart?: () => void; home?: string; fake?: boolean; template?: string } = {}) {
     this.root = o.root ?? CONSOLE
     this.exec = o.exec ?? realExec
     this.stage = o.stage ?? join(this.root, 'node_modules', '.cache', 'work-console', 'dist')
     this.dist = o.dist ?? join(this.root, 'dist')
     this.restart = o.restart
+    this.home = o.home ?? (process.env.WORK_CONSOLE_HOME || join(homedir(), '.work-console'))
+    this.fake = o.fake ?? false
+    this.template = o.template ?? TEMPLATE
   }
 
   private lock<T>(f: () => Promise<T>): Promise<T> {
@@ -88,9 +98,9 @@ export class Ops {
     return null
   }
 
-  /** every changed or new file outside the agent's areas with a hash of its content */
-  private async outside(ws: string) {
-    const not = writeAreas(ws).map((a) => `:(exclude)${a}`)
+  /** every changed or new file outside the given paths with a hash of its content */
+  private async outside(own: string[]) {
+    const not = own.map((a) => `:(exclude)${a}`)
     const tracked = this.z(await this.git('diff', '--name-only', '-z', '--no-renames', '--relative', 'HEAD', '--', '.', ...not))
     const fresh = this.z(await this.git('ls-files', '-z', '--others', '--exclude-standard', '--', '.', ...not))
     const m = new Map<string, string>()
@@ -99,6 +109,10 @@ export class Ops {
       m.set(f, existsSync(p) ? createHash('sha1').update(readFileSync(p)).digest('hex') : 'gone')
     }
     return m
+  }
+
+  private moved(before: Map<string, string>, after: Map<string, string>) {
+    return [...new Set([...before.keys(), ...after.keys()])].filter((f) => before.get(f) !== after.get(f)).sort()
   }
 
   private async checkIn(ws: string): Promise<Checked> {
@@ -125,9 +139,8 @@ export class Ops {
     return fail('the build failed', tail(r.out))
   }
 
-  /** the areas' changes committed alone, with a one-line message; the rest of the index and tree untouched */
-  private async commit(ws: string, files: string[], message: string) {
-    const specs = writeAreas(ws).filter((a) => files.some((f) => f.startsWith(`${a}/`)))
+  /** the changes under specs committed alone, with a one-line message; the rest of the index and tree untouched */
+  private async commit(specs: string[], message: string) {
     await this.git('add', '-A', '--', ...specs)
     await this.git('commit', '-q', '--only', '-m', message, '--', ...specs)
     const sha = (await this.git('rev-parse', 'HEAD')).trim()
@@ -144,13 +157,12 @@ export class Ops {
       if (!files.length) return fail(`nothing to apply: no changes under workspaces/${ws} or tools`)
       const why = this.refused(ws, files)
       if (why) return fail(why)
-      const before = await this.outside(ws)
+      const before = await this.outside(writeAreas(ws))
       const c = await this.checkIn(ws)
       if (!c.ok) return fail('the check failed', c.failures)
       const b = await this.build()
       if (b) return b
-      const after = await this.outside(ws)
-      const moved = [...new Set([...before.keys(), ...after.keys()])].filter((f) => before.get(f) !== after.get(f)).sort()
+      const moved = this.moved(before, await this.outside(writeAreas(ws)))
       const links = linksUnder(this.root, writeAreas(ws))
       const now = await this.changed(ws), why2 = moved.length
         ? `changed outside workspaces/${ws} and tools while it was checked: ${moved.join(', ')}`
@@ -158,7 +170,8 @@ export class Ops {
       if (why2) { rmSync(this.stage, { recursive: true, force: true }); return fail(why2) }
       const swap = await swapDist(this.stage, this.dist)
       let done
-      try { done = await this.commit(ws, now, `${ws}: ${s}`) } catch (e) { await swap.back(); return fail((e as Error).message) }
+      const specs = writeAreas(ws).filter((a) => now.some((f) => f.startsWith(`${a}/`)))
+      try { done = await this.commit(specs, `${ws}: ${s}`) } catch (e) { await swap.back(); return fail((e as Error).message) }
       swap.done(); this.restart?.()
       return { ok: true, sha: done.sha, files: done.files, summary: s }
     })
@@ -196,7 +209,7 @@ export class Ops {
         const swap = await swapDist(this.stage, this.dist)
         const summary = `undo — ${subject.slice(ws.length + 2)}`
         let done
-        try { done = await this.commit(ws, files, `${ws}: ${summary}`) } catch (e) { await swap.back(); await putBack(); return fail((e as Error).message) }
+        try { done = await this.commit(files.map((f) => `:(literal)${f}`), `${ws}: ${summary}`) } catch (e) { await swap.back(); await putBack(); return fail((e as Error).message) }
         swap.done(); this.restart?.()
         return { ok: true, sha: done.sha, files: done.files, summary }
       } finally { rmSync(dir, { recursive: true, force: true }) }
@@ -216,16 +229,63 @@ export class Ops {
       const file = grantsPath(ws, this.root), prev = existsSync(file) ? readFileSync(file) : null
       writeGrants(this.root, ws, n)
       const rel = `workspaces/${ws}/grants.json`
-      try {
-        await this.git('add', '--', rel)
-        await this.git('commit', '-q', '--only', '-m', `${ws}: grants — ${why}`, '--', rel)
-      } catch (e) {
+      let done
+      try { done = await this.commit([rel], `${ws}: grants — ${why}`) } catch (e) {
         if (prev) writeFileSync(file, prev); else rmSync(file, { force: true })
         return fail((e as Error).message)
       }
-      const sha = (await this.git('rev-parse', 'HEAD')).trim()
       this.restart?.()
-      return { ok: true, sha, files: [rel], summary: `grants — ${why}` }
+      return { ok: true, sha: done.sha, files: done.files, summary: `grants — ${why}` }
+    })
+  }
+
+  /** a managed workspace from the template: its folder, empty grants, both registry lines and the database settings
+      another workspace has, then checked, built and committed by the agent of ws; a failure takes it all back */
+  createWorkspace(ws: string, n: NewWorkspace, taken: { ids: string[]; prefixes: string[] }): Promise<Applied> {
+    return this.lock(async () => {
+      const o = { ...n, title: oneLine(n.title) }
+      const issue = newWorkspaceIssue(o, { ...taken, exists: (id) => existsSync(join(this.root, 'workspaces', id)) })
+      if (issue) return fail(issue)
+      const cfgFile = join(this.home, 'config.json'), cfgText = existsSync(cfgFile) ? readFileSync(cfgFile, 'utf8') : null
+      let raw: Record<string, unknown>
+      try { raw = cfgText ? JSON.parse(cfgText) as Record<string, unknown> : {} } catch (e) { return fail(`config.json: ${(e as Error).message}`) }
+      const sections = (raw.workspaces && typeof raw.workspaces === 'object' && !Array.isArray(raw.workspaces) ? raw.workspaces : {}) as Record<string, Record<string, unknown>>
+      const from = Object.values(sections).find((x) => x && typeof x.pgUrl === 'string' && typeof x.pgPasswordPath === 'string')
+      if (!from && !this.fake) return fail('no workspace in config.json has pgUrl and pgPasswordPath to share; a new workspace keeps its jobs in the console\'s PostgreSQL')
+
+      const reg = { page: join(this.root, 'workspaces', 'page.ts'), server: join(this.root, 'workspaces', 'server.ts') }
+      const old = { page: readFileSync(reg.page, 'utf8'), server: readFileSync(reg.server, 'utf8') }
+      let next: typeof old
+      try { next = { page: addRegistry(old.page, 'page', o.id), server: addRegistry(old.server, 'server', o.id) } } catch (e) { return fail((e as Error).message) }
+      const dir = join(this.root, 'workspaces', o.id), own = [`workspaces/${o.id}`, 'workspaces/page.ts', 'workspaces/server.ts']
+      const before = await this.outside(own)
+      const back = () => {
+        rmSync(dir, { recursive: true, force: true })
+        writeFileSync(reg.page, old.page); writeFileSync(reg.server, old.server)
+        if (cfgText === null) rmSync(cfgFile, { force: true }); else writeFileSync(cfgFile, cfgText)
+      }
+      try {
+        mkdirSync(dir)
+        for (const f of ['page.ts', 'server.ts']) writeFileSync(join(dir, f), render(readFileSync(join(this.template, f), 'utf8'), o))
+        writeGrants(this.root, o.id, EMPTY_GRANTS)
+        writeFileSync(reg.page, next.page); writeFileSync(reg.server, next.server)
+        if (from) {
+          sections[o.id] = Object.fromEntries(DB_KEYS.filter((k) => from[k] !== undefined).map((k) => [k, from[k]]))
+          writeFileSync(cfgFile, JSON.stringify({ ...raw, workspaces: sections }, null, 2) + '\n')
+        }
+      } catch (e) { back(); return fail((e as Error).message) }
+
+      const c = await this.checkIn(o.id)
+      if (!c.ok) { back(); return fail('the check failed', c.failures) }
+      const b = await this.build()
+      if (b) { back(); return b }
+      const moved = this.moved(before, await this.outside(own))
+      if (moved.length) { back(); rmSync(this.stage, { recursive: true, force: true }); return fail(`changed outside the new workspace while it was checked: ${moved.join(', ')}`) }
+      const swap = await swapDist(this.stage, this.dist), summary = `create workspace ${o.id} — ${o.title}`
+      let done
+      try { done = await this.commit(own, `${ws}: ${summary}`) } catch (e) { await swap.back(); back(); return fail((e as Error).message) }
+      swap.done(); this.restart?.()
+      return { ok: true, sha: done.sha, files: done.files, summary }
     })
   }
 }

@@ -254,3 +254,59 @@ test('ops run one at a time', async () => {
   await Promise.all([o.check('w1'), o.check('w1'), o.apply('w1', 'x')])
   assert.equal(most, 1)
 })
+
+function withHome(ws: Record<string, unknown>) {
+  const home = mkdtempSync(join(tmpdir(), 'wc-ops-home-')), text = JSON.stringify({ lanPort: 7411, workspaces: ws }, null, 2)
+  writeFileSync(join(home, 'config.json'), text)
+  return { home, text, cfg: () => JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')) }
+}
+const db = { pgUrl: 'postgres://u@127.0.0.1:55432/wc', pgPasswordPath: 'C:/x/pg.password', pgSchema: 'wc' }
+
+test('createWorkspace renders the template, registers it, gives it empty grants and the shared database, then applies', async () => {
+  const { r, git, read } = repo(), f = fakeExec(), h = withHome({ w1: { ...db, knowledgeDir: 'C:/k' } })
+  let restarts = 0
+  const o = new Ops({ root: r, exec: f.exec, home: h.home, restart: () => { restarts++ } })
+  const a = await o.createWorkspace('w1', { id: 'my-crm', prefix: 'CRM', title: 'My CRM' }, { ids: ['w1', 'w2'], prefixes: ['W'] })
+  assert.ok(a.ok, JSON.stringify(a))
+  assert.equal(git('log', '-1', '--format=%B'), 'w1: create workspace my-crm — My CRM')
+  assert.deepEqual(a.files.sort(), ['workspaces/my-crm/grants.json', 'workspaces/my-crm/page.ts', 'workspaces/my-crm/server.ts', 'workspaces/page.ts', 'workspaces/server.ts'])
+  assert.deepEqual(JSON.parse(read('workspaces/my-crm/grants.json')), EMPTY_GRANTS)
+  assert.match(read('workspaces/my-crm/server.ts'), /jobPrefix: 'CRM'/)
+  assert.match(read('workspaces/page.ts'), /import myCrm from '\.\/my-crm\/page\.ts'/)
+  assert.match(read('workspaces/server.ts'), /SERVERS = \[myCrmServer\]/)
+  assert.deepEqual(h.cfg(), { lanPort: 7411, workspaces: { w1: { ...db, knowledgeDir: 'C:/k' }, 'my-crm': db } })
+  assert.deepEqual(f.calls, ['typecheck', 'test', 'build'])
+  assert.equal(restarts, 1)
+  assert.equal(git('status', '--porcelain'), '')
+})
+
+test('createWorkspace refuses a taken name and a console with no database to share; a failed check leaves nothing behind', async () => {
+  const { r, git } = repo(), h = withHome({ w1: db })
+  const o = new Ops({ root: r, exec: fakeExec().exec, home: h.home })
+  const taken = { ids: ['w1', 'w2'], prefixes: ['W'] }
+  assert.match((await o.createWorkspace('w1', { id: 'w2', prefix: 'X', title: 't' }, taken) as { error: string }).error, /w2 is taken/)
+  assert.match((await o.createWorkspace('w1', { id: 'x', prefix: 'W', title: 't' }, taken) as { error: string }).error, /prefix W is taken/)
+  const none = new Ops({ root: r, exec: fakeExec().exec, home: withHome({ w1: {} }).home })
+  assert.match((await none.createWorkspace('w1', { id: 'x', prefix: 'X', title: 't' }, taken) as { error: string }).error, /pgUrl and pgPasswordPath/)
+  const fake = new Ops({ root: r, exec: fakeExec().exec, home: withHome({}).home, fake: true })
+  const b = await fake.createWorkspace('w1', { id: 'y', prefix: 'Y', title: 't' }, taken)
+  assert.ok(b.ok, 'fake gateways need no database')
+
+  const head = git('rev-parse', 'HEAD'), bad = new Ops({ root: r, exec: fakeExec({ fail: ['test'] }).exec, home: h.home })
+  const c = await bad.createWorkspace('w1', { id: 'z', prefix: 'Z', title: 't' }, taken)
+  assert.equal(c.ok, false)
+  assert.equal(git('rev-parse', 'HEAD'), head)
+  assert.equal(git('status', '--porcelain'), '')
+  assert.equal(readFileSync(join(h.home, 'config.json'), 'utf8'), h.text)
+})
+
+test('undo commits its own files only: the agent\'s other edits stay uncommitted', async () => {
+  const { r, put, git } = repo(), { o } = ops(r, fakeExec())
+  put('workspaces/w1/page.ts', 'export const A = 2\n')
+  const a = await o.apply('w1', 'two'); assert.ok(a.ok)
+  put('workspaces/w1/other.ts', 'export const O = 1\n')
+  const u = await o.undo('w1', a.sha)
+  assert.ok(u.ok, JSON.stringify(u))
+  assert.deepEqual(git('show', '--name-only', '--format=', 'HEAD').split('\n'), ['workspaces/w1/page.ts'])
+  assert.equal(git('status', '--porcelain'), '?? workspaces/w1/other.ts')
+})
