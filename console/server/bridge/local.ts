@@ -14,6 +14,8 @@ import { SCHEMAS_DIR, validator } from '../browser/schema.ts'
 import { fileDocs, STATE, StateB } from '../browser/state.ts'
 import type { StateDocs } from '../browser/state.ts'
 import { TabPool } from '../browser/tabs.ts'
+import { ensureToken, serveBridge } from '../browser/serve.ts'
+import type { Served } from '../browser/serve.ts'
 import { readToken } from '../config.ts'
 import { HttpError } from '../events.ts'
 import type { Bus } from '../events.ts'
@@ -23,7 +25,10 @@ import type { ActReq, ActRes, ConceptReply } from './wire.ts'
 /* The Bridge served from the console itself: A from the workspace's packs running in tabs of the console's own Edge,
    B kept here. A workspace opts in by returning localSource(cfg, o) from its source(); tokens never leave the tabs. */
 
-export type LocalStatus = { browser: BrowserStatus; packs: Record<string, string>; tabs: { key: string; host: string; signin: boolean }[]; mcp: string | null }
+/** mcp = where the run MCP is served, null when it is not; mcpError = why it could not be */
+export type LocalStatus = {
+  browser: BrowserStatus; packs: Record<string, string>; tabs: { key: string; host: string; signin: boolean }[]; mcp: string | null; mcpError?: string
+}
 export type LocalSource = Source & { status(): LocalStatus; front(host: string): Promise<void>; local: true }
 export type LocalOptions = {
   bus: Bus; ws: string
@@ -39,6 +44,8 @@ export type LocalOptions = {
   /** how long a read waits for a concept's first poll */
   firstReadMs?: number
   runtime?: { evalMs?: number; actMs?: number; settleMs?: number }
+  /** serve the run MCP's read tools at cfg.gatewayUrl (loopback only) on the token in cfg.llmTokenPath, made when missing */
+  mcp?: boolean
   log?: (line: string) => void
 }
 
@@ -197,7 +204,21 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
     }
   }
 
-  return {
+  let served: Served | null = null, mcpError: string | undefined
+  const serveMcp = async () => {
+    try {
+      const u = new URL(cfg.gatewayUrl)
+      const host = u.hostname.replace(/^\[|\]$/g, ''), port = Number(u.port) || 80
+      ensureToken(cfg.llmTokenPath)
+      const s = await serveBridge({ source: self, bus, host, port, llmToken: () => readToken(cfg.llmTokenPath), name: o.ws })
+      if (running) served = s; else await s.close()
+    } catch (e) {
+      mcpError = `the run MCP is not served at ${cfg.gatewayUrl}: ${(e as Error).message}`
+      log(`local source ${o.ws}: ${mcpError}`)
+    }
+  }
+
+  const self: LocalSource = {
     local: true,
     available: () => b.ready,
     concepts,
@@ -266,12 +287,14 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
         key, host: pool.host(key),
         signin: [...cs.values()].some((c) => `${c.pack.name}/${c.tab}` === key && c.proj.state === 'signin_required'),
       })),
-      mcp: null,
+      mcp: served ? `${served.url}/mcp` : null,
+      ...(mcpError ? { mcpError } : {}),
     }),
     start() {
       if (running) return
       running = true
       void loadB()
+      if (o.mcp) void serveMcp()
       if (!browser) return
       unsub = browser.onChange(onBrowser)
       timer = setInterval(tick, tickMs)
@@ -284,7 +307,9 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
       unsub?.(); unsub = null
       if (browser) void browser.stop()
       if (!o.docs) void (docs as { close?: () => Promise<void> }).close?.()
+      void served?.close(); served = null
       emitBridge('unavailable')
     },
   }
+  return self
 }
