@@ -1,0 +1,19 @@
+{
+  "name": "m365-mail",
+  "zone": "UTC",
+  "script": "m365-mail.js",
+  "config": {
+    "host": { "about": "the Outlook on the web site the person signs in to", "enum": ["outlook.office.com", "outlook.office365.com", "outlook.cloud.microsoft"], "default": "outlook.office.com" }
+  },
+  "hosts": ["{host}", "graph.microsoft.com", "outlook.office.com"],
+  "tabs": {
+    "outlook": { "match": "^https://{host}/", "open": "https://{host}/mail/" }
+  },
+  "concepts": {
+    "mail": { "tab": "outlook", "interval": 10, "cap": 100 },
+    "cal": { "tab": "outlook", "interval": 60, "cap": 200 }
+  },
+  "actions": {
+    "mail.send": { "tab": "outlook", "concept": "mail" }
+  }
+}

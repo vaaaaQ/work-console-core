@@ -11,7 +11,7 @@ flowchart LR
   tab -->|fetch, credentials: include| api[Tool's own web API]
   tab -->|"{ok, data} | {ok:false, code}"| carrier --> gw
 ```
-*The script runs as the page and uses the tab's own session. It never sees or returns a token.*
+*The script runs as the page and uses the tab's own session. It never returns a token.*
 
 ## pack.json
 
@@ -92,6 +92,9 @@ Return `{ok:false, code, message, retryAfter?}` and never throw out of the funct
 
 - Check the tab's host for every concept and action, so the script never acts on a sign-in page.
 - Validate every id against a strict regex before it reaches a URL or a query (`KEY` in the example).
+- A tab whose API wants a bearer token keeps one from its own sign-in library, such as MSAL's entries in
+  `localStorage`. Use the live one that expires last, only in a header from inside the tab, only to a
+  declared host, and never follow a link the source returned to another host (`packs/m365-mail/`).
 - Scrub tokens from every message (`scrub`).
 - Return times as ISO UTC. The `zone` field is for display only.
 - Keep the script self-contained, with no imports. The carrier serializes it.
