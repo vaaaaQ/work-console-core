@@ -20,7 +20,7 @@ import * as api from './api.ts'
 import { LIVE } from './api.ts'
 import { setZone, zone } from '../lib/zone.ts'
 import { HID, hiddenOf, hideIn, loadHidden, unhideIn } from '../actions/hidden.ts'
-import { L, applyState, buildFeed, fromQuery, loadSources, onEvent, pbWs, srcState } from './boot.ts'
+import { L, applyState, buildFeed, down, fromQuery, loadSources, onEvent, pbWs, srcState } from './boot.ts'
 
 /* The page's client against the real backend (fake gateways, scripted SDK): the shapes the page
    sends and reads are the ones the server speaks. Two workspaces: acme mints A-NNNN, beta is Acme
@@ -368,6 +368,26 @@ test('voice: the state says when the PC has a key; the page sends a recording an
     assert.equal(await api.transcribe('acme', Buffer.from('opus').toString('base64'), 'audio/webm;codecs=opus'), 'armá un job')
     assert.equal(sent!.get('model'), 'whisper-1')
   } finally { globalThis.fetch = real; LIVE.voice = false; await m.close() }
+})
+
+test('a workspace on its own store names the database and why when it is down; a gateway one keeps the bridge wording', async () => {
+  const m = await backend()
+  try {
+    const st = await api.state()
+    st.ws.beta.bridge = { state: 'unavailable', concepts: {}, via: 'store', why: 'Postgres not running — start Docker and run install again' }
+    applyState(st)
+    api.LIVE.on = true
+    assert.equal(down('beta').banner, 'The database is unavailable: Postgres not running — start Docker and run install again. Jobs cannot be read or changed until it is back; nothing is queued.')
+    assert.equal(down('beta').off, 'The database is unavailable')
+    assert.equal(srcState('chat', 'beta'), 'the database is unavailable')
+    assert.equal(down('acme').banner, 'The bridge is unavailable: sources are unavailable and changes are refused until it is back. Nothing is queued.')
+    // a later frame brings a new reason; what the workspace stands on stays
+    onEvent({ kind: 'bridge', ws: 'beta', state: 'unavailable', concepts: {}, why: 'connect ECONNREFUSED 127.0.0.1:55433.' })
+    assert.equal(L('beta').via, 'store')
+    assert.match(down('beta').banner, /^The database is unavailable: connect ECONNREFUSED 127\.0\.0\.1:55433\. Jobs/)
+    onEvent({ kind: 'bridge', ws: 'beta', state: 'unavailable', concepts: {} })
+    assert.match(down('beta').banner, /^The database is unavailable\. Jobs/, 'no reason, no colon')
+  } finally { api.LIVE.on = false; await m.close() }
 })
 
 test('the state names the build the server serves; a later state with another build flags the page as updated', async () => {

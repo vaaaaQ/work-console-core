@@ -8,7 +8,7 @@ import { VIEWS, closeDrawer, demoInfo, dismiss, go, isDark, isView, readHash, to
 import { escNarrow } from './actions/wide.ts'
 import { curChat } from './actions/sources.tsx'
 import { LIVE, missingParts, pushSupported, subscribePush } from './live/api.ts'
-import { L } from './live/boot.ts'
+import { L, down } from './live/boot.ts'
 import { REG } from './data/registry.ts'
 import { Devices } from './views/Devices.tsx'
 import { Ic } from './ui/Icon.tsx'
@@ -126,12 +126,12 @@ export function App() {
         {LIVE.on ? <>
           {LIVE.push && pushSupported() && Notification.permission === 'default'
             ? <button className="btn sm ghost hide-sm" onClick={() => void subscribePush(LIVE.push, true).then(repaint)}>Enable notifications</button> : null}
-          <span className={'live' + (L().bridge === 'ok' ? '' : ' off')} title={L().bridge === 'ok' ? 'Connected to the bridge' : 'The bridge is unavailable'}>{L().bridge === 'ok' ? 'Live' : 'Offline'}</span>
+          <span className={'live' + (L().bridge === 'ok' ? '' : ' off')} title={L().bridge === 'ok' ? `Connected to ${down().name}` : down().off}>{L().bridge === 'ok' ? 'Live' : 'Offline'}</span>
         </> : <button className="demo" title="What is real here" onClick={demoInfo}>Demo</button>}
         <button className="iconbtn" id="theme" aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'} onClick={toggleTheme}><Ic n={dark ? 'sun' : 'moon'} /></button>
       </header>
       {LIVE.on && LIVE.updated ? <div className="banner note" role="status"><Ic n="refresh" sm />Updated — press Ctrl+F5</div> : null}
-      {LIVE.on && L().bridge !== 'ok' ? <div className="banner" role="status"><Ic n="warn" sm />The bridge is unavailable: sources are unavailable and changes are refused until it is back. Nothing is queued.</div> : null}
+      {LIVE.on && L().bridge !== 'ok' ? <div className="banner" role="status"><Ic n="warn" sm />{down().banner}</div> : null}
       {LIVE.on && missingParts().length ? <div className="banner" role="status"><Ic n="warn" sm />The state store did not answer: {missingParts().join(' and ')} are unavailable, not empty. Retrying.</div> : null}
       <Nav />
       <main id="main">{VIEWS.map((v) => (

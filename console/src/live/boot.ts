@@ -23,8 +23,20 @@ export function srcState(concept: string, ws: Ws = S.ws): string | null {
   if (!LIVE.on) return null
   const l = LIVE.ws[ws]
   if (!l) return 'not served by the console backend'
-  if (l.bridge !== 'ok') return 'the bridge is unavailable'
+  if (l.bridge !== 'ok') return `${down(ws).name} is unavailable`
   return l.sources[concept] || 'loading'
+}
+
+/** what is down in a workspace, named for its banner, its pill and its sources */
+export function down(ws: Ws = S.ws) {
+  const l = L(ws)
+  if (l.via === 'store') {
+    const why = l.why.trim().replace(/\.$/, '')
+    return { name: 'the database', off: 'The database is unavailable',
+      banner: `The database is unavailable${why ? `: ${why}` : ''}. Jobs cannot be read or changed until it is back; nothing is queued.` }
+  }
+  return { name: 'the bridge', off: 'The bridge is unavailable',
+    banner: 'The bridge is unavailable: sources are unavailable and changes are refused until it is back. Nothing is queued.' }
 }
 
 let rereading: ReturnType<typeof setTimeout> | undefined
@@ -61,7 +73,7 @@ export function applyState(st: State) {
   for (const id of Object.keys(LIVE.ws)) if (!(id in st.ws)) delete LIVE.ws[id]
   for (const [id, b] of blocks) {
     Object.assign((LIVE.ws[id] ||= blankWs()), {
-      bridge: b.bridge.state, concepts: b.bridge.concepts, parts: { jobs: b.parts.jobs, runs: b.parts.runs }, plugins: b.plugins || {},
+      bridge: b.bridge.state, concepts: b.bridge.concepts, via: b.bridge.via ?? 'gateway', why: b.bridge.why ?? '', parts: { jobs: b.parts.jobs, runs: b.parts.runs }, plugins: b.plugins || {},
     })
   }
   clearTimeout(rereading)
@@ -150,7 +162,7 @@ export function onEvent(e: Ev) {
     const l = LIVE.ws[e.ws]
     if (!l) return
     const back = l.bridge !== 'ok' && e.state === 'ok'
-    commit(() => { l.bridge = e.state; l.concepts = e.concepts })
+    commit(() => { l.bridge = e.state; l.concepts = e.concepts; if (e.via) l.via = e.via; l.why = e.why ?? '' })
     if (back) { void loadSources(e.ws); void api.state().then((s) => commit(() => applyState(s))).catch(() => undefined) }
   } else if (e.kind === 'source' && LIVE.ws[e.ws] && CONCEPTS.includes(e.concept)) {
     soon(`${e.ws}/${e.concept}`, () => void loadSources(e.ws, [e.concept]))

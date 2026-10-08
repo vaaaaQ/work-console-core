@@ -21,7 +21,8 @@ import { acme, acmeServer } from '../testkit.ts'
 import type { Format } from '../voice/format.ts'
 import type { Voice } from '../voice/whisper.ts'
 import type { Plugin, WorkspaceServer, WsConfig } from '../workspace.ts'
-import { createApp } from './app.ts'
+import { bridgeOf, createApp } from './app.ts'
+import type { Bridge } from './app.ts'
 
 /* The whole backend over real sockets: two workspaces, each on its own fake gateway with its store in B,
    and a scripted SDK that drafts at once and builds a form from the first say. acme mints A-NNNN and mounts a test plugin; beta is Acme under
@@ -194,6 +195,7 @@ test('state: the PC zone in home, one block per workspace with its jobs, playboo
     for (const w of [a, b]) {
       for (const k of ['jobs', 'runs', 'marks', 'parts', 'playbooks', 'templates', 'bridge', 'plugins']) assert.ok(k in w, k)
       assert.deepEqual(w.parts, { jobs: 'ok', runs: 'ok', marks: 'ok' }); assert.equal(w.bridge.state, 'ok')
+      assert.equal(w.bridge.via, 'gateway'); assert.equal(w.bridge.why, '')
       assert.ok(Object.keys(w.bridge.concepts).length > 0)
     }
     assert.deepEqual(a.jobs.map((j: Job) => j.id), ['A-0001']); assert.deepEqual(b.jobs, [])
@@ -340,6 +342,13 @@ test('a state store that cannot be read shows as unavailable, not as no jobs', a
     fakes.acme.setSource('runs', null)
     assert.deepEqual((await call(lp, 'GET', '/api/state')).json.ws.acme.parts, { jobs: 'ok', runs: 'ok', marks: 'ok' })
   } finally { await stop() }
+})
+
+test('a bridge block says what is down and why: a store source names itself, a gateway is the default', () => {
+  const src = (up: boolean, more: object = {}) => ({ source: { available: () => up, concepts: () => ({}), ...more } as unknown as Bridge })
+  assert.deepEqual(bridgeOf(src(false, { via: 'store', why: () => 'Postgres not running' })), { state: 'unavailable', concepts: {}, via: 'store', why: 'Postgres not running' })
+  assert.deepEqual(bridgeOf(src(true, { via: 'store', why: () => 'stale' })), { state: 'ok', concepts: {}, via: 'store', why: '' })
+  assert.deepEqual(bridgeOf(src(false)), { state: 'unavailable', concepts: {}, via: 'gateway', why: '' })
 })
 
 test('SSE opens with one bridge frame per workspace; a job event carries its workspace', async () => {

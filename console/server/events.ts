@@ -10,7 +10,7 @@ export type Ev = (
   | { kind: 'feed'; run: string; t: string; tool?: string }
   /** what the job builder is reading, by the id the page gave the build */
   | { kind: 'build'; id: string; t: string; tool?: string }
-  | { kind: 'bridge'; state: BridgeState; concepts: Record<string, string> }
+  | { kind: 'bridge'; state: BridgeState; concepts: Record<string, string>; via?: 'gateway' | 'store'; why?: string }
   | { kind: 'source'; concept: string; upserts: unknown[]; removes: string[]; reset?: boolean }
 ) & { ws?: string }
 
