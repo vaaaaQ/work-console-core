@@ -7,6 +7,7 @@ import { consoleHome, firstFree, gitId, isFree, npmChecks, readJson, run, writeJ
 import { dockerRunner, engine, envNames, postgres } from './postgres.mjs'
 import { startConsole } from './run.mjs'
 import { isCoreLayout, readCore, sync } from './sync-core.mjs'
+import { addRegistry, EMPTY_GRANTS_JSON, HOME, render } from './workspaces.mjs'
 
 /* One command from an empty folder to a running console:
      node <core>/console/scripts/install.mjs --to <dir> [--provider claude|cursor] [--port n] [--force] [--no-start] [--no-prompt]
@@ -15,8 +16,15 @@ import { isCoreLayout, readCore, sync } from './sync-core.mjs'
 
 const HERE = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const USAGE = 'usage: node <core>/console/scripts/install.mjs --to <dir> [--provider claude|cursor] [--port n] [--force] [--no-start] [--no-prompt] [--core <core repo>]'
-const TEMPLATES = [['consumer/page.ts', 'workspaces/page.ts'], ['consumer/server.ts', 'workspaces/server.ts'],
-  ['consumer/home/page.ts', 'workspaces/home/page.ts'], ['consumer/home/server.ts', 'workspaces/home/server.ts']]
+const REGISTRIES = ['workspaces/page.ts', 'workspaces/server.ts']
+/** what a new folder starts with, from the core's consumer/ templates: both registries with home in them, and home */
+const STARTERS = [
+  ['workspaces/page.ts', (t) => addRegistry(t('consumer/page.ts'), 'page', HOME.id)],
+  ['workspaces/server.ts', (t) => addRegistry(t('consumer/server.ts'), 'server', HOME.id)],
+  [`workspaces/${HOME.id}/page.ts`, (t) => render(t('consumer/workspace-template/page.ts'), HOME)],
+  [`workspaces/${HOME.id}/server.ts`, (t) => render(t('consumer/workspace-template/server.ts'), HOME)],
+  [`workspaces/${HOME.id}/grants.json`, () => EMPTY_GRANTS_JSON],
+]
 
 /** the console's providers, and those that run by themselves; a test pins both to server/llm/providers.ts */
 export const PROVIDER_IDS = ['claude', 'cursor']
@@ -67,19 +75,23 @@ export function folder(o) {
   const to = resolve(o.to)
   mkdirSync(to, { recursive: true })
   const lock = readJson(join(to, 'core.lock.json'), null)
-  const regs = TEMPLATES.slice(0, 2).every(([, p]) => existsSync(join(to, p)))
+  const regs = REGISTRIES.every((p) => existsSync(join(to, p)))
   if (!lock && !regs && readdirSync(to).some((n) => n !== '.git')) throw new Error(`${to} is not empty and is not a Work Console folder: give an empty or a new folder`)
   // a repair stays on the locked core; moving on is update.mjs's job
   const rev = lock?.core ?? 'HEAD'
   const wrote = []
   if (!regs) {
     const { files } = readCore(core, rev)
-    for (const [from, p] of TEMPLATES) {
-      if (existsSync(join(to, p))) continue
+    const t = (from) => {
       const buf = files.get(from)
       if (!buf) throw new Error(`the core at ${rev} has no console/${from}`)
+      return buf.toString('utf8')
+    }
+    for (const [p, make] of STARTERS) {
+      if (existsSync(join(to, p))) continue
+      const body = make(t)
       mkdirSync(dirname(join(to, p)), { recursive: true })
-      writeFileSync(join(to, p), buf)
+      writeFileSync(join(to, p), body)
       wrote.push(p)
     }
   }

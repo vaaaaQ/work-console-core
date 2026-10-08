@@ -39,7 +39,7 @@ function setup() {
   put(origin, 'console/package-lock.json', '{ "v": 1 }\n')
   put(origin, 'console/.gitignore', 'node_modules/\ndist/\n')
   put(origin, 'console/server/a.ts', 'export const a = 1\n')
-  for (const t of ['page.ts', 'server.ts', 'home/page.ts', 'home/server.ts']) put(origin, `console/consumer/${t}`, readFileSync(join(CONSUMER, t), 'utf8'))
+  for (const t of ['page.ts', 'server.ts', 'workspace-template/page.ts', 'workspace-template/server.ts']) put(origin, `console/consumer/${t}`, readFileSync(join(CONSUMER, t), 'utf8'))
   git(origin, 'add', '-A')
   git(origin, 'commit', '-q', '-m', 'core')
   const core = join(tmp('core'), 'core')
