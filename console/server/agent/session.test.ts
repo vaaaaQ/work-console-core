@@ -170,6 +170,7 @@ test('one turn at a time; Stop ends it idle; the page can undo an apply and the 
   const { done } = await x.s.send('make a board')
   await assert.rejects(x.s.send('again'), /still answering/)
   while (!x.calls.length) await new Promise((ok) => setTimeout(ok, 5))
+  await assert.rejects(x.s.undo('a'.repeat(40)), /still answering/, 'no undo under a running turn')
   x.s.stop(); await done
   let r = (await x.s.current())!
   assert.equal(r.status, 'idle')

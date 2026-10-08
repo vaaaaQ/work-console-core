@@ -61,6 +61,7 @@ export function applyState(st: State) {
   for (const [id, b] of blocks) {
     Object.assign((LIVE.ws[id] ||= blankWs()), {
       bridge: b.bridge.state, concepts: b.bridge.concepts, parts: { jobs: b.parts.jobs, runs: b.parts.runs }, plugins: b.plugins || {},
+      managed: b.managed === true, agent: b.agent ?? null,
     })
   }
   clearTimeout(rereading)
@@ -145,6 +146,10 @@ export function onEvent(e: Ev) {
     f.push(e.tool ? `→ ${e.tool} ${e.t}` : e.t)
     if (f.length > 300) f.splice(0, f.length - 300)
     repaint()
+  } else if (e.kind === 'agent') {
+    const l = LIVE.ws[e.ws]
+    // a new conversation replaces the one on screen; an older one's late frame does not
+    if (l && (!l.agent || l.agent.id === e.agent.id || e.agent.created >= l.agent.created)) commit(() => { l.agent = e.agent })
   } else if (e.kind === 'bridge') {
     const l = LIVE.ws[e.ws]
     if (!l) return

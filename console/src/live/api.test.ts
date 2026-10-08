@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -387,4 +387,44 @@ test('providers: the state names them, settings round-trip, a step opens in the 
     assert.equal(o.label, 'Cursor'); assert.equal(o.open.kind, 'link')
     assert.match(o.open.value, /^cursor:\/\/anysphere\.cursor-deeplink\/prompt\?text=/)
   } finally { LIVE.providers = { auto: 'claude', manual: 'claude', manualLabel: 'Claude Code' }; await m.close() }
+})
+
+test("the agent through the page's client: a managed workspace shows it; a message runs a turn; a rejected grants change goes back with its reason", async () => {
+  const home = mkdtempSync(join(tmpdir(), 'wc-api-')), root = mkdtempSync(join(tmpdir(), 'wc-root-'))
+  mkdirSync(join(root, 'workspaces', 'beta'), { recursive: true })
+  writeFileSync(join(root, 'workspaces', 'beta', 'grants.json'), JSON.stringify({ packs: ['p'] }))
+  const prompts: string[] = []
+  const withAgent: Sdk = {
+    ...sdk,
+    async *agent(o) {
+      prompts.push(o.prompt)
+      yield { k: 'session', id: 's1' }
+      if (prompts.length === 1) await o.tools.find((t) => t.name === 'propose_grants')!.run({ change: { packs: ['p'], hosts: ['api.example.com'] }, reason: 'read the tracker' })
+      yield { k: 'text', t: prompts.length === 1 ? 'Asked for the tracker.' : 'Understood.' }
+      yield { k: 'result', ok: true }
+    },
+  }
+  const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
+  const m = await main({ cfg, sdk: withAgent, workspaces: [acmeServer, betaW], root })
+  api.setBase(`http://127.0.0.1:${m.loopbackPort}`)
+  const idle = async () => (await api.state()).ws.beta.agent?.status === 'idle'
+  try {
+    applyState(await api.state())
+    assert.deepEqual([L('acme').managed, L('beta').managed, L('beta').agent], [false, true, null])
+    assert.equal((await api.agentSay('beta', 'set it up')).status, 'running')
+    await until(idle)
+    applyState(await api.state())
+    const a = L('beta').agent!
+    assert.deepEqual(a.turns.map((t) => [t.who, t.t]), [['you', 'set it up'], ['agent', 'Asked for the tracker.']])
+    assert.deepEqual(a.pending?.diff, ['+ host api.example.com'])
+    await assert.rejects(api.agentGrants('beta', false, ' '), (e: api.ApiError) => e.status === 400)
+    assert.equal((await api.agentGrants('beta', false, 'not yet')).pending, undefined)
+    await until(async () => prompts.length === 2 && await idle())
+    assert.match(prompts[1], /Their reason: not yet/)
+    // a new conversation replaces the one on screen; a late frame of the older one does not
+    const fresh = await api.agentNew('beta')
+    onEvent({ kind: 'agent', ws: 'beta', agent: fresh })
+    onEvent({ kind: 'agent', ws: 'beta', agent: a })
+    assert.equal(L('beta').agent!.id, fresh.id)
+  } finally { await m.close() }
 })

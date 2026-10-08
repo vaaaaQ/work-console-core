@@ -81,6 +81,7 @@ export class AgentSession {
 
   /** the person takes back one of the agent's commits from the page */
   async undo(sha: string): Promise<AgentRec> {
+    if (this.turn) throw busy()
     const xs = await this.load(), c = xs.flatMap((x) => x.commits).find((x) => x.sha === sha)
     if (!c) throw new HttpError(404, 'not_found', `${short(sha)} is not one of the agent's commits`)
     if (c.undoneBy) throw new HttpError(409, 'undone', `${short(c.sha)} is already undone by ${short(c.undoneBy)}`)
