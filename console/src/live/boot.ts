@@ -44,6 +44,8 @@ export function applyState(st: State) {
   try { setZone(st.home.tz) } catch { /* as said */ }
   LIVE.voice = st.voice === true
   if (st.providers) LIVE.providers = st.providers
+  // the first build seen is the one this page runs; another one means the server restarted into a new build
+  if (st.build) { if (!LIVE.build) LIVE.build = st.build; else if (st.build !== LIVE.build) LIVE.updated = true }
   const blocks = Object.entries(st.ws)
   for (const k of Object.keys(PB)) delete PB[k]
   for (const k of Object.keys(PB_WS)) delete PB_WS[k]

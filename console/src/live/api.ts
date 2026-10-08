@@ -37,6 +37,8 @@ export interface State {
   voice: boolean
   /** who runs by itself, and who a step taken up by hand opens in */
   providers?: Providers
+  /** the page build the server serves; null when it serves none (the dev server) */
+  build?: string | null
   ws: Record<string, WsBlock>
 }
 export type ProviderId = 'claude' | 'cursor'
@@ -93,6 +95,8 @@ export const LIVE = {
   /** the backend can turn speech into text */
   voice: false,
   providers: { auto: 'claude', manual: 'claude', manualLabel: 'Claude Code' } as Providers,
+  /** the page build this page loaded; updated = the server now serves another one */
+  build: null as string | null, updated: false,
   /** one block per workspace the backend serves */
   ws: {} as Record<string, LiveWs>,
 }

@@ -56,6 +56,8 @@ export interface Deps {
   voice?: Voice
   /** dictated text made clean for a field; none = no Tidy up */
   format?: Format
+  /** the page build being served; a new one after a restart tells open pages to reload */
+  build?: () => string | null
 }
 
 type Side = 'loopback' | 'lan'
@@ -215,6 +217,7 @@ export function createApp(d: Deps) {
       side: r.side, device: r.device, push: d.notify ? { key: d.notify.publicKey() } : null,
       voice: d.voice?.ready() ?? false,
       providers: { auto: set.auto, manual: set.manual, manualLabel: PROVIDERS[set.manual].label },
+      build: d.build?.() ?? null,
       ws: Object.fromEntries(list.map((s, i) => [s.id, blocks[i]])),
     }
   }

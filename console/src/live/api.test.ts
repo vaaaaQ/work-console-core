@@ -5,6 +5,8 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { buildId } from '../../server/build.ts'
 import { loadConfig } from '../../server/config.ts'
 import { main } from '../../server/main.ts'
 import type { Sdk } from '../../server/llm/sdk.ts'
@@ -427,4 +429,25 @@ test("the agent through the page's client: a managed workspace shows it; a messa
     onEvent({ kind: 'agent', ws: 'beta', agent: a })
     assert.equal(L('beta').agent!.id, fresh.id)
   } finally { await m.close() }
+})
+
+test('the state names the build the server serves; a later state with another build flags the page as updated', async () => {
+  const m = await backend()
+  const was = { build: LIVE.build, updated: LIVE.updated }
+  try {
+    const st = await api.state()
+    assert.equal(st.build, buildId(fileURLToPath(new URL('../../dist/index.html', import.meta.url))))
+    LIVE.build = null; LIVE.updated = false
+    applyState({ ...st, build: null })
+    assert.equal(LIVE.updated, false, 'no build (the dev server) is never an update')
+    applyState({ ...st, build: 'a' })
+    applyState({ ...st, build: 'a' })
+    assert.equal(LIVE.build, 'a')
+    assert.equal(LIVE.updated, false, 'the same build again is not an update')
+    applyState({ ...st, build: 'b' })
+    assert.equal(LIVE.updated, true, 'a restart into another build asks for a reload')
+    assert.equal(LIVE.build, 'a', 'the page still runs the build it loaded')
+    applyState({ ...st, build: null })
+    assert.equal(LIVE.updated, true, 'and keeps asking')
+  } finally { Object.assign(LIVE, was); await m.close() }
 })
