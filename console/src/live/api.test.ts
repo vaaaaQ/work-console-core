@@ -511,6 +511,19 @@ test("a source waiting for a sign-in names its host; Sign in brings that tab of 
   } finally { api.LIVE.on = false; await m.close(); await cdp.close() }
 })
 
+test('the event stream hands the page each kind the server sends: an update that ends clears the banner', () => {
+  const g = globalThis as { EventSource?: unknown }, was = g.EventSource, heard = new Map<string, (m: { data: string }) => void>()
+  g.EventSource = class { addEventListener(k: string, f: (m: { data: string }) => void) { heard.set(k, f) } close() {} }
+  try {
+    const got: api.Ev[] = []
+    const off = api.events((e) => got.push(e))
+    heard.get('update')?.({ data: JSON.stringify({ update: null }) })
+    heard.get('build')?.({ data: JSON.stringify({ id: 'b1', t: 'built' }) })
+    off()
+    assert.deepEqual(got, [{ kind: 'update', update: null }, { kind: 'build', id: 'b1', t: 'built' }])
+  } finally { g.EventSource = was }
+})
+
 test("a failed core update through the page's client: the state and its events carry it; Reintegrate opens a conversation; Give up drops it", async () => {
   const home = mkdtempSync(join(tmpdir(), 'wc-api-')), root = mkdtempSync(join(tmpdir(), 'wc-root-')), wt = mkdtempSync(join(tmpdir(), 'wc-wt-'))
   mkdirSync(join(root, 'workspaces', 'beta'), { recursive: true })

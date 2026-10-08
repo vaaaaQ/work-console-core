@@ -257,10 +257,13 @@ export const pairNew = () => call<{ url: string; qr: string; expires: string }>(
 export const devices = () => call<{ devices: Device[] }>('GET', '/api/devices')
 export const revoke = (id: string) => call<object>('DELETE', `/api/devices/${enc(id)}`)
 
+/** each kind the server sends: a kind added to Ev and left out here fails the typecheck */
+const KINDS: Record<Ev['kind'], true> = { job: true, run: true, feed: true, bridge: true, source: true, build: true, agent: true, update: true }
+
 /** one EventSource for the page's lifetime; it reconnects by itself, and onOpen runs on every (re)connect */
 export function events(on: (e: Ev) => void, onOpen?: () => void) {
   const es = new EventSource(base + '/api/events')
-  for (const k of ['job', 'run', 'feed', 'bridge', 'source', 'build', 'agent']) {
+  for (const k of Object.keys(KINDS)) {
     es.addEventListener(k, (m) => { try { on({ ...JSON.parse((m as MessageEvent).data), kind: k }) } catch { /* a broken frame is dropped */ } })
   }
   if (onOpen) es.addEventListener('open', onOpen)
