@@ -46,12 +46,14 @@ test('exit 75 restarts at once; another exit waits the backoff', async () => {
   const sup = supervise({ folder: s.dir, home, cmd: s.cmd, backoff: () => 400 })
   try {
     await until('the third start', () => s.starts().length === 3)
-    const [a, b, c] = s.starts()
-    assert.ok(b - a < 400, `75 restarted after ${b - a} ms`)
-    assert.ok(c - b >= 400, `3 restarted after ${c - b} ms`)
     const log = readFileSync(join(home, 'logs', 'console.log'), 'utf8')
     assert.match(log, /exited with 75; restarting now/)
     assert.match(log, /exited with 3; restarting in 0\.4 s/)
+    // the gap from an exit to the next start, from the supervisor's own lines: node's startup time is not in it
+    const lines = log.split('\n').flatMap((l) => { const m = /^\[([^\]]+)\] (.*)$/.exec(l); return m ? [{ t: Date.parse(m[1]), s: m[2] }] : [] })
+    const gap = (exit: string) => { const i = lines.findIndex((l) => l.s.startsWith(exit)); return lines.slice(i).find((l) => l.s === 'starting')!.t - lines[i].t }
+    assert.ok(gap('exited with 75') < 400, `75 restarted after ${gap('exited with 75')} ms`)
+    assert.ok(gap('exited with 3') >= 400, `3 restarted after ${gap('exited with 3')} ms`)
   } finally { await sup.stop() }
 })
 
