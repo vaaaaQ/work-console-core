@@ -32,6 +32,8 @@ export interface State {
   side: 'loopback' | 'lan'; device: string | null; push: { key: string } | null
   /** the PC has an OpenAI key, so the mic can be offered */
   voice: boolean
+  /** the page build the server serves; null when it serves none (the dev server) */
+  build?: string | null
   ws: Record<string, WsBlock>
 }
 /** every frame but a build's names the workspace it came from; a build's names the build, which the page named */
@@ -76,6 +78,8 @@ export const LIVE = {
   push: null as string | null,
   /** the backend can turn speech into text */
   voice: false,
+  /** the page build this page loaded; updated = the server now serves another one */
+  build: null as string | null, updated: false,
   /** one block per workspace the backend serves */
   ws: {} as Record<string, LiveWs>,
 }

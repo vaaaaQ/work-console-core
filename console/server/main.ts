@@ -9,6 +9,7 @@ import * as T from '../src/model/transitions.ts'
 import type { Job } from '../src/model/types.ts'
 import { install } from '../src/workspace.ts'
 import { SERVERS } from '../workspaces/server.ts'
+import { buildId } from './build.ts'
 import type { FakeGateway } from './bridge/fake.ts'
 import { loadConfig, readRaw, readToken, wsConfigs } from './config.ts'
 import type { Config } from './config.ts'
@@ -112,6 +113,7 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
     mcp: mcpHandler({ tools: jobTools({ spaces }), token: () => readToken(mcpToken) }),
     voice: whisper({ keyPath: cfg.openaiKeyPath }),
     format: formatter({ keyPath: cfg.openaiKeyPath, model: cfg.formatModel }),
+    build: () => buildId(join(PKG, 'dist', 'index.html')),
   })
   for (const s of list) s.source.start()
   const fakes: Record<string, FakeGateway> = Object.fromEntries(list.flatMap((s) => (s.fake ? [[s.id, s.fake]] : [])))
