@@ -1,7 +1,11 @@
 import type { Runner } from './lib.mjs'
 import type { Docker, PgNames } from './postgres.mjs'
 
-export interface InstallArgs { to: string; provider: 'claude' | 'cursor'; port: number | null; force: boolean; start: boolean; prompt: boolean; core: string | null }
+export type ProviderId = 'claude' | 'cursor'
+export const PROVIDER_IDS: ProviderId[]
+export const AUTO_PROVIDERS: ProviderId[]
+/** provider null = no --provider */
+export interface InstallArgs { to: string; provider: ProviderId | null; port: number | null; force: boolean; start: boolean; prompt: boolean; core: string | null }
 export function parseArgs(argv: string[]): InstallArgs
 /** Node 22.6 or later, git and npm */
 export function tools(r?: Runner, version?: string): { ok: boolean; lines: string[] }
@@ -10,8 +14,10 @@ export function folder(o: { core: string; to: string; force?: boolean; run?: Run
 /** --port, else config.json, else install.json, else the first free from 7410 that is not the LAN port */
 export function consolePort(o: { home: string; arg: number | null; free?: (port: number) => Promise<boolean> }): Promise<number>
 export function writeConfig(home: string, o: { port: number; pgUrl?: string; passwordPath?: string }): void
+/** --provider into <home>/providers.json, keeping the rest; null touches nothing. The providers in effect */
+export function chooseProvider(home: string, name: ProviderId | null): { auto: ProviderId; manual: ProviderId }
 /** whether the provider CLI is there and signed in; never prints an account */
-export function provider(name: 'claude' | 'cursor', r?: Runner, env?: NodeJS.ProcessEnv): { ok: boolean; line: string }
+export function provider(name: ProviderId, r?: Runner, env?: NodeJS.ProcessEnv): { ok: boolean; line: string }
 /** 'on: ...' when a key is in place or typed, 'off: ...' otherwise */
 export function voice(home: string, o: { prompt: boolean; ask?: (question: string) => Promise<string> }): Promise<string>
 /** what home says while it has no database */

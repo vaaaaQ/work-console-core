@@ -18,8 +18,13 @@ const USAGE = 'usage: node <core>/console/scripts/install.mjs --to <dir> [--prov
 const TEMPLATES = [['consumer/page.ts', 'workspaces/page.ts'], ['consumer/server.ts', 'workspaces/server.ts'],
   ['consumer/home/page.ts', 'workspaces/home/page.ts'], ['consumer/home/server.ts', 'workspaces/home/server.ts']]
 
+/** the console's providers, and those that run by themselves; a test pins both to server/llm/providers.ts */
+export const PROVIDER_IDS = ['claude', 'cursor']
+export const AUTO_PROVIDERS = ['claude']
+
+/** provider null = no --provider */
 export function parseArgs(argv) {
-  const o = { to: '', provider: 'claude', port: null, force: false, start: true, prompt: true, core: null }
+  const o = { to: '', provider: null, port: null, force: false, start: true, prompt: true, core: null }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--to') o.to = argv[++i] ?? ''
@@ -31,7 +36,7 @@ export function parseArgs(argv) {
     else if (a === '--no-prompt') o.prompt = false
     else throw new Error(`unknown argument ${a}\n${USAGE}`)
   }
-  if (!['claude', 'cursor'].includes(o.provider)) throw new Error(`--provider takes claude|cursor\n${USAGE}`)
+  if (o.provider !== null && !PROVIDER_IDS.includes(o.provider)) throw new Error(`--provider takes claude|cursor\n${USAGE}`)
   if (o.port !== null && !(Number.isInteger(o.port) && o.port > 0 && o.port < 65536)) throw new Error(`--port takes a port number\n${USAGE}`)
   return o
 }
@@ -109,6 +114,20 @@ export function writeConfig(home, { port, pgUrl, passwordPath }) {
   cfg.loopbackPort = port
   if (pgUrl) cfg.workspaces = { ...cfg.workspaces, home: { ...cfg.workspaces?.home, pgUrl, pgPasswordPath: passwordPath } }
   writeJson(f, cfg)
+}
+
+/** --provider into <home>/providers.json, the console's settings file: manual always, auto where it can run by itself;
+    other keys stay, and without the flag the file is not touched. Returns the providers in effect */
+export function chooseProvider(home, name) {
+  const f = join(home, 'providers.json')
+  // a file that is not JSON reads as the defaults, as the console reads it
+  let raw = {}
+  try { raw = readJson(f, {}) } catch { /* the defaults */ }
+  const cur = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const next = name ? { ...cur, manual: name, ...(AUTO_PROVIDERS.includes(name) ? { auto: name } : {}) } : cur
+  if (name) writeJson(f, next)
+  const pick = (v, d) => (PROVIDER_IDS.includes(v) ? v : d)
+  return { auto: pick(next.auto, 'claude'), manual: pick(next.manual, 'claude') }
 }
 
 /** reports whether the LLM provider is ready; never signs in and never installs */
@@ -198,10 +217,11 @@ export async function install(o = {}) {
   writeConfig(home, { port, pgUrl: db?.url, passwordPath: db?.passwordPath })
   // a port an earlier run recorded is our own container's, so it stays when this run could not reach Docker
   const pgPort = db?.port ?? recorded.pgPort
-  writeJson(join(home, 'install.json'), { core, folder: to, port, ...(pgPort ? { pgPort } : {}), provider: a.provider })
+  const chosen = chooseProvider(home, a.provider)
+  writeJson(join(home, 'install.json'), { core, folder: to, port, ...(pgPort ? { pgPort } : {}), provider: chosen.manual })
 
-  const p = provider(a.provider, r, env)
-  step('provider', p.ok ? 'ok' : 'todo', p.line)
+  const ps = [...new Set([chosen.auto, chosen.manual])].map((n) => provider(n, r, env))
+  step('provider', ps.every((p) => p.ok) ? 'ok' : 'todo', ps.map((p) => p.line).join('; '))
 
   const v = await voice(home, { prompt: a.prompt && (!!ask || !!process.stdin.isTTY), ask })
   step('voice', v.startsWith('on') ? 'ok' : 'skipped', v)

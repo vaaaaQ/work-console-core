@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { run, type Ran, type Runner } from './lib.mjs'
-import { consolePort, folder, install, parseArgs, provider, tools, voice, writeConfig } from './install.mjs'
+import { AUTO_PROVIDERS, chooseProvider, consolePort, folder, install, parseArgs, provider, PROVIDER_IDS as IDS, tools, voice, writeConfig } from './install.mjs'
+import { PROVIDER_IDS, PROVIDERS } from '../server/llm/providers.ts'
 
 /* install.mjs against throwaway git repos: a "core" whose console/ carries the real consumer/ templates and a few
    stub files, and a consumer folder. Git runs for real; npm, docker and the provider CLIs are fakes. */
@@ -60,10 +61,29 @@ test('parseArgs reads the flags and rejects the unknown', () => {
   assert.equal(a.port, 7500)
   assert.equal(a.force && !a.start && !a.prompt, true)
   assert.equal(a.core, 'C')
-  assert.equal(parseArgs(['--to', 'X']).provider, 'claude')
+  assert.equal(parseArgs(['--to', 'X']).provider, null, 'no flag, no choice: the settings stay as they are')
   assert.throws(() => parseArgs(['--to', 'X', '--provider', 'other']), /claude\|cursor/)
   assert.throws(() => parseArgs(['--to', 'X', '--port', 'x']), /port/)
   assert.throws(() => parseArgs(['--bogus']), /unknown argument --bogus/)
+})
+
+test("the provider ids and those that run by themselves are the console's", () => {
+  assert.deepEqual(IDS, PROVIDER_IDS)
+  assert.deepEqual(AUTO_PROVIDERS, PROVIDER_IDS.filter((id) => PROVIDERS[id].auto))
+})
+
+test('chooseProvider writes --provider into providers.json, auto only where it can run by itself, and keeps the rest', () => {
+  const home = tmp('home'), f = join(home, 'providers.json')
+  assert.deepEqual(chooseProvider(home, null), { auto: 'claude', manual: 'claude' })
+  assert.equal(existsSync(f), false, 'no flag writes nothing')
+  assert.deepEqual(chooseProvider(home, 'cursor'), { auto: 'claude', manual: 'cursor' })
+  assert.deepEqual(JSON.parse(read(home, 'providers.json')), { manual: 'cursor' })
+  writeFileSync(f, JSON.stringify({ auto: 'claude', manual: 'cursor', claudePath: 'C:/x/claude.exe' }, null, 2))
+  const before = read(home, 'providers.json')
+  assert.deepEqual(chooseProvider(home, null), { auto: 'claude', manual: 'cursor' })
+  assert.equal(read(home, 'providers.json'), before, "the user's choice stays byte for byte")
+  assert.deepEqual(chooseProvider(home, 'claude'), { auto: 'claude', manual: 'claude' })
+  assert.deepEqual(JSON.parse(read(home, 'providers.json')), { auto: 'claude', manual: 'claude', claudePath: 'C:/x/claude.exe' })
 })
 
 test('tools needs Node 22.6 or later, git and npm', () => {
@@ -215,7 +235,21 @@ test('install: Docker down blocks the postgres step only and records no database
   const rec = JSON.parse(read(home, 'install.json'))
   assert.deepEqual(Object.keys(rec).sort(), ['core', 'folder', 'port', 'provider'])
   assert.equal(rec.provider, 'claude')
+  assert.equal(existsSync(join(home, 'providers.json')), false, 'no --provider, so the settings file is not written')
   assert.ok(calls.includes('npm ci') && calls.includes('npm run build'))
+})
+
+test('install --provider cursor: the settings name it for open-in, auto stays claude, and both are checked', async () => {
+  const core = makeCore(), to = tmp('to'), home = tmp('home'), calls: string[] = []
+  const r = await install({
+    argv: ['--to', to, '--core', core, '--no-prompt', '--no-start', '--provider', 'cursor'], env: { WORK_CONSOLE_HOME: home },
+    run: (c, a, o) => (c === 'agent' ? (calls.push('agent'), ok('Logged in')) : fakeRun(calls)(c, a, o)), docker: dockerDown, free: async () => true, log: quiet,
+  })
+  assert.deepEqual(JSON.parse(read(home, 'providers.json')), { manual: 'cursor' })
+  assert.equal(JSON.parse(read(home, 'install.json')).provider, 'cursor')
+  const step = r.steps.find((s) => s.name === 'provider')!
+  assert.equal(step.state, 'ok', step.line)
+  assert.ok(calls.includes('agent') && calls.some((c) => c.startsWith('claude auth status')), step.line)
 })
 
 test('install: a postgres step that fails records no address either', async () => {
