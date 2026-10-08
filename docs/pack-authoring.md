@@ -101,7 +101,13 @@ Return `{ok:false, code, message, retryAfter?}` and never throw out of the funct
 `packs/example/test/` runs the script in Node against a fake tab:
 
 - `harness.mjs` provides a routed `fetch` that records each request, plus `location` and `document`.
+  For a pack that uses the tab's MSAL tokens it also fakes `localStorage` (`msalToken`, `msalAccount`).
+  `load(url)` loads any pack's script, and `run(call, {pack})` runs it.
 - `validate.mjs` is a small JSON-schema check against `schemas/`.
+- `contract.mjs` runs the contract over a pack's `pack.json` with your fixtures. It checks that
+  reads and gets match the schemas within the cap, that an act without args is refused before any
+  request, that a blank tab, a sign-in page and a missing required setting are refused, that every
+  request goes to a declared host, and that no token appears in any result.
 
 ```bash
 node --test "packs/**/test/*.test.mjs"
