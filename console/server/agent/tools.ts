@@ -22,7 +22,7 @@ const RESTART = 'The console restarts when this turn ends; the page then says Up
 
 const checkTool = (ws: string, ops: Pick<Ops, 'check'>): AskTool => ({
   name: 'check',
-  description: 'Typecheck, run the tests and the static import check of the console as it is now. Answers the failures, if any.',
+  description: 'Typecheck, run the tests under workspaces/<id>/ and tools/, the registry and core-drift tests and the static import check of the console as it is now. Answers the failures, if any.',
   input: {},
   run: async () => {
     const c = await ops.check(ws)

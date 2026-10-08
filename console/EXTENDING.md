@@ -53,7 +53,8 @@ A plugin gets `PluginCtx` (`server/workspace.ts`):
 ## Patterns
 
 Each pattern names the test that proves it. Tests sit beside the code as `workspaces/<id>/*.test.ts`
-or `tools/**/*.test.ts`; `npm test` runs them and `check` runs `npm test`.
+or `tools/**/*.test.ts`; `npm test` runs them, and `check` runs the workspace's and `tools/`'s with the drift
+and registry tests, not the rest of the core's.
 
 ### UI section
 

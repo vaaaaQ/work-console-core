@@ -29,13 +29,15 @@ function repo() {
   return { r, put, git, read: (p: string) => readFileSync(join(r, p), 'utf8') }
 }
 
-/** npm and vite faked by name, git real; fail names the steps that exit 1 */
+/** npm, node --test and vite faked by name, git real; fail names the steps that exit 1; tests = the files of each test run */
 function fakeExec(o: { fail?: string[]; failOnce?: string[]; during?: (step: string) => void } = {}) {
-  const calls: string[] = []
+  const calls: string[] = [], tests: string[][] = []
   const exec: Exec = async (cmd, args, opt) => {
     if (cmd === 'git') return realExec(cmd, args, opt)
-    const step = cmd === 'npm' ? (args[0] === 'run' ? args[1] : args[0]) : args.includes('build') ? 'build' : `${cmd} ${args.join(' ')}`
+    const step = cmd === 'npm' ? (args[0] === 'run' ? args[1] : args[0])
+      : args.includes('--test') ? 'tests' : args.includes('build') ? 'build' : `${cmd} ${args.join(' ')}`
     calls.push(step)
+    if (step === 'tests') tests.push(args.slice(args.indexOf('--test') + 1))
     o.during?.(step)
     if (o.fail?.includes(step)) return { code: 1, out: `${step} went wrong\nline two` }
     if (o.failOnce?.includes(step) && calls.filter((c) => c === step).length === 1) return { code: 1, out: `${step} flaked` }
@@ -45,7 +47,7 @@ function fakeExec(o: { fail?: string[]; failOnce?: string[]; during?: (step: str
     }
     return { code: 0, out: 'fine' }
   }
-  return { exec, calls }
+  return { exec, calls, tests }
 }
 
 function ops(r: string, f: ReturnType<typeof fakeExec>) {
@@ -62,7 +64,7 @@ test('apply checks, builds, commits only its own files as `<ws>: <summary>` and 
   put('notes.txt', 'mine, not the agent\'s\n'); put('workspaces/w2/page.ts', 'export const B = 2\n')
   const a = await o.apply('w1', 'show the counter')
   assert.ok(a.ok, JSON.stringify(a))
-  assert.deepEqual(f.calls, ['typecheck', 'test', 'build'])
+  assert.deepEqual(f.calls, ['typecheck', 'tests', 'build'])
   assert.equal(git('log', '-1', '--format=%B'), 'w1: show the counter')
   assert.equal(a.sha, git('rev-parse', 'HEAD'))
   assert.deepEqual(a.files.sort(), ['tools/t.ts', 'workspaces/w1/new/x.ts', 'workspaces/w1/page.ts'])
@@ -152,7 +154,7 @@ test('a symlink or junction under its areas is refused by check and apply', asyn
 
 test('a change outside its areas while the check ran (test code writing the core) refuses the apply', async () => {
   const { r, put, git, read } = repo()
-  const f = fakeExec({ during: (s) => { if (s === 'test') writeFileSync(join(r, 'server', 'main.ts'), 'tampered\n') } }), { o, restarts } = ops(r, f)
+  const f = fakeExec({ during: (s) => { if (s === 'tests') writeFileSync(join(r, 'server', 'main.ts'), 'tampered\n') } }), { o, restarts } = ops(r, f)
   put('tools/t.ts', 'export const T = 1\n')
   const head = git('rev-parse', 'HEAD'), a = await o.apply('w1', 'x')
   assert.equal(a.ok, false)
@@ -165,18 +167,20 @@ test('a change outside its areas while the check ran (test code writing the core
 test('check passes, or names the failing step with its output', async () => {
   const { r } = repo()
   assert.deepEqual(await ops(r, fakeExec()).o.check('w1'), { ok: true, failures: [] })
-  const f = fakeExec({ fail: ['test'] }), c = await ops(r, f).o.check('w1')
-  assert.deepEqual(c, { ok: false, failures: ['npm test failed (exit 1)', 'test went wrong', 'line two'] })
-  assert.deepEqual(f.calls, ['typecheck', 'test', 'test'], 'a failing suite runs twice')
-})
-
-test('the tests run once more when they fail, as update.mjs does: a load flake passes the check', async () => {
-  const { r } = repo(), f = fakeExec({ failOnce: ['test'] })
-  assert.deepEqual(await ops(r, f).o.check('w1'), { ok: true, failures: [] })
-  assert.deepEqual(f.calls, ['typecheck', 'test', 'test'])
+  const f = fakeExec({ fail: ['tests'] }), c = await ops(r, f).o.check('w1')
+  assert.deepEqual(c, { ok: false, failures: ['the tests failed (exit 1)', 'tests went wrong', 'line two'] })
+  assert.deepEqual(f.calls, ['typecheck', 'tests'], 'the tests run once')
   const t = fakeExec({ fail: ['typecheck'] })
   assert.equal((await ops(r, t).o.check('w1')).ok, false)
-  assert.deepEqual(t.calls, ['typecheck'], 'a typecheck runs once')
+  assert.deepEqual(t.calls, ['typecheck'])
+})
+
+test("check runs the drift and registry tests and those of the workspace and tools/, none of the core's others", async () => {
+  const { r, put } = repo()
+  for (const p of ['workspaces/w1/a.test.ts', 'workspaces/w1/deep/b.test.ts', 'workspaces/w1/c.ts', 'workspaces/w2/d.test.ts', 'tools/e.test.ts', 'server/f.test.ts', 'scripts/g.test.ts', 'src/h.test.ts']) put(p, '')
+  const f = fakeExec()
+  assert.ok((await ops(r, f).o.check('w1')).ok)
+  assert.deepEqual(f.tests, [['server/core-lock.test.ts', 'server/registry.test.ts', 'tools/e.test.ts', 'workspaces/w1/a.test.ts', 'workspaces/w1/deep/b.test.ts']])
 })
 
 test('undo reverts its own commit, builds, commits `<ws>: undo — <summary>` and restarts', async () => {
@@ -287,7 +291,7 @@ test('createWorkspace renders the template, registers it, gives it empty grants 
   assert.match(read('workspaces/page.ts'), /\{ page: myCrm, ui: myCrmUi \}/)
   assert.match(read('workspaces/server.ts'), /SERVERS = \[myCrmServer\]/)
   assert.deepEqual(h.cfg(), { lanPort: 7411, workspaces: { w1: { ...db, knowledgeDir: 'C:/k' }, 'my-crm': db } })
-  assert.deepEqual(f.calls, ['typecheck', 'test', 'build'])
+  assert.deepEqual(f.calls, ['typecheck', 'tests', 'build'])
   assert.equal(restarts, 1)
   assert.equal(git('status', '--porcelain'), '')
 })
@@ -304,7 +308,7 @@ test('createWorkspace refuses a taken name and a console with no database to sha
   const b = await fake.createWorkspace('w1', { id: 'y', prefix: 'Y', title: 't' }, taken)
   assert.ok(b.ok, 'fake gateways need no database')
 
-  const head = git('rev-parse', 'HEAD'), bad = new Ops({ root: r, exec: fakeExec({ fail: ['test'] }).exec, home: h.home })
+  const head = git('rev-parse', 'HEAD'), bad = new Ops({ root: r, exec: fakeExec({ fail: ['tests'] }).exec, home: h.home })
   const c = await bad.createWorkspace('w1', { id: 'z', prefix: 'Z', title: 't' }, taken)
   assert.equal(c.ok, false)
   assert.equal(git('rev-parse', 'HEAD'), head)

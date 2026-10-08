@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Grants } from '../../src/model/agent.ts'
@@ -21,6 +21,24 @@ export type Applied = { ok: true; sha: string; files: string[]; summary: string 
 export interface Checked { ok: boolean; failures: string[] }
 
 const CHECK_MS = 15 * 60_000, BUILD_MS = 10 * 60_000
+/** the core's tests a check runs beside the agent's own: the drift guard and the registry's start checks */
+const CORE_TESTS = ['server/core-lock.test.ts', 'server/registry.test.ts']
+const NODE_TEST = ['--experimental-strip-types', '--no-warnings=ExperimentalWarning', '--env-file=test.env', '--test']
+
+/** the *.test.ts files under dirs of root, relative with forward slashes */
+function testsUnder(root: string, dirs: string[]): string[] {
+  const out: string[] = []
+  const walk = (rel: string) => {
+    let list
+    try { list = readdirSync(join(root, rel), { withFileTypes: true }) } catch { return }
+    for (const d of list) {
+      if (d.isDirectory() && d.name !== 'node_modules') walk(`${rel}/${d.name}`)
+      else if (d.isFile() && d.name.endsWith('.test.ts')) out.push(`${rel}/${d.name}`)
+    }
+  }
+  for (const d of dirs) walk(d)
+  return out.sort()
+}
 
 /** runs a command and gives its exit code and output; npm through the shell on Windows, a hung one killed with its children */
 export const realExec: Exec = (cmd, args, o) => new Promise((ok) => {
@@ -123,12 +141,11 @@ export class Ops {
     const locked = new Set(lockedFiles(this.root))
     const imports = importCheck(this.root, areas).filter((l) => !locked.has(l.slice(0, l.indexOf(':'))))
     if (imports.length) return { ok: false, failures: imports }
-    for (const [args, name] of [[['run', 'typecheck'], 'npm run typecheck'], [['test'], 'npm test']] as const) {
-      let r = await this.run('npm', [...args], CHECK_MS)
-      // the suite has known load flakes; one more run tells a flake from a failure, as update.mjs does
-      if (r.code !== 0 && args[0] === 'test') r = await this.run('npm', [...args], CHECK_MS)
-      if (r.code !== 0) return { ok: false, failures: [`${name} failed (exit ${r.code})`, ...tail(r.out)] }
-    }
+    const t = await this.run('npm', ['run', 'typecheck'], CHECK_MS)
+    if (t.code !== 0) return { ok: false, failures: [`npm run typecheck failed (exit ${t.code})`, ...tail(t.out)] }
+    // the rest of the core's tests change only with the core, and update.mjs runs them all
+    const r = await this.run(process.execPath, [...NODE_TEST, ...CORE_TESTS, ...testsUnder(this.root, [...areas].sort())], CHECK_MS)
+    if (r.code !== 0) return { ok: false, failures: [`the tests failed (exit ${r.code})`, ...tail(r.out)] }
     return { ok: true, failures: [] }
   }
 
