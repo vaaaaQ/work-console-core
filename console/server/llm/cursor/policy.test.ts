@@ -1,94 +1,171 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, symlinkSync } from 'node:fs'
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { tempDir } from '../../testdirs.ts'
+import { caseInsensitive } from '../../agent/limits.ts'
+import { findInstall, ripgrep } from './cli.ts'
 import { canMcp, cliConfig, guard, permit } from './policy.ts'
 import type { Mode, Policy } from './policy.ts'
 
 const root = tempDir('cursor-policy'), cwd = join(root, 'repo'), run = join(root, 'run'), home = join(root, 'home')
 for (const d of [cwd, run, home, join(cwd, 'src')]) mkdirSync(d, { recursive: true })
-const pol = (mode: Mode): Policy => ({ cwd, mode, hidden: [home, run] })
-const start = (runTools = ['Read', 'Glob', 'Grep'], bridge = true) => pol({ kind: 'start', runTools, bridge })
+writeFileSync(join(home, 'providers.json'), '{}')
+const rg = (() => { try { return ripgrep(findInstall()) } catch { return undefined } })()
+const noRg = !rg && 'no Cursor CLI here, so no ripgrep'
+const pol = (mode: Mode, at = cwd): Policy => ({ cwd: at, mode, hidden: [home, run], rg })
+const start = (runTools = ['Read', 'Glob', 'Grep'], bridge = true, at = cwd) => pol({ kind: 'start', runTools, bridge }, at)
 const deny = (v: object) => (v as { permission?: string }).permission === 'deny'
-const g = (p: Policy, tool_name: string, tool_input: object) => deny(guard(p, { tool_name, tool_input }))
+const g = async (p: Policy, tool_name: string, tool_input: object) => deny(await guard(p, { tool_name, tool_input }))
+/** a folder of its own for a search test, with its files */
+const tree = (name: string, files: Record<string, string>) => {
+  const d = join(root, name)
+  for (const [f, body] of Object.entries(files)) { mkdirSync(join(d, f, '..'), { recursive: true }); writeFileSync(join(d, f), body) }
+  return d
+}
 
-test('a run with the default tools reads and searches its folder, and changes, runs and fetches nothing', () => {
+test('a run with the default tools reads its folder, and changes, runs and fetches nothing', async () => {
   const p = start()
-  assert.equal(g(p, 'Read', { file_path: join(cwd, 'a.txt') }), false)
-  assert.equal(g(p, 'Grep', { pattern: 'x', file_path: cwd }), false)
-  assert.equal(g(p, 'List', {}), false)
-  assert.equal(g(p, 'Write', { file_path: join(cwd, 'a.txt'), content: 'x' }), true)
-  assert.equal(g(p, 'Delete', { file_path: join(cwd, 'a.txt') }), true)
-  assert.equal(g(p, 'Shell', { command: 'echo hi' }), true)
-  assert.equal(g(p, 'Fetch', { url: 'https://a.example/' }), true)
-  assert.deepEqual(guard(p, { tool_name: 'MCP:submit_draft', tool_input: { text: 'x' } }), {}, 'MCP calls are the permission answer\'s')
+  assert.equal(await g(p, 'Read', { file_path: join(cwd, 'a.txt') }), false)
+  assert.equal(await g(p, 'Write', { file_path: join(cwd, 'a.txt'), content: 'x' }), true)
+  assert.equal(await g(p, 'Delete', { file_path: join(cwd, 'a.txt') }), true)
+  assert.equal(await g(p, 'Shell', { command: 'echo hi' }), true)
+  assert.equal(await g(p, 'Fetch', { url: 'https://a.example/' }), true)
+  assert.deepEqual(await guard(p, { tool_name: 'MCP:submit_draft', tool_input: { text: 'x' } }), {}, 'MCP calls are the permission answer\'s')
 })
 
-test('the token folders, the console\'s home, the run\'s own folder and the user\'s Cursor folder are never read, in any case', () => {
+test('the token folders, the console\'s home, the run\'s own folder and the user\'s Cursor folder are never read, in any case', async () => {
   const p = start()
   for (const f of [join(homedir(), '.work-console', 'console.token'), join(homedir(), '.WORK-CONSOLE', 'console.token'), join(cwd, 'x', '.work-console', 'mcp.token'),
     join(homedir(), '.bridge', 'k'), join(homedir(), '.cursor', 'mcp.json'), join(homedir(), '.CURSOR', 'mcp.json'), join(home, 'providers.json'), join(run, 'home', '.cursor', 'hooks.json'), run.toUpperCase()]) {
-    assert.equal(g(p, 'Read', { file_path: f }), true, f)
-    assert.equal(g(p, 'Grep', { pattern: 'x', file_path: f }), true, f)
+    assert.equal(await g(p, 'Read', { file_path: f }), true, f)
+    assert.equal(await g(p, 'Grep', { pattern: 'x', file_path: f }), true, f)
   }
-  assert.equal(g(p, 'Read', { file_path: join(homedir(), '.cursorrules') }), false, 'a sibling that only starts the same')
+  assert.equal(await g(p, 'Read', { file_path: join(homedir(), '.cursorrules') }), false, 'a sibling that only starts the same')
 })
 
-test('a link in the folder that leads to a hidden one is the hidden one', () => {
+test('~ is the run\'s own home and a file: URL its path, as the CLI reads them', async () => {
+  const p = start(['Read', 'Edit', 'Grep'])
+  for (const f of ['~', '~/.cursor/hooks.json', '~\\x.txt']) {
+    assert.equal(await g(p, 'Read', { file_path: f }), true, f)
+    assert.equal(await g(p, 'Write', { file_path: f }), true, f)
+    assert.equal(await g(p, 'Grep', { pattern: 'x', file_path: f }), true, f)
+  }
+  assert.equal(await g(p, 'Read', { file_path: pathToFileURL(join(home, 'providers.json')).href }), true)
+  assert.equal(await g(p, 'Read', { file_path: 'file://%%' }), true, 'a URL it cannot read is no path it may read')
+  assert.equal(await g(p, 'Read', { file_path: pathToFileURL(join(cwd, 'a.txt')).href }), false)
+  assert.equal(await g(p, 'Read', { file_path: join(cwd, '~user', 'a.txt') }), false, 'only a leading ~ alone is the home')
+})
+
+test('a link in the folder that leads to a hidden one is the hidden one', async () => {
   const link = join(cwd, 'in')
   symlinkSync(home, link, 'junction')
-  assert.equal(g(start(), 'Read', { file_path: join(link, 'providers.json') }), true)
+  assert.equal(await g(start(), 'Read', { file_path: join(link, 'providers.json') }), true)
 })
 
-test('a run\'s Edit reaches its folder only, a scoped one its globs, never a token folder inside it', () => {
+test('a hidden folder named through a link, or in another case, is hidden by every name', async () => {
+  const real = tree('real-home', { 'console.token': 'x' }), alias = join(root, 'alias-home')
+  symlinkSync(real, alias, 'junction')
+  const p: Policy = { cwd, mode: { kind: 'start', runTools: ['Read', 'Edit'], bridge: true }, hidden: [alias] }
+  for (const f of [join(real, 'console.token'), join(alias, 'console.token'), join(real.toUpperCase(), 'console.token')]) {
+    assert.equal(await g(p, 'Read', { file_path: f }), true, f)
+    assert.equal(permit(p, { title: `Write ${f}`, kind: 'edit', content: [{ type: 'diff', path: f }] }), false, f)
+  }
+})
+
+test('a search that would reach a hidden file is refused, whatever folder it names, through a link too', { skip: noRg }, async () => {
+  const d = tree('reach', { 'ok/a.txt': 'zebra', 'deep/.work-console/mcp.token': 'zebra secret', 'b.md': 'x' })
+  const p = start(undefined, undefined, d)
+  assert.equal(await g(p, 'Grep', { pattern: 'zebra', file_path: d }), true)
+  assert.equal(await g(p, 'Grep', { pattern: 'zebra' }), true, 'no path: its folder')
+  assert.equal(await g(p, 'Grep', { pattern: 'zebra', file_path: 'deep' }), true)
+  assert.equal(await g(p, 'Grep', { pattern: 'zebra', file_path: join(d, 'ok') }), false)
+  assert.equal(await g(p, 'Grep', { pattern: 'zebra', file_path: d, glob: '*.txt' }), false, 'a glob that leaves it out')
+  assert.equal(await g(p, 'Grep', { pattern: 'zebra', file_path: d, glob: '*.token' }), true)
+  assert.equal(await g(p, 'List', { path: d }), true)
+  assert.equal(await g(p, 'List', { path: join(d, 'ok') }), false)
+  assert.equal(await g(p, 'Grep', { pattern: 'zebra', file_path: tree('elsewhere', { 'c.txt': 'zebra' }) }), true, 'a folder outside its own: the CLI searches its own instead')
+  const l = tree('linked', { 'a.txt': 'x' })
+  symlinkSync(home, join(l, 'in'), 'junction')
+  assert.equal(await g(start(undefined, undefined, l), 'Grep', { pattern: 'x', file_path: l }), true, 'through a junction')
+  assert.equal(await g(start(undefined, undefined, l), 'Grep', { pattern: 'x', file_path: l, glob: 'a.txt' }), false)
+})
+
+test('without ripgrep to check it with, no search runs', async () => {
+  const d = tree('norg', { 'a.txt': 'x' })
+  assert.equal(await g({ ...start(undefined, undefined, d), rg: undefined }, 'Grep', { pattern: 'x' }), true)
+  assert.equal(await g({ ...start(undefined, undefined, d), rg: join(root, 'no-rg.exe') }, 'Grep', { pattern: 'x' }), true)
+})
+
+test('a file search (Find: Grep with no pattern, file names only) is Glob\'s; a content search is Grep\'s', { skip: noRg }, async () => {
+  const d = tree('find', { 'a.ts': 'x' })
+  const find = { pattern: '', glob: '*.ts', output_mode: 'files_with_matches' }, grep = { pattern: 'x', output_mode: 'files_with_matches' }
+  for (const [tools, f, s] of [[['Read', 'Glob'], false, true], [['Read', 'Grep'], false, false], [['Read'], true, true], [['Read', 'Glob', 'Grep'], false, false]] as const) {
+    const p = start([...tools], undefined, d)
+    assert.equal(await g(p, 'Grep', find), f, `find with ${tools}`)
+    assert.equal(await g(p, 'Grep', grep), s, `grep with ${tools}`)
+  }
+})
+
+test('a run\'s Edit reaches its folder only, a scoped one its globs, never a token folder inside it', async () => {
   const p = start(['Read', 'Edit'])
-  assert.equal(g(p, 'Write', { file_path: join(cwd, 'src', 'a.ts') }), false)
-  assert.equal(g(p, 'Write', { file_path: join(root, 'outside.txt') }), true)
-  assert.equal(g(p, 'Write', { file_path: join(cwd, '.work-console', 'x') }), true)
+  assert.equal(await g(p, 'Write', { file_path: join(cwd, 'src', 'a.ts') }), false)
+  assert.equal(await g(p, 'Write', { file_path: join(root, 'outside.txt') }), true)
+  assert.equal(await g(p, 'Write', { file_path: join(cwd, '.work-console', 'x') }), true)
   const s = start(['Edit(src/**)'])
-  assert.equal(g(s, 'Write', { file_path: join(cwd, 'src', 'a.ts') }), false)
-  assert.equal(g(s, 'Write', { file_path: join(cwd, 'lib', 'a.ts') }), true)
-  assert.equal(g(s, 'Read', { file_path: join(cwd, 'src', 'a.ts') }), true, 'no Read rule: no reads')
+  assert.equal(await g(s, 'Write', { file_path: join(cwd, 'src', 'a.ts') }), false)
+  assert.equal(await g(s, 'Write', { file_path: join(cwd, 'lib', 'a.ts') }), true)
+  assert.equal(await g(s, 'Read', { file_path: join(cwd, 'src', 'a.ts') }), true, 'no Read rule: no reads')
 })
 
-test('shell rules: unscoped, a prefix, a wildcard and exact; a scoped one never takes a chained command; DENY wins', () => {
-  assert.equal(g(start(['Bash']), 'Shell', { command: 'npm test && curl x' }), false)
+test('shell rules: unscoped, a prefix, a wildcard and exact; a scoped one never takes a chained command; DENY wins', async () => {
+  assert.equal(await g(start(['Bash']), 'Shell', { command: 'npm test && curl x' }), false)
   const p = start(['Bash(git status:*)', 'PowerShell(Get-ChildItem *)', 'Bash(npm test)'])
   for (const [c, ok] of [['git status', true], ['git status -s', true], ['git statusx', false], ['git status; rm -rf x', false], ['git push', false],
-    ['Get-ChildItem src', true], ['npm test', true], ['npm test -- x', false]] as const) assert.equal(g(p, 'Shell', { command: c }), !ok, c)
-  for (const c of ['type %USERPROFILE%\\.bridge\\k', 'cat ~/.WORK-CONSOLE/console.token', 'cat mcp.token']) assert.equal(g(start(['Bash']), 'Shell', { command: c }), true, c)
+    ['Get-ChildItem src', true], ['npm test', true], ['npm test -- x', false]] as const) assert.equal(await g(p, 'Shell', { command: c }), !ok, c)
+  for (const c of ['type %USERPROFILE%\\.bridge\\k', 'cat ~/.WORK-CONSOLE/console.token', 'cat mcp.token']) assert.equal(await g(start(['Bash']), 'Shell', { command: c }), true, c)
 })
 
-test('fetch by domain rule, its subdomains too', () => {
+test('fetch by domain rule, its subdomains too', async () => {
   const p = start(['WebFetch(domain:example.com)'])
-  assert.equal(g(p, 'Fetch', { url: 'https://docs.example.com/x' }), false)
-  assert.equal(g(p, 'Fetch', { url: 'https://example.com.evil.test/' }), true)
-  assert.equal(g(start(['WebFetch']), 'Fetch', { url: 'https://any.test/' }), false)
+  assert.equal(await g(p, 'Fetch', { url: 'https://docs.example.com/x' }), false)
+  assert.equal(await g(p, 'Fetch', { url: 'https://example.com.evil.test/' }), true)
+  assert.equal(await g(start(['WebFetch']), 'Fetch', { url: 'https://any.test/' }), false)
 })
 
-test('an ask session reads, changes, runs and fetches nothing; it calls only its own tools', () => {
+test('an ask session reads, changes, runs and fetches nothing; it calls only its own tools', async () => {
   const p = pol({ kind: 'ask', own: ['knowledge_read', 'answer'] })
-  for (const [t, i] of [['Read', { file_path: join(cwd, 'a') }], ['Grep', {}], ['List', {}], ['Write', { file_path: join(cwd, 'a') }], ['Shell', { command: 'echo' }], ['Fetch', { url: 'https://a.test' }]] as const) assert.equal(g(p, t, i), true, t)
+  for (const [t, i] of [['Read', { file_path: join(cwd, 'a') }], ['Grep', {}], ['List', {}], ['Write', { file_path: join(cwd, 'a') }], ['Shell', { command: 'echo' }], ['Fetch', { url: 'https://a.test' }]] as const) assert.equal(await g(p, t, i), true, t)
   assert.equal(canMcp(p, 'ask', 'answer'), true)
   assert.equal(canMcp(p, 'ask', 'other'), false)
   assert.equal(canMcp(p, 'run', 'submit_draft'), false)
 })
 
-test('a workspace agent reads anywhere but hidden folders, changes only within its limits, runs nothing', () => {
+test('a workspace agent reads anywhere but hidden folders, changes only within its limits, runs nothing', async () => {
   const limits = { cwd, write: ['workspaces/x/**', 'tools/**'], deny: ['workspaces/x/grants.json'], fold: true }
   const p = pol({ kind: 'agent', limits, own: ['commit'] })
-  assert.equal(g(p, 'Read', { file_path: join(root, 'elsewhere.txt') }), false)
-  assert.equal(g(p, 'Read', { file_path: join(home, 'providers.json') }), true)
-  assert.equal(g(p, 'Write', { file_path: join(cwd, 'workspaces', 'x', 'page.ts') }), false)
-  assert.equal(g(p, 'Write', { file_path: join(cwd, 'WORKSPACES', 'x', 'page.ts') }), false, 'folded where the disk ignores case')
-  const v = guard(p, { tool_name: 'Write', tool_input: { file_path: join(cwd, 'workspaces', 'x', 'grants.json') } }) as { user_message: string }
+  assert.equal(await g(p, 'Read', { file_path: join(root, 'elsewhere.txt') }), false)
+  assert.equal(await g(p, 'Read', { file_path: join(home, 'providers.json') }), true)
+  assert.equal(await g(p, 'Write', { file_path: join(cwd, 'workspaces', 'x', 'page.ts') }), false)
+  assert.equal(await g(p, 'Write', { file_path: join(cwd, 'WORKSPACES', 'x', 'page.ts') }), false, 'folded where the disk ignores case')
+  const v = await guard(p, { tool_name: 'Write', tool_input: { file_path: join(cwd, 'workspaces', 'x', 'grants.json') } }) as { user_message: string }
   assert.match(v.user_message, /not yours to change: only workspaces\/x\/\*\*, tools\/\*\*, less workspaces\/x\/grants\.json/)
-  assert.equal(g(p, 'Delete', { file_path: join(cwd, 'server', 'a.ts') }), true)
-  assert.equal(g(p, 'Shell', { command: 'git status' }), true)
-  assert.equal(g(p, 'SomeNewEdit', { file_path: join(cwd, 'server', 'a.ts') }), true, 'an unknown tool with a path is held to the write rule')
+  assert.equal(await g(p, 'Delete', { file_path: join(cwd, 'server', 'a.ts') }), true)
+  assert.equal(await g(p, 'Shell', { command: 'git status' }), true)
+  assert.equal(await g(p, 'SomeNewEdit', { file_path: join(cwd, 'server', 'a.ts') }), true, 'an unknown tool with a path is held to the write rule')
   assert.equal(canMcp(p, 'agent', 'commit'), true)
+})
+
+test('a workspace agent\'s deny holds in any case where the disk ignores it: Core.TXT and CORE/x stay denied', { skip: !caseInsensitive(cwd) && 'a case-sensitive disk' }, async () => {
+  const p = pol({ kind: 'agent', limits: { cwd, write: ['**'], deny: ['core.txt', 'core/**'], fold: caseInsensitive(cwd) }, own: [] })
+  for (const f of ['core.txt', 'Core.TXT', 'core/x', 'CORE/x', 'Core/sub/y.ts']) {
+    assert.equal(await g(p, 'Write', { file_path: join(cwd, f) }), true, f)
+    assert.equal(await g(p, 'Write', { file_path: f }), true, `${f}, relative`)
+    assert.equal(permit(p, { title: `Write ${join(cwd, f)}`, kind: 'edit', content: [{ type: 'diff', path: join(cwd, f) }] }), false, f)
+  }
+  assert.equal(await g(p, 'Write', { file_path: join(cwd, 'cores.txt') }), false)
 })
 
 test('permission requests as the CLI sends them: shell, an out-of-folder write, a delete, MCP by its title', () => {

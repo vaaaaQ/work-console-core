@@ -7,6 +7,7 @@ import { createInterface } from 'node:readline'
 import { z } from 'zod'
 import { tempDir } from '../../testdirs.ts'
 import type { RunTools } from '../sdk.ts'
+import { findInstall, ripgrep } from './cli.ts'
 import { cursorSdk } from './sdk.ts'
 import type { CursorOpts } from './sdk.ts'
 
@@ -14,6 +15,7 @@ import type { CursorOpts } from './sdk.ts'
 
 const FAKE = join(import.meta.dirname, 'fake-agent.mjs'), FIXTURES = join(import.meta.dirname, 'fixtures')
 const SID = '00000000-0000-4000-8000-000000000001'
+const rg = (() => { try { return ripgrep(findInstall()) } catch { return undefined } })(), noRg = !rg && 'no Cursor CLI here, so no ripgrep'
 type Seen = Record<string, unknown>
 
 function rig(opts: Partial<CursorOpts> | ((work: string) => Partial<CursorOpts>) = {}) {
@@ -139,6 +141,21 @@ test('the hook the CLI runs asks the console: a workspace agent writes only with
   assert.deepEqual(pass, {})
   assert.equal((r.of('prompt')[0] as { text: string }[])[0].text, '<instructions>\nBe brief.\n</instructions>\n\nCreate core.txt')
   assert.deepEqual(out.at(-1), { k: 'result', ok: true, t: '```\nError: core.txt is not yours\n\nAgent note: Do not suggest workarounds to the blocked tool.\n```' })
+  await gone(r)
+})
+
+test('the hook refuses a search that would reach a token folder; a file search is Glob\'s', { skip: noRg }, async () => {
+  const r = rig({ runTools: ['Read', 'Glob'], rg })
+  mkdirSync(join(r.work, 'deep', '.work-console'), { recursive: true })
+  writeFileSync(join(r.work, 'deep', '.work-console', 'mcp.token'), 'zebra')
+  writeFileSync(join(r.work, 'a.txt'), 'zebra')
+  const find = (glob: string) => ({ tool_name: 'Grep', tool_input: { pattern: '', glob, output_mode: 'files_with_matches' } })
+  r.play('hook', [], [find('*.txt'), find('*.token'), { tool_name: 'Grep', tool_input: { pattern: 'zebra', glob: '*.txt' } }])
+  await start(r)
+  const [txt, token, grep] = r.of('hook') as Record<string, string>[]
+  assert.deepEqual(txt, {})
+  assert.match(token.agent_message, /reaches a folder this session may not read/)
+  assert.match(grep.agent_message, /is not allowed in this session/)
   await gone(r)
 })
 

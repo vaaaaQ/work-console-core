@@ -110,7 +110,7 @@ export async function serveSession(o: { name: string; tools: ServedTool[]; guard
     try { body = await readJson(req) } catch { return out(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'the body is not JSON' } }) }
     if (path === '/guard') {
       let v: unknown
-      try { v = o.guard(body) } catch (e) { v = { permission: 'deny', user_message: `the guard failed: ${(e as Error).message}`, agent_message: 'the guard failed' } }
+      try { v = await o.guard(body) } catch (e) { v = { permission: 'deny', user_message: `the guard failed: ${(e as Error).message}`, agent_message: 'the guard failed' } }
       return out(res, 200, v)
     }
     if (path !== '/mcp') return out(res, 404, { error: 'not found' })

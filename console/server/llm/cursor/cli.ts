@@ -42,6 +42,12 @@ export function findInstall(setting?: string, root = defaultRoot(), platform: st
   return i
 }
 
+/** the ripgrep the CLI searches with: its own beside its index.js, else the one on PATH */
+export function ripgrep(i: Install, platform: string = process.platform): string {
+  const own = join(dirname(i.index), platform === 'win32' ? 'rg.exe' : 'rg')
+  return existsSync(own) ? own : 'rg'
+}
+
 /** what a Windows session keeps of the console's environment: hooks and shell commands start several times faster on a short one */
 const WIN_KEEP = ['SystemRoot', 'windir', 'ComSpec', 'PATH', 'PATHEXT', 'SystemDrive', 'PSModulePath', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA',
   'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'ProgramData', 'CommonProgramFiles', 'USERNAME', 'USERDOMAIN', 'OS', 'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS',

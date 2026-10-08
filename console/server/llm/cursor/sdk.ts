@@ -7,7 +7,7 @@ import { runToolDefs, signinReason } from '../sdk.ts'
 import type { AskEvent, AskTool, Sdk, SdkEvent } from '../sdk.ts'
 import type { PromptImage } from '../context.ts'
 import { Rpc, RpcError } from './acp.ts'
-import { GUARD, findInstall, hookCommand, killTree, sessionEnv, spawnAgent } from './cli.ts'
+import { GUARD, findInstall, hookCommand, killTree, ripgrep, sessionEnv, spawnAgent } from './cli.ts'
 import { Feed } from './feed.ts'
 import type { FeedEvent } from './feed.ts'
 import { OWN, cliConfig, guard, permit } from './policy.ts'
@@ -26,8 +26,9 @@ export interface CursorOpts {
   home?: string
   /** the cursorPath setting, read at each session's start */
   cursorPath?: () => string | undefined
-  /** tests: the agent process in place of the CLI */
+  /** tests: the agent process in place of the CLI, and the ripgrep that checks its searches */
   launch?: (cwd: string, env: Record<string, string>) => ChildProcessWithoutNullStreams
+  rg?: string
 }
 type AcpServer = { type: 'http' | 'sse'; name: string; url: string; headers: { name: string; value: string }[] } | { name: string; command: string; args: string[]; env: { name: string; value: string }[] }
 type Block = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string }
@@ -83,7 +84,6 @@ function failure(e: unknown, stderr: string): string {
 
 export function cursorSdk(o: CursorOpts): Sdk {
   const base = join(o.home ?? join(tmpdir(), 'work-console'), 'cursor'), runs = join(base, 'runs'), kept = join(base, 'sessions')
-  const launch = o.launch ?? ((cwd: string, env: Record<string, string>) => spawnAgent(findInstall(o.cursorPath?.()), cwd, env))
 
   async function* turn(t: Turn): AsyncGenerator<Out> {
     if (t.abort.signal.aborted) { yield { k: 'result', ok: false, error: 'the session was stopped' }; return }
@@ -109,6 +109,8 @@ export function cursorSdk(o: CursorOpts): Sdk {
     }
     let rpc: Rpc | undefined
     try {
+      const install = o.launch ? undefined : findInstall(o.cursorPath?.())
+      policy.rg = install ? ripgrep(install) : o.rg
       served = await serveSession({ name: own, tools: t.tools, guard: (x) => guard(policy, x as never) })
       writeFileSync(join(d.config, 'cli-config.json'), JSON.stringify(cliConfig(policy), null, 2))
       writeFileSync(join(d.home, '.cursor', 'hooks.json'), JSON.stringify({ version: 1, hooks: { preToolUse: [{ command: hookCommand([process.execPath, GUARD, new URL(served.guard).port, served.token]), failClosed: true }] } }, null, 2))
@@ -116,7 +118,7 @@ export function cursorSdk(o: CursorOpts): Sdk {
         if (!SID.test(t.resume) || !existsSync(join(kept, t.resume))) throw new Error(`the Cursor session ${t.resume} is not kept in this console`)
         cpSync(join(kept, t.resume), join(d.config, 'acp-sessions', t.resume), { recursive: true })
       }
-      child = launch(t.cwd, sessionEnv(d))
+      child = install ? spawnAgent(install, t.cwd, sessionEnv(d)) : o.launch!(t.cwd, sessionEnv(d))
       child.stderr.on('data', (b: Buffer) => { stderr = (stderr + b).slice(-4000) })
       const r = rpc = new Rpc(child.stdout, child.stdin, {
         notify: (m, p) => { if (m === 'session/update' && live) push(feed.update((p as { update?: unknown } | undefined)?.update)) },

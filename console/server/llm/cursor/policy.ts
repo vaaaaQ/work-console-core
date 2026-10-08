@@ -1,5 +1,8 @@
+import { spawn } from 'node:child_process'
+import { readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { canonical, canWrite, caseInsensitive, globRe, relPath } from '../../agent/limits.ts'
 import type { Limits } from '../../agent/limits.ts'
 import { ALLOW, DENY } from '../sdk.ts'
@@ -13,38 +16,52 @@ export type Mode =
   | { kind: 'start'; runTools: string[]; bridge: boolean }
   | { kind: 'ask'; own: string[] }
   | { kind: 'agent'; limits: Limits; own: string[] }
-/** hidden = folders a session never reads or writes: the console's home and the run's own */
-export interface Policy { cwd: string; mode: Mode; hidden: string[] }
+/** hidden = folders a session never reads or writes: the console's home and the run's own; rg = the CLI's ripgrep,
+    which checks what a search would reach */
+export interface Policy { cwd: string; mode: Mode; hidden: string[]; rg?: string }
 export const OWN = { start: 'run', ask: 'ask', agent: 'agent' } as const
 export type Verdict = { permission: 'deny'; user_message: string; agent_message: string } | Record<string, never>
 
 const HOME = homedir()
 const fwd = (p: string) => p.split(sep).join('/').replace(/\\/g, '/')
+/** a path with its links resolved, as limits.ts matches it */
+const real = (p: string) => fwd(canonical(p) ?? resolve(p))
 const rule = (r: string) => { const m = /^([A-Za-z]+)\((.*)\)$/s.exec(r); return m ? { tool: m[1], arg: m[2] } : { tool: r, arg: undefined } }
 const rulesOf = (p: Policy, ...tools: string[]) => (p.mode.kind === 'start' ? p.mode.runTools.map(rule).filter((r) => tools.includes(r.tool)) : [])
 
 /** a Claude Code path rule as an absolute glob: ~/ the home, // the root, ** any, else relative to cwd */
 export function absGlob(g: string, cwd: string): string {
-  if (g.startsWith('~/')) return `${fwd(HOME)}/${g.slice(2)}`
+  if (g.startsWith('~/')) return `${real(HOME)}/${g.slice(2)}`
   if (g.startsWith('//')) return g.slice(1)
   if (g.startsWith('**')) return g
   const rel = g.replace(/^\.?\//, '')
-  return isAbsolute(g) && !g.startsWith('/') ? fwd(g) : `${fwd(cwd)}/${rel}`
+  return isAbsolute(g) && !g.startsWith('/') ? fwd(g) : `${real(cwd)}/${rel}`
 }
 
 /** the read denies: DENY's Read rules, the hidden folders and the user's own Cursor folder, each with and without its contents */
 export function hiddenGlobs(p: Policy): string[] {
   const reads = DENY.map(rule).filter((r) => r.tool === 'Read' && r.arg).map((r) => absGlob(r.arg!, p.cwd))
-  const dirs = [...p.hidden, `${HOME}/.cursor`].map((d) => fwd(resolve(d)))
+  const dirs = [...p.hidden, join(HOME, '.cursor')].map(real)
   return [...reads, ...reads.filter((g) => g.endsWith('/**')).map((g) => g.slice(0, -3)), ...dirs, ...dirs.map((d) => `${d}/**`)]
 }
+const hiddenRes = new WeakMap<Policy, RegExp[]>()
+const hiddenRe = (p: Policy) => { let r = hiddenRes.get(p); if (!r) hiddenRes.set(p, r = hiddenGlobs(p).map((g) => globRe(g, true))); return r }
 
-const absOf = (p: Policy, path: string) => fwd(canonical(resolve(p.cwd, path)) ?? resolve(p.cwd, path))
+/** ~ is the run's own home, hidden whole, as the CLI reads it; a file: URL is its path, one it cannot read none */
+const TILDE = /^~(?=$|[\\/])/
+function absOf(p: Policy, path: string): string | null {
+  if (TILDE.test(path)) return null
+  let f = path
+  if (/^file:/i.test(path)) try { f = fileURLToPath(path) } catch { return null }
+  return real(resolve(p.cwd, f))
+}
 /** folded always: a deny that ignores case only denies more */
-export const isHidden = (p: Policy, path: string) => { const a = absOf(p, path); return hiddenGlobs(p).some((g) => globRe(g, true).test(a)) }
+const hiddenAbs = (p: Policy, a: string) => hiddenRe(p).some((r) => r.test(a))
+export const isHidden = (p: Policy, path: string) => { const a = absOf(p, path); return a === null || hiddenAbs(p, a) }
 
 function pathRule(p: Policy, tools: string[], path: string, unscoped: (a: string) => boolean) {
   const fold = caseInsensitive(p.cwd), a = absOf(p, path)
+  if (a === null) return false
   return rulesOf(p, ...tools).some((r) => (r.arg === undefined ? unscoped(a) : globRe(absGlob(r.arg, p.cwd), fold).test(a)))
 }
 export function canRead(p: Policy, path: string): boolean {
@@ -58,11 +75,60 @@ export function canChange(p: Policy, path: string): boolean {
   if (p.mode.kind === 'agent') return canWrite(p.mode.limits, path)
   return pathRule(p, ['Edit', 'Write', 'MultiEdit'], path, () => relPath(p.cwd, path, caseInsensitive(p.cwd)) !== null)
 }
-/** Grep and List search a folder: allowed where it is readable and the run has the tool */
-export function canSearch(p: Policy, tool: 'Grep' | 'List', path: string): boolean {
+/** Grep and List search a folder: allowed where it is readable and the run has the tool. The CLI's file search (Find)
+    is its Grep with no pattern that names files only, so Glob's as much as Grep's */
+export function canSearch(p: Policy, tool: 'Grep' | 'List', path: string, find = false): boolean {
   if (isHidden(p, path)) return false
   if (p.mode.kind === 'agent') return true
-  return rulesOf(p, ...(tool === 'Grep' ? ['Grep'] : ['Glob', 'LS'])).length > 0
+  return rulesOf(p, ...(tool === 'List' ? ['Glob', 'LS'] : find ? ['Glob', 'Grep'] : ['Grep'])).length > 0
+}
+
+const REACH_FILES = 200_000, REACH_MS = 10_000
+type Real = { real: string | null; links: Set<string> }
+/** a listed file with its links resolved: its folder's once, the file's own only when it is a link itself */
+function realFile(dirs: Map<string, Real>, f: string): string | null {
+  const dir = dirname(f)
+  let d = dirs.get(dir)
+  if (!d) {
+    let links = new Set<string>()
+    try { links = new Set(readdirSync(dir, { withFileTypes: true }).filter((e) => e.isSymbolicLink()).map((e) => e.name)) } catch { /* listed, then gone */ }
+    dirs.set(dir, d = { real: canonical(dir), links })
+  }
+  if (d.real === null || d.links.has(basename(f))) return canonical(f) === null ? null : real(f)
+  return fwd(join(d.real, basename(f)))
+}
+/** why a search from root may not run: the CLI's ripgrep lists the files its Grep or List would read there, links
+    followed and ignore files kept as it keeps them, and none may be hidden; null = it may */
+export function reach(p: Policy, root: string, glob = ''): Promise<string | null> {
+  const rg = p.rg
+  if (!rg) return Promise.resolve('no ripgrep to check the search with')
+  const target = relative(p.cwd, resolve(p.cwd, root)) || '.'
+  return new Promise((done) => {
+    const c = spawn(rg, ['--files', '--hidden', '--follow', '--no-config', '--no-messages', '--null', ...(glob ? ['--iglob', glob] : []), '--', target], { cwd: p.cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+    const dirs = new Map<string, Real>()
+    let n = 0, rest = '', over = false
+    const end = (why: string | null) => { if (over) return; over = true; clearTimeout(timer); if (c.exitCode === null) c.kill(); done(why) }
+    const timer = setTimeout(() => end('it holds more than can be checked in time; search a narrower folder'), REACH_MS)
+    const ok = (f: string) => {
+      if (++n > REACH_FILES) { end('it holds more files than can be checked; search a narrower folder'); return false }
+      const a = realFile(dirs, resolve(p.cwd, f))
+      if (a === null || hiddenAbs(p, a)) { end('it reaches a folder this session may not read'); return false }
+      return true
+    }
+    c.stdout.setEncoding('utf8')
+    c.stdout.on('data', (s: string) => {
+      const fs = (rest + s).split('\0')
+      rest = fs.pop()!
+      for (const f of fs) if (f && !ok(f)) return
+    })
+    c.on('error', (e) => end(`ripgrep did not start: ${e.message}`))
+    c.on('close', () => { if (!rest || ok(rest)) end(null) })
+  })
+}
+/** the CLI's Grep searches only within its folder: a path outside it, by name or by its links, is searched as the folder */
+function within(cwd: string, path: string): boolean {
+  const r = relative(resolve(cwd), resolve(cwd, path))
+  return r === '' || (!r.startsWith('..') && !isAbsolute(r) && relPath(cwd, path, caseInsensitive(cwd)) !== null)
 }
 
 const OPS = /[;&|`\n<>]|\$\(/
@@ -111,13 +177,19 @@ function no(p: Policy, what: string, change = false): Verdict {
 
 /** the hook's verdict on a tool call: deny, or no opinion. A tool it does not know that names a path is held to
     the write rule, the strictest */
-export function guard(p: Policy, input: { tool_name?: unknown; tool_input?: unknown }): Verdict {
+export async function guard(p: Policy, input: { tool_name?: unknown; tool_input?: unknown }): Promise<Verdict> {
   const name = str(input.tool_name), ti = (input.tool_input && typeof input.tool_input === 'object' ? input.tool_input : {}) as Record<string, unknown>
   const path = str(ti.file_path) || str(ti.path)
   if (name.startsWith('MCP:') || name === 'ListMcpResources') return {}
   switch (name) {
     case 'Read': case 'ReadLints': return path && canRead(p, path) ? {} : no(p, `reading ${path || 'that'}`)
-    case 'Grep': case 'List': return canSearch(p, name, path || p.cwd) ? {} : no(p, `searching ${path || p.cwd}`)
+    case 'Grep': case 'List': {
+      const root = path || p.cwd, what = `searching ${root}`
+      if (!canSearch(p, name, root, name === 'Grep' && !str(ti.pattern) && str(ti.output_mode) === 'files_with_matches')) return no(p, what)
+      const roots = name === 'List' || within(p.cwd, root) ? [root] : [root, p.cwd]
+      const why = (await Promise.all(roots.map((r) => reach(p, r, name === 'Grep' ? str(ti.glob) : '')))).find((w) => w !== null)
+      return why ? no(p, `${what}: ${why}`) : {}
+    }
     case 'Write': case 'Delete': return path && canChange(p, path) ? {} : no(p, path || 'that path', true)
     case 'Shell': return canShell(p, ti.command) ? {} : no(p, `the command ${str(ti.command).slice(0, 200)}`)
     case 'WriteShellStdin': return anyShell(p) ? {} : no(p, 'a shell')
