@@ -198,7 +198,7 @@ test('voice: the key goes where config.json says the console reads it', async ()
   assert.equal(readFileSync(keyPath, 'utf8').trim(), 'sk-test')
 })
 
-test('install: Docker down blocks the postgres step only, the console still gets its config, exit 1', async () => {
+test('install: Docker down blocks the postgres step only and records no database address, exit 1', async () => {
   const core = makeCore(), to = tmp('to'), home = tmp('home'), calls: string[] = []
   const lines: string[] = []
   const r = await install({
@@ -208,15 +208,52 @@ test('install: Docker down blocks the postgres step only, the console still gets
   const state = Object.fromEntries(r.steps.map((s) => [s.name, s.state]))
   assert.deepEqual(state, { checks: 'ok', folder: 'ok', postgres: 'blocked', provider: 'ok', voice: 'skipped', build: 'ok', start: 'ok' })
   assert.equal(r.code, 1)
-  assert.match(lines.join('\n'), /start Docker/)
+  assert.match(r.steps.find((s) => s.name === 'postgres')!.line, /Postgres not running — start Docker and run install again/)
   const cfg = JSON.parse(read(home, 'config.json'))
   assert.equal(cfg.loopbackPort, 7412)
-  assert.match(cfg.workspaces.home.pgUrl, /^postgres:\/\/work_console@127\.0\.0\.1:\d+\/work_console$/)
-  assert.ok(existsSync(cfg.workspaces.home.pgPasswordPath))
+  assert.equal(cfg.workspaces, undefined, 'home stays unconfigured')
   const rec = JSON.parse(read(home, 'install.json'))
-  assert.deepEqual(Object.keys(rec).sort(), ['core', 'folder', 'pgPort', 'port', 'provider'])
+  assert.deepEqual(Object.keys(rec).sort(), ['core', 'folder', 'port', 'provider'])
   assert.equal(rec.provider, 'claude')
   assert.ok(calls.includes('npm ci') && calls.includes('npm run build'))
+})
+
+test('install: a postgres step that fails records no address either', async () => {
+  const core = makeCore(), to = tmp('to'), home = tmp('home')
+  const r = await install({
+    argv: ['--to', to, '--core', core, '--no-prompt', '--no-start'], env: { WORK_CONSOLE_HOME: home }, run: fakeRun(), docker: dockerUp,
+    pg: async () => { throw new Error('docker compose up failed: pull access denied') }, free: async () => true, log: quiet,
+  })
+  const step = r.steps.find((s) => s.name === 'postgres')!
+  assert.equal(step.state, 'failed')
+  assert.match(step.line, /pull access denied/)
+  assert.equal(JSON.parse(read(home, 'config.json')).workspaces, undefined)
+  assert.equal(JSON.parse(read(home, 'install.json')).pgPort, undefined)
+})
+
+test('install: with Docker down the address an earlier run recorded stays, since it is our own container', async () => {
+  const core = makeCore(), to = tmp('to'), home = tmp('home')
+  const pg = async (o: { home: string }) => ({ port: 55433, url: 'postgres://work_console@127.0.0.1:55433/work_console', passwordPath: join(o.home, 'postgres.password') })
+  const go = (docker: typeof dockerUp) => install({
+    argv: ['--to', to, '--core', core, '--no-prompt', '--no-start'], env: { WORK_CONSOLE_HOME: home }, run: fakeRun(), docker, pg, free: async () => true, log: quiet,
+  })
+  await go(dockerUp)
+  const cfg = read(home, 'config.json')
+  await go(dockerDown)
+  assert.equal(read(home, 'config.json'), cfg)
+  assert.equal(JSON.parse(read(home, 'install.json')).pgPort, 55433)
+})
+
+test('install: WORK_CONSOLE_PG_CONTAINER and WORK_CONSOLE_PG_VOLUME name the container, and the address is the one postgres gives', async () => {
+  const core = makeCore(), to = tmp('to'), home = tmp('home')
+  const seen: unknown[] = []
+  const pg = async (o: { home: string; names?: unknown }) => { seen.push(o.names); return { port: 55434, url: 'postgres://work_console@127.0.0.1:55434/work_console', passwordPath: join(o.home, 'postgres.password') } }
+  await install({
+    argv: ['--to', to, '--core', core, '--no-prompt', '--no-start'], run: fakeRun(), docker: dockerUp, pg, free: async () => true, log: quiet,
+    env: { WORK_CONSOLE_HOME: home, WORK_CONSOLE_PG_CONTAINER: 'work-console-postgres-test', WORK_CONSOLE_PG_VOLUME: 'work-console-pg-test' },
+  })
+  assert.deepEqual(seen, [{ container: 'work-console-postgres-test', volume: 'work-console-pg-test' }])
+  assert.equal(JSON.parse(read(home, 'config.json')).workspaces.home.pgUrl, 'postgres://work_console@127.0.0.1:55434/work_console')
 })
 
 test('install: a second run on the same folder repairs and keeps the ports', async () => {

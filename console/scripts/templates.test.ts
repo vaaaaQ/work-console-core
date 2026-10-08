@@ -5,6 +5,7 @@ import { Bus } from '../server/events.ts'
 import { checkWorkspaces, type WsConfig } from '../server/workspace.ts'
 import { WORKSPACES } from '../consumer/page.ts'
 import { SERVERS } from '../consumer/server.ts'
+import { PG_DOWN } from './install.mjs'
 
 /* consumer/ holds what install.mjs writes into a new console's workspaces/: the two registries and the home workspace. */
 
@@ -25,9 +26,14 @@ test('home keeps its jobs in Postgres, schema work_console, without a bridge', (
   assert.ok(home.source && home.store)
 })
 
-test('home names the config.json key it misses', () => {
-  assert.throws(() => SERVERS[0].source!(cfg({ pgPasswordPath: 'x' }), { bus: new Bus() }), /workspaces\.home\.pgUrl/)
-  assert.throws(() => SERVERS[0].source!(cfg({ pgUrl: 'postgres://u@127.0.0.1:1/db' }), { bus: new Bus() }), /workspaces\.home\.pgPasswordPath/)
+test('home without a database address is its store, down, saying what install says', () => {
+  for (const own of [{}, { pgPasswordPath: 'x' }]) {
+    const src = SERVERS[0].source!(cfg(own), { bus: new Bus() })
+    assert.equal(src.available(), false)
+    assert.equal(src.via, 'store')
+    assert.equal(src.why!(), PG_DOWN)
+    src.stop()
+  }
 })
 
 test('home builds a Postgres source from config.json', () => {

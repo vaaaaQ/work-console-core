@@ -4,7 +4,7 @@ import { createInterface } from 'node:readline'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { consoleHome, firstFree, gitId, isFree, npmChecks, readJson, run, writeJson } from './lib.mjs'
-import { PG, dockerRunner, engine, ensurePassword, postgres } from './postgres.mjs'
+import { dockerRunner, engine, envNames, postgres } from './postgres.mjs'
 import { startConsole } from './run.mjs'
 import { isCoreLayout, readCore, sync } from './sync-core.mjs'
 
@@ -153,7 +153,7 @@ export async function voice(home, { prompt, ask = askHidden }) {
   return 'on: the key is saved'
 }
 
-const pgUrl = (port) => `postgres://${PG.user}@127.0.0.1:${port}/${PG.db}`
+export const PG_DOWN = 'Postgres not running — start Docker and run install again'
 
 export async function install(o = {}) {
   const { env = process.env, run: r = run, docker = dockerRunner(r), pg = postgres, free = isFree, log = console.log, ask, start = startConsole } = o
@@ -186,20 +186,19 @@ export async function install(o = {}) {
   } catch (e) { step('folder', 'failed', e.message); return finish(to) }
 
   const port = await consolePort({ home, arg: a.port, free })
-  const offline = async () => ({ port: recorded.pgPort ?? (await firstFree(PG.port, { free })), passwordPath: ensurePassword(home) })
-  let db
-  if (!eng.ok) {
-    db = await offline()
-    step('postgres', 'blocked', `Docker does not answer (${eng.why}): start Docker Desktop, then run the install again`)
-  } else {
+  // only a container that came up gives home an address; without one home stays unconfigured and says why
+  let db = null
+  if (!eng.ok) step('postgres', 'blocked', `Docker does not answer (${eng.why}). ${PG_DOWN}`)
+  else {
     try {
-      db = await pg({ home, docker, want: recorded.pgPort ?? null, free, log: sub })
+      db = await pg({ home, docker, names: envNames(env), want: recorded.pgPort ?? null, free, log: sub })
       step('postgres', 'ok', `127.0.0.1:${db.port}`)
-    } catch (e) { db = await offline(); step('postgres', 'failed', e.message) }
+    } catch (e) { step('postgres', 'failed', `${e.message}. Home stays without a database: run install again once this is fixed`) }
   }
-  // the console starts either way: without its database the home workspace shows as unavailable
-  writeConfig(home, { port, pgUrl: pgUrl(db.port), passwordPath: db.passwordPath })
-  writeJson(join(home, 'install.json'), { core, folder: to, port, pgPort: db.port, provider: a.provider })
+  writeConfig(home, { port, pgUrl: db?.url, passwordPath: db?.passwordPath })
+  // a port an earlier run recorded is our own container's, so it stays when this run could not reach Docker
+  const pgPort = db?.port ?? recorded.pgPort
+  writeJson(join(home, 'install.json'), { core, folder: to, port, ...(pgPort ? { pgPort } : {}), provider: a.provider })
 
   const p = provider(a.provider, r, env)
   step('provider', p.ok ? 'ok' : 'todo', p.line)

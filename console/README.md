@@ -25,6 +25,11 @@ node <dir>/scripts/update.mjs [--give-up]                                      #
 - Install checks Node 22.6+, git, npm and Docker, writes the folder with a `home` workspace, starts its
   Postgres (`postgres/compose.yaml`, port 55432 or the next free one), reports whether the provider is signed
   in (it never signs in), asks for an optional OpenAI key for voice, builds, and starts the console.
+- A port is the console's own only when its container `work-console-postgres` publishes it (`docker ps`);
+  one any other container or process holds is skipped. With Docker down, home gets no database address
+  and says "Postgres not running — start Docker and run install again".
+- `WORK_CONSOLE_PG_CONTAINER` and `WORK_CONSOLE_PG_VOLUME`, set together, give a test install its own
+  container and volume beside the real ones.
 - `<home>` is `WORK_CONSOLE_HOME` or `~/.work-console`: `config.json`, `install.json`, `postgres.password`,
   `openai.key`, `run.json` and `logs/console.log`.
 - `run.mjs` restarts the server at once on exit code 75 and after a backoff on any other exit. After a
