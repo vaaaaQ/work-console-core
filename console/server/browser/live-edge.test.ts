@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { Bus } from '../events.ts'
 import type { WsConfig } from '../workspace.ts'
 import { localSource } from '../bridge/local.ts'
+import { killProfile, profileHeld } from '../../scripts/edge.mjs'
 import { edgeBrowser, findEdge } from './launcher.ts'
 import type { StateDocs } from './state.ts'
 
@@ -17,6 +18,20 @@ import type { StateDocs } from './state.ts'
 const edge = findEdge()
 const skip = process.env.WC_TEST_NO_EDGE === '1' ? 'WC_TEST_NO_EDGE=1' : !edge ? 'no Edge found' : false
 const PACKS = join(import.meta.dirname, 'testdata', 'packs')
+const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms))
+
+/** removes the temp profile once Edge lets go of its lock, retrying while its helpers still hold files, then ending them */
+async function removeProfile(dir: string) {
+  for (const end = Date.now() + 20_000; profileHeld(dir) && Date.now() < end;) await sleep(200)
+  for (let i = 0; i < 40; i++) {
+    try { rmSync(dir, { recursive: true, force: true }); return } catch (e) {
+      if (i === 19) await killProfile(dir)
+      if (i === 39) console.error(`left ${dir}: ${(e as Error).message}`)
+    }
+    await sleep(250)
+  }
+}
+
 const CFG = { gatewayUrl: 'http://127.0.0.1:1', consoleTokenPath: '', llmTokenPath: '', workDir: '', runTools: [], teamTz: null, maxSessions: 1 } as WsConfig
 
 test('a live read from a local test page through a real Edge on a temp profile', { skip, timeout: 120_000 }, async () => {
@@ -61,7 +76,6 @@ test('a live read from a local test page through a real Edge on a temp profile',
     src.stop()
     await browser.stop()
     await new Promise<void>((ok) => { page.closeAllConnections(); page.close(() => ok()) })
-    // Edge's helpers may hold the profile past taskkill under load: a temp dir left behind fails no test
-    if (!given) { try { rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 500 }) } catch (e) { console.error(`left ${dir}: ${(e as Error).message}`) } }
+    if (!given) await removeProfile(dir)
   }
 })
