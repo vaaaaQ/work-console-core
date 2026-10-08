@@ -51,7 +51,16 @@ const withSystem = (system: string, prompt: string) => `<instructions>\n${system
 const SID = /^[\w-]{1,100}$/
 const DAY = 86400e3
 const noEmail = (t: string) => t.replace(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g, '<email>')
-const PLAN = /^\s*Upgrade your plan/i
+/** the CLI's own words on a turn it could not run, sent as one chunk that still ends as end_turn */
+const COULD_NOT = /^\n\n(Please sign in to continue|Upgrade your plan to continue|Add a payment method to continue|Check your settings to continue|Error: [\s\S]+)$/
+function couldNot(chunk: string): string | null {
+  const t = COULD_NOT.exec(chunk)?.[1]
+  if (t === undefined) return null
+  if (t.startsWith('Please sign in')) return signinReason('Authentication required: Cursor is signed out; sign in with agent login in a terminal')
+  if (/^(Upgrade|Add a payment)/.test(t)) return `cursor_plan: the Cursor account's plan refused the turn: ${t}`
+  const said = noEmail(t.trim()).slice(0, 400)
+  return t.startsWith('Error: [unauthenticated]') ? signinReason(said) : `the Cursor agent could not run the turn: ${said}`
+}
 /** SQLite opens no database on Windows whose path leaves no room under MAX_PATH for its "-journal" name */
 const STORE_MAX = 251
 
@@ -162,7 +171,7 @@ export function cursorSdk(o: CursorOpts): Sdk {
       if (x.r?.stopReason === 'cancelled' || (x.e && t.abort.signal.aborted)) yield { k: 'result', ok: false, error: 'the session was stopped' }
       else if (x.e) yield { k: 'result', ok: false, error: failure(x.e, stderr) }
       else if (x.r?.stopReason !== 'end_turn') yield { k: 'result', ok: false, error: `the Cursor agent stopped: ${x.r?.stopReason ?? 'no reason'}` }
-      else if (PLAN.test(feed.last)) yield { k: 'result', ok: false, error: `cursor_plan: the Cursor account's plan refused the turn: ${feed.last.trim().slice(0, 200)}` }
+      else if (couldNot(feed.end)) yield { k: 'result', ok: false, error: couldNot(feed.end)! }
       else yield { k: 'result', ok: true, ...(feed.last.trim() ? { t: feed.last } : {}) }
     } catch (e) {
       yield { k: 'result', ok: false, error: t.abort.signal.aborted ? 'the session was stopped' : failure(e, stderr) }

@@ -176,13 +176,24 @@ test('an ask\'s answer is the answer tool\'s input, checked against the schema; 
   await gone(r)
 })
 
-test('a refused plan, a signed-out CLI and a missing one each say so', async () => {
+test('a refused plan, a signed-out CLI, a missing one and a turn the CLI could not run each say so', async () => {
   const r = rig()
   r.play('plan')
   const plan = (await start(r)).at(-1) as { error: string }
   assert.match(plan.error, /^cursor_plan: the Cursor account's plan refused the turn: Upgrade your plan to continue$/)
   r.play('signedout')
   assert.deepEqual(await start(r), [{ k: 'result', ok: false, error: 'signin_required: Authentication required: Cursor is signed out; sign in with agent login in a terminal' }])
+  // a turn the CLI could not run still ends as end_turn: its own words come as a last chunk after a blank line
+  r.play('error')
+  assert.deepEqual((await start(r)).slice(1), [{ k: 'text', t: 'Checking\n\nError: ConnectError: [unavailable] read ECONNRESET' }, { k: 'result', ok: false, error: 'the Cursor agent could not run the turn: Error: ConnectError: [unavailable] read ECONNRESET' }])
+  const says = async (t: string) => { r.play('plan', [['Upgrade your plan to continue', t]]); return ((await start(r)).at(-1) as { error?: string }).error }
+  assert.equal(await says('Please sign in to continue'), 'signin_required: Authentication required: Cursor is signed out; sign in with agent login in a terminal')
+  assert.match((await says('Error: [unauthenticated] Backend rejected authentication.'))!, /^signin_required: Error: \[unauthenticated\] /)
+  assert.match((await says('Add a payment method to continue'))!, /^cursor_plan: .*: Add a payment method to continue$/)
+  assert.equal(await says('Check your settings to continue'), 'the Cursor agent could not run the turn: Check your settings to continue')
+  // the agent's own words are its answer, an error it quotes too
+  r.play('error', [['\\n\\nError: ConnectError', 'Error: ConnectError']])
+  assert.deepEqual((await start(r)).at(-1), { k: 'result', ok: true, t: 'CheckingError: ConnectError: [unavailable] read ECONNRESET' })
   const none = cursorSdk({ gatewayUrl: 'http://127.0.0.1:1', llmToken: () => 't', runTools: [], home: r.home, cursorPath: () => join(r.work, 'nope', 'agent.cmd') })
   const out = await all(none.start({ prompt: 'p', cwd: r.work, tools: runTools(), abort: new AbortController() }))
   assert.match((out[0] as { error: string }).error, /^cursor_missing: /)

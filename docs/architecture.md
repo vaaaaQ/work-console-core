@@ -389,7 +389,7 @@ flowchart LR
 | Limits | `policy.ts` from `ALLOW`/`DENY`, `runTools` and the agent's `Limits`: the CLI's config denies (it matches case-sensitively, so they only back up), the hook (`guard.cjs`, fail-closed; its `hooks.json` holds no `//`, which the CLI reads as a comment) and the console's answer to each permission request. Paths are matched by their real paths, case-folded, as `limits.ts` matches them; `~` is the run's own home. A Grep or List runs only when the CLI's own ripgrep, listing the files it would read there (links followed), finds none hidden; its file search (a Grep with no pattern) counts as Glob |
 | Ask | the answer is the `answer` tool's input, checked against the schema; the session's text is not read |
 | Resume | the CLI's session folder is kept under `<home>/cursor/sessions/<id>` and copied into the next turn's run folder; a session not kept there fails the resume |
-| Model | the account's default; the console never names one. A plan that refuses a turn fails it as `cursor_plan:`, a signed-out CLI as `signin_required:`, a missing one as `cursor_missing:`. The console never signs in |
+| Model | the account's default; the console never names one. A plan that refuses a turn fails it as `cursor_plan:`, a signed-out CLI as `signin_required:`, a missing one as `cursor_missing:`. A turn the CLI could not run still ends as `end_turn`, its reason a last text chunk of its own after a blank line; the console fails the turn with it. The console never signs in |
 | System prompt | ACP has none: an ask's and the agent's instructions go at the head of the turn's prompt |
 
 ## Knowledge

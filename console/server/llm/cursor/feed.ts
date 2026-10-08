@@ -12,6 +12,8 @@ export class Feed {
   private calls = new Map<string, Call>()
   /** the text after the last tool call: the turn's final answer */
   last = ''
+  /** the last text chunk after the last tool call, where the CLI says why it could not run a turn */
+  end = ''
   private own?: string
   private hide: string[]
   constructor(own?: string, hide: string[] = []) { this.own = own; this.hide = hide }
@@ -20,7 +22,7 @@ export class Feed {
     const x = obj(u)
     if (x?.sessionUpdate === 'agent_message_chunk') {
       const c = obj(x.content)
-      if (c?.type === 'text' && typeof c.text === 'string') this.text += c.text
+      if (c?.type === 'text' && typeof c.text === 'string') { this.text += c.text; this.end = c.text }
       return []
     }
     if (x?.sessionUpdate !== 'tool_call' && x?.sessionUpdate !== 'tool_call_update') return []
@@ -34,7 +36,7 @@ export class Feed {
     if (c.told || (!Object.keys(c.raw).length && x.status !== 'completed' && x.status !== 'failed')) return []
     c.told = true
     const out = this.flush(), t = this.named(c)
-    this.last = ''
+    this.last = this.end = ''
     return t ? [...out, t] : out
   }
 
