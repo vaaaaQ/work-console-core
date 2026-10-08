@@ -13,6 +13,8 @@ export interface FailedUpdate {
 }
 /** <home>/update-failed.json, null when the last update did not fail */
 export function failedUpdate(home: string): FailedUpdate | null
+/** where update worktrees are made: <home>-updates */
+export function updatesDir(home: string): string
 /** drops the failed update's worktree, branch and record; false when there is none */
 export function giveUp(o: { home: string; run?: Runner }): boolean
 export function update(o: {

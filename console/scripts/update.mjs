@@ -7,7 +7,7 @@ import { requestRestart } from './run.mjs'
 
 /* Moves the console to the core's newest commit:
      node <dir>/scripts/update.mjs [--no-pull] [--core <core repo>] [--give-up]
-   pull the core, then sync and check in a git worktree at <home>/updates/<sha7> on branch update/<sha7>.
+   pull the core, then sync and check in a git worktree at <home>-updates/<sha7> on branch update/<sha7>.
    Pass: the folder fast-forwards to it, builds and restarts. Fail: the folder is untouched, the worktree stays,
    <home>/update-failed.json says what failed, exit 3; a reintegrate session commits its fix on the branch and
    runs the update again, which applies it. --give-up drops the branch and the worktree. */
@@ -17,6 +17,8 @@ const HERE = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const RECORD = 'update-failed.json'
 
 export const failedUpdate = (home) => readJson(join(home, RECORD), null)
+/** beside home, not in it: the providers keep agents from reading a default home */
+export const updatesDir = (home) => `${resolve(home)}-updates`
 
 function git(r, cwd, args) {
   const g = r('git', ['-C', cwd, ...args])
@@ -93,7 +95,7 @@ export async function update(o) {
   if (!reuse && sha === from) { log(`already at core ${sha.slice(0, 7)}`); return { status: 'current', code: 0, sha } }
 
   const sha7 = sha.slice(0, 7), branch = `update/${sha7}`
-  const worktree = reuse ? rec.worktree : join(home, 'updates', sha7)
+  const worktree = reuse ? rec.worktree : join(updatesDir(home), sha7)
   const dir = join(worktree, rel)
   const pre = reuse ? rec.pre : git(r, repo, ['rev-parse', 'HEAD'])
   const fail = (step, output) => {

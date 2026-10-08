@@ -9,7 +9,7 @@ import { run, type Ran, type Runner } from './lib.mjs'
 import { folder } from './install.mjs'
 import { TEMPLATE_FILES } from './workspaces.mjs'
 import { sync } from './sync-core.mjs'
-import { EXIT_REINTEGRATE, failedUpdate, giveUp, update } from './update.mjs'
+import { EXIT_REINTEGRATE, failedUpdate, giveUp, update, updatesDir } from './update.mjs'
 
 /* update.mjs against throwaway repos: an origin core, a clone of it as the person's core, and a consumer folder
    made by install's folder(). Git runs for real; npm is a fake, and the checks are a stand-in that fails while
@@ -45,8 +45,9 @@ function setup() {
   git(origin, 'commit', '-q', '-m', 'core')
   const core = join(tmp('core'), 'core')
   git(dirname(core), 'clone', '-q', origin, core)
-  const to = tmp('to'), home = tmp('home')
+  const to = tmp('to'), home = join(tmp('home'), 'home')
   folder({ core, to, log: quiet })
+  mkdirSync(home)
   writeFileSync(join(home, 'install.json'), JSON.stringify({ core, folder: to }))
   return { origin, core, to, home }
 }
@@ -149,6 +150,8 @@ test('fail: the result sits on update/<sha7>, the folder stays on its commit, up
   assert.equal(f.step, 'typecheck')
   assert.match(f.output, /TS2322/)
   assert.equal(existsSync(join(f.worktree, 'server', 'broken.ts')), true, 'the worktree is kept for the session')
+  assert.equal(f.worktree, join(updatesDir(s.home), sha.slice(0, 7)), 'beside home, so an agent may read it')
+  assert.equal(updatesDir(s.home), `${s.home}-updates`)
   assert.deepEqual([h.npm, h.restarts], [[], []])
 })
 
