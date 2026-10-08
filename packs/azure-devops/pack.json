@@ -1,0 +1,35 @@
+{
+  "name": "azure-devops",
+  "zone": "UTC",
+  "script": "azure-devops.js",
+  "config": {
+    "org": { "about": "the organization in https://dev.azure.com/<org>", "required": true, "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,48}[A-Za-z0-9])?$" },
+    "project": { "about": "the project that reviews, builds and the board are read in", "required": true, "pattern": "^[^\\\\/:*?\"'<>;#$={},+\\[\\]|\\u0000-\\u001f\\u007f]{1,64}$" },
+    "team": { "about": "the team whose board and area the board concept reads; default <project> Team", "pattern": "^[^\\\\/:*?\"'<>;#$={},+\\[\\]|\\u0000-\\u001f\\u007f]{1,64}$" },
+    "board": { "about": "the backlog-level board the board concept reads, such as Stories", "pattern": "^[^\\\\/:*?\"'<>;#$={},+\\[\\]|\\u0000-\\u001f\\u007f]{1,64}$" },
+    "ready": { "about": "the board column of items ready to take; default the board's first column", "pattern": "^[^\\u0000-\\u001f\\u007f]{1,128}$" },
+    "handoff": { "about": "board columns an item goes to after me, such as a test column; none means no qa lane", "list": true, "pattern": "^[^\\u0000-\\u001f\\u007f]{1,128}$" },
+    "doneStates": { "about": "states that count as finished", "list": true, "pattern": "^[^\\u0000-\\u001f\\u007f]{1,64}$", "default": ["Closed", "Done", "Removed"] },
+    "fields": {
+      "about": "field reference names a work item get returns when the item has them", "list": true, "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$",
+      "default": ["System.Reason", "System.Tags", "System.CreatedBy", "System.CreatedDate", "Microsoft.VSTS.Common.Priority", "Microsoft.VSTS.Common.Severity",
+        "Microsoft.VSTS.Scheduling.StoryPoints", "Microsoft.VSTS.Scheduling.Effort", "Microsoft.VSTS.Scheduling.RemainingWork", "Microsoft.VSTS.Common.ValueArea"]
+    }
+  },
+  "hosts": ["dev.azure.com"],
+  "tabs": {
+    "ado": { "match": "^https://dev\\.azure\\.com/{org}(/|$)", "open": "https://dev.azure.com/{org}/{project}" }
+  },
+  "concepts": {
+    "work": { "tab": "ado", "interval": 30, "cap": 100 },
+    "review": { "tab": "ado", "interval": 20, "cap": 30 },
+    "ci": { "tab": "ado", "interval": 30, "cap": 30 },
+    "board": { "tab": "ado", "interval": 60, "cap": 100 }
+  },
+  "actions": {
+    "work.setState": { "tab": "ado", "concept": "work" },
+    "work.comment": { "tab": "ado", "concept": "work" },
+    "review.vote": { "tab": "ado", "concept": "review" },
+    "review.comment": { "tab": "ado", "concept": "review" }
+  }
+}
