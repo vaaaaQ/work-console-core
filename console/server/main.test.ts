@@ -1,6 +1,7 @@
 import { acme, acmeServer } from './testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -226,5 +227,62 @@ test("a managed workspace has an agent behind /api/ws/<id>/agent and in /api/sta
     assert.equal((await call('/api/ws/beta2/agent/stop', {})).json.error.code, 'idle')
     assert.equal(restarts, 0)
     assert.equal((await call('/api/state')).json.ws.beta2.agent.id, rec.id)
+  } finally { await m.close() }
+})
+
+test('a failed core update shows in /api/state; a managed workspace reintegrates it, and Give up runs update.mjs and closes the conversation', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'wc-main-')), root = mkdtempSync(join(tmpdir(), 'wc-root-')), wt = mkdtempSync(join(tmpdir(), 'wc-wt-'))
+  mkdirSync(join(root, 'workspaces', 'beta2'), { recursive: true })
+  writeFileSync(join(root, 'workspaces', 'beta2', 'grants.json'), JSON.stringify({ packs: ['p'] }))
+  // a stand-in update.mjs: it drops the record when given up, as the real one does
+  mkdirSync(join(root, 'scripts'))
+  writeFileSync(join(root, 'scripts', 'update.mjs'), [
+    "import { rmSync } from 'node:fs'",
+    "if (process.argv.includes('--give-up') && process.argv.includes('--no-restart')) rmSync(process.env.WORK_CONSOLE_HOME + '/update-failed.json')",
+    "console.log('ran ' + process.argv.slice(2).join(' '))",
+  ].join('\n'))
+  const git = (...a: string[]) => execFileSync('git', ['-C', wt, ...a], { encoding: 'utf8' }).trim()
+  git('init', '-q'); git('config', 'user.email', 't@t'); git('config', 'user.name', 't')
+  mkdirSync(join(wt, 'server')); writeFileSync(join(wt, 'server', 'local.ts'), 'export const needDb = 1\n')
+  git('add', '-A'); git('commit', '-q', '-m', 'folder')
+  const pre = git('rev-parse', 'HEAD')
+  writeFileSync(join(wt, 'server', 'local.ts'), 'export const db = 1\n')
+  git('add', '-A'); git('commit', '-q', '-m', 'core eeeeeee')
+  const f = { core: 'e'.repeat(40), from: 'f'.repeat(40), repo: wt, branch: 'update/eeeeeee', worktree: wt, dir: wt, pre, head: pre, step: 'tests', output: 'not ok 1 - beta2 reads its db', at: '2026-10-08T12:00:00.000Z' }
+  writeFileSync(join(home, 'update-failed.json'), JSON.stringify(f))
+  const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
+  const prompts: string[] = []
+  const sdk: Sdk = { ...unused, async *agent(o) { prompts.push(o.prompt); yield { k: 'session', id: 's1' }; yield { k: 'text', t: 'Looking.' }; yield { k: 'result', ok: true } } }
+  let restarts = 0
+  const m = await main({ cfg, sdk, workspaces: [acmeServer, beta2], root, restart: () => { restarts++ } })
+  try {
+    const base = `http://127.0.0.1:${m.loopbackPort}`
+    const call = async (path: string, body?: unknown) => {
+      const r = await fetch(`${base}${path}`, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      return { status: r.status, json: (await r.json()) as Record<string, any> }
+    }
+    const up = (await call('/api/state')).json.update
+    assert.deepEqual([up.core, up.step, up.reintegrable, up.running], [f.core, 'tests', true, null])
+    assert.equal((await call('/api/ws/acme/agent/reintegrate', {})).json.error.code, 'not_managed')
+    const r = await call('/api/ws/beta2/agent/reintegrate', {})
+    assert.equal(r.status, 200, JSON.stringify(r.json))
+    assert.deepEqual(r.json.agent.reintegrate, { core: f.core, from: f.from, branch: f.branch, step: 'tests' })
+    await until(() => prompts.length === 1)
+    assert.match(prompts[0], /not ok 1 - beta2 reads its db/)
+    assert.match(prompts[0], /-export const needDb = 1/)
+    let st = (await call('/api/state')).json
+    for (const t0 = Date.now(); st.ws.beta2.agent.status === 'running'; st = (await call('/api/state')).json) {
+      if (Date.now() - t0 > 5000) throw new Error('the turn never ended')
+      await new Promise((ok) => setTimeout(ok, 20))
+    }
+    const g = await call('/api/update/give-up', {})
+    assert.equal(g.json.update?.running, 'give-up', JSON.stringify(g.json))
+    for (const t0 = Date.now(); (st = (await call('/api/state')).json).update; ) {
+      if (Date.now() - t0 > 10000) throw new Error('give up never ended')
+      await new Promise((ok) => setTimeout(ok, 50))
+    }
+    assert.equal((await call('/api/update/apply', {})).json.error.code, 'no_update')
+    assert.equal((await call('/api/ws/beta2/agent', { text: 'and now?' })).json.error.code, 'update_closed')
+    assert.equal(restarts, 0)
   } finally { await m.close() }
 })

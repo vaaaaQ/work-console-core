@@ -5,7 +5,7 @@ import type { Job, Playbook, Tpl } from '../src/model/types.ts'
 import type { WorkspacePage } from '../src/workspace.ts'
 import { agentRecords } from './agent/records.ts'
 import { AgentSession } from './agent/session.ts'
-import type { SessionOps } from './agent/session.ts'
+import type { Reintegration, SessionOps } from './agent/session.ts'
 import { BoardReturns } from './board/returns.ts'
 import { startItem } from './board/start.ts'
 import { GATEWAY_ACTIONS, grantedActs } from './bridge/actions.ts'
@@ -126,11 +126,12 @@ export function onBridgeBack(bus: Bus, load: () => Promise<void>, backoff = [200
 
 /** a workspace's instance; its source is not started, so the caller can wire what listens first;
     askDelay = how long auto-ask waits before it asks, tests shorten it; root = the console's folder, where grants.json is read;
-    agent = what a managed workspace's agent shares with the others: the ops, the restart hold, the registered names;
+    agent = what a managed workspace's agent shares with the others: the ops, the restart hold, the registered names,
+    the failed core update it may reintegrate;
     packsDir = where a managed workspace's granted packs are read */
 export type SpaceOpts = {
   cfg: WsConfig; home: string; artifactsDir: string; sdk?: Sdk; fake: boolean; push: Push; askDelay?: number; root?: string; packsDir?: string
-  agent?: { ops: SessionOps; hold(): () => void; taken(): { ids: string[]; prefixes: string[] } }
+  agent?: { ops: SessionOps; hold(): () => void; taken(): { ids: string[]; prefixes: string[] }; reintegration?: Reintegration }
 }
 
 export async function makeSpace(w: WorkspaceServer, o: SpaceOpts): Promise<Space> {

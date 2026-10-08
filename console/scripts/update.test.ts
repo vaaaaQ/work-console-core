@@ -81,6 +81,15 @@ function harness() {
 const subjects = (dir: string, ref = 'HEAD') => git(dir, 'log', '--format=%s', ref).split('\n')
 const branches = (dir: string) => git(dir, 'branch', '--format=%(refname:short)').split('\n').filter(Boolean)
 
+test('restart null: the update applies and leaves the restart to the console that ran it', async () => {
+  const s = setup(), h = harness(), lines: string[] = []
+  const sha = advance(s.origin, { 'console/server/a.ts': 'export const a = 2\n' })
+  const r = await update(h.o(s, { restart: null, log: (l: string) => lines.push(l) }))
+  assert.deepEqual([r.status, r.sha], ['updated', sha])
+  assert.deepEqual(h.restarts, [])
+  assert.equal(lines.at(-1), 'the console restarts itself')
+})
+
 test('refuses a dirty folder and changes nothing', async () => {
   const s = setup(), h = harness()
   advance(s.origin, { 'console/server/a.ts': 'export const a = 2\n' })

@@ -4,6 +4,7 @@ import { extname, join, resolve, sep } from 'node:path'
 import { adapt } from '../../src/live/adapt.ts'
 import { ctxOf } from '../../src/model/context.ts'
 import type * as T from '../../src/model/transitions.ts'
+import type { UpdateKind, UpdateView } from '../../src/model/update.ts'
 import type { Cmd, Job, Playbook, RunIntent, RunRec, Tpl } from '../../src/model/types.ts'
 import { resolveAct } from '../bridge/actions.ts'
 import { GatewayError, READY } from '../bridge/wire.ts'
@@ -61,6 +62,8 @@ export interface Deps {
   format?: Format
   /** the page build being served; a new one after a restart tells open pages to reload */
   build?: () => string | null
+  /** the failed core update and its Apply or Give up; none = the console updates by hand only */
+  updates?: { view(): UpdateView | null; start(kind: UpdateKind): UpdateView | null }
 }
 
 type Side = 'loopback' | 'lan'
@@ -225,6 +228,7 @@ export function createApp(d: Deps) {
       voice: d.voice?.ready() ?? false,
       providers: { auto: set.auto, manual: set.manual, manualLabel: PROVIDERS[set.manual].label },
       build: d.build?.() ?? null,
+      update: d.updates?.view() ?? null,
       ws: Object.fromEntries(list.map((s, i) => [s.id, blocks[i]])),
     }
   }
@@ -335,8 +339,15 @@ export function createApp(d: Deps) {
   const tracker = new TrackerCache()
 
   /** shared: matched against the whole path */
+  const updates = () => {
+    if (!d.updates) throw new HttpError(404, 'no_updates', 'this console is updated by hand')
+    return d.updates
+  }
   const routes: Route[] = [
     ['GET', /^\/api\/state$/, state],
+    // a failed core update: run update.mjs again, or drop it; a reintegrate conversation is a workspace's agent
+    ['POST', /^\/api\/update\/apply$/, () => ({ update: updates().start('apply') })],
+    ['POST', /^\/api\/update\/give-up$/, () => ({ update: updates().start('give-up') })],
     ['GET', /^\/api\/jobs$/, async () => { const m = await merged((s) => s.jobs.all()); return { jobs: m.items, parts: m.parts } }],
     ['POST', /^\/api\/jobs$/, async (r) => {
       const b = await r.body()
@@ -485,6 +496,7 @@ export function createApp(d: Deps) {
     ['POST', /^\/agent$/, async (r, s) => ({ agent: (await agentOf(s).send(str((await r.body()).text, 'text'))).rec })],
     ['POST', /^\/agent\/stop$/, (_r, s) => { agentOf(s).stop(); return { ok: true } }],
     ['POST', /^\/agent\/new$/, async (_r, s) => ({ agent: await agentOf(s).fresh() })],
+    ['POST', /^\/agent\/reintegrate$/, async (_r, s) => ({ agent: (await agentOf(s).reintegrate()).rec })],
     ['POST', /^\/agent\/undo$/, async (r, s) => ({ agent: await agentOf(s).undo(str((await r.body()).sha, 'sha')) })],
     ['POST', /^\/agent\/grants$/, async (r, s) => {
       const b = await r.body()

@@ -25,6 +25,7 @@ import { Pairing } from './pairing/pairing.ts'
 import { RESTART_EXIT, Restarter } from './restart.ts'
 import { hub, makeSpace, Spaces } from './spaces.ts'
 import type { Space } from './spaces.ts'
+import { Updates } from './update.ts'
 import { formatter } from './voice/format.ts'
 import { whisper } from './voice/whisper.ts'
 import { checkWorkspaces } from './workspace.ts'
@@ -70,17 +71,23 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
   const push = (t: string, b: string, u: string) => notify!.push(t, b, u)
   // a restart waits for every agent's turn; set once close exists
   let restartNow = () => {}
-  const restarter = new Restarter(() => restartNow())
+  const restarter = new Restarter(() => restartNow()), bus = new Bus()
+  // a failed core update: update.mjs runs again once no turn runs, and restarts the console only when it applied
+  const updates = new Updates({
+    home: cfg.home, root, emit: (update) => bus.emit({ kind: 'update', update }),
+    idle: () => restarter.idle(), restart: () => restarter.want(),
+  })
   const agent = {
     ops: new Ops({ root, home: cfg.home, fake: cfg.fakeGateway, restart: () => restarter.want() }),
     hold: () => restarter.hold(),
     taken: () => ({ ids: workspaces.map((w) => w.page.id), prefixes: workspaces.map((w) => w.jobPrefix) }),
+    reintegration: updates,
   }
   const list: Space[] = []
   try {
     for (const w of workspaces) list.push(await makeSpace(w, { cfg: cfgs[w.page.id], home: cfg.home, artifactsDir, sdk: o.sdk, fake: cfg.fakeGateway, push, root, agent }))
   } catch (e) { for (const s of list) await s.close(); throw e }
-  const spaces = new Spaces(list), bus = new Bus(), unhub = hub(list, bus)
+  const spaces = new Spaces(list), unhub = hub(list, bus)
   const allKnown = function* () { for (const s of list) yield* s.known.values() }
 
   // before any source starts, so the runs a restart interrupted are pushed too
@@ -133,6 +140,7 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
     voice: whisper({ keyPath: cfg.openaiKeyPath }),
     format: formatter({ keyPath: cfg.openaiKeyPath, model: cfg.formatModel }),
     build: () => buildId(join(PKG, 'dist', 'index.html')),
+    updates,
   })
   for (const s of list) s.source.start()
   const fakes: Record<string, FakeGateway> = Object.fromEntries(list.flatMap((s) => (s.fake ? [[s.id, s.fake]] : [])))

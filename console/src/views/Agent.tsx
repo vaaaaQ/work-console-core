@@ -14,7 +14,7 @@ import { VoiceField } from '../ui/VoiceField.tsx'
 
 const box = (t: React.ReactNode) => <div className="pb"><p className="why" style={{ margin: 0 }}>{t}</p></div>
 const short = (sha: string) => sha.slice(0, 8)
-const KIND: Record<AgentCommit['kind'], [string, string]> = { apply: ['Applied', 'check'], undo: ['Undo', 'retry'], grants: ['Grants', 'sliders'], create: ['New workspace', 'plus'] }
+const KIND: Record<AgentCommit['kind'], [string, string]> = { apply: ['Applied', 'check'], undo: ['Undo', 'retry'], grants: ['Grants', 'sliders'], create: ['New workspace', 'plus'], reintegrate: ['Core update fix', 'refresh'] }
 
 function Turn({ t }: { t: AgentTurn }) {
   if (t.who === 'tool') return <div className="ag-tool mono"><Ic n="wrench" sm />{t.t}</div>

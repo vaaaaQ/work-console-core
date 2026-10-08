@@ -20,20 +20,22 @@ const short = (sha: string) => sha.slice(0, 8)
 const failed = (a: Applied & { ok: false }) => [a.error, ...(a.failures ?? [])].join('\n')
 const RESTART = 'The console restarts when this turn ends; the page then says Updated — press Ctrl+F5.'
 
+const checkTool = (ws: string, ops: Pick<Ops, 'check'>): AskTool => ({
+  name: 'check',
+  description: 'Typecheck, run the tests and the static import check of the console as it is now. Answers the failures, if any.',
+  input: {},
+  run: async () => {
+    const c = await ops.check(ws)
+    return c.ok ? 'The check passed.' : `The check failed:\n${c.failures.join('\n')}`
+  },
+})
+
 export function agentTools(o: { ws: string; ops: AgentOps; hooks: AgentHooks }): AskTool[] {
   const { ws, ops, hooks } = o
   const record = (a: Applied & { ok: true }, kind: AgentCommit['kind'], undoes?: string) =>
     hooks.committed({ sha: a.sha, summary: a.summary, files: a.files, at: new Date().toISOString(), kind }, undoes)
   return [
-    {
-      name: 'check',
-      description: 'Typecheck, run the tests and the static import check of the console as it is now. Answers the failures, if any.',
-      input: {},
-      run: async () => {
-        const c = await ops.check(ws)
-        return c.ok ? 'The check passed.' : `The check failed:\n${c.failures.join('\n')}`
-      },
-    },
+    checkTool(ws, ops),
     {
       name: 'apply',
       description: `Check, build and commit your changes under workspaces/${ws}/ and tools/ as "${ws}: <summary>", then restart the console. A failed check or build commits nothing.`,
@@ -94,6 +96,36 @@ export function agentTools(o: { ws: string; ops: AgentOps; hooks: AgentHooks }):
         if (!r.ok) return `Not created: ${failed(r)}`
         record(r, 'create')
         return `Created workspace ${n.id} (${short(r.sha)}). Its own agent interviews the person there. ${RESTART}`
+      },
+    },
+  ]
+}
+
+/** a reintegration's tools, over ops rooted at the update's worktree: check, apply on its branch, give_up;
+    end notes how the agent closed it, and the update runs once the turn ends */
+export function reintegrateTools(o: { ws: string; branch: string; ops: Pick<Ops, 'check' | 'apply'>; committed(c: AgentCommit): void; end(kind: 'apply' | 'give-up', reason?: string): void }): AskTool[] {
+  const { ws, branch, ops } = o
+  return [
+    checkTool(ws, ops),
+    {
+      name: 'apply',
+      description: `Check, build and commit your changes under workspaces/${ws}/ and tools/ on ${branch} as "${ws}: <summary>". When the turn ends the console runs the update again. A failed check or build commits nothing.`,
+      input: { summary: z.string().min(1).max(120).describe('one line: what changed, for the person') },
+      run: async (a) => {
+        const r = await ops.apply(ws, String(a.summary))
+        if (!r.ok) return `Not applied: ${failed(r)}`
+        o.committed({ sha: r.sha, summary: r.summary, files: r.files, at: new Date().toISOString(), kind: 'reintegrate' })
+        o.end('apply')
+        return `Committed ${short(r.sha)} on ${branch}: ${r.summary}. When this turn ends the console runs the update again; once it passes, it merges, builds and restarts.`
+      },
+    },
+    {
+      name: 'give_up',
+      description: 'Drop the update when the fix needs more than you may change. When the turn ends its branch and worktree go, and the console stays on its core.',
+      input: { reason: z.string().min(1).describe('why, in one line for the person') },
+      run: async (a) => {
+        o.end('give-up', String(a.reason ?? '').replace(/\s+/g, ' ').trim())
+        return 'When this turn ends the update is dropped: its branch and worktree go, and the console stays on its core.'
       },
     },
   ]

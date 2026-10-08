@@ -35,6 +35,7 @@ export async function swapDist(stage: string, dist: string): Promise<{ done(): v
 export class Restarter {
   private held = 0
   private wanted = false
+  private idles: (() => void)[] = []
   private go: () => void
   constructor(go: () => void) { this.go = go }
   want() { this.wanted = true; this.fire() }
@@ -44,5 +45,13 @@ export class Restarter {
     return () => { if (done) return; done = true; this.held--; this.fire() }
   }
   get pending() { return this.wanted }
-  private fire() { if (this.wanted && this.held === 0) { this.wanted = false; this.go() } }
+  /** an agent's turn runs */
+  get holding() { return this.held > 0 }
+  /** settles once no turn runs */
+  idle(): Promise<void> { return this.held === 0 ? Promise.resolve() : new Promise((ok) => this.idles.push(ok)) }
+  private fire() {
+    if (this.held) return
+    for (const f of this.idles.splice(0)) f()
+    if (this.wanted) { this.wanted = false; this.go() }
+  }
 }

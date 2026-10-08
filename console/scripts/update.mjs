@@ -6,11 +6,12 @@ import { consoleHome, gitId, npmChecks, readJson, run, tail, writeJson } from '.
 import { requestRestart } from './run.mjs'
 
 /* Moves the console to the core's newest commit:
-     node <dir>/scripts/update.mjs [--no-pull] [--core <core repo>] [--give-up]
+     node <dir>/scripts/update.mjs [--no-pull] [--core <core repo>] [--give-up] [--no-restart]
    pull the core, then sync and check in a git worktree at <home>-updates/<sha7> on branch update/<sha7>.
    Pass: the folder fast-forwards to it, builds and restarts. Fail: the folder is untouched, the worktree stays,
    <home>/update-failed.json says what failed, exit 3; a reintegrate session commits its fix on the branch and
-   runs the update again, which applies it. --give-up drops the branch and the worktree. */
+   runs the update again, which applies it. --give-up drops the branch and the worktree. --no-restart leaves the
+   restart to the console that runs this, so it can wait for its agents' turns. */
 
 export const EXIT_REINTEGRATE = 3
 const HERE = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -132,21 +133,23 @@ export async function update(o) {
   drop(r, repo, { worktree, branch })
   rmSync(join(home, RECORD), { force: true })
   log(`updated to core ${sha7}`)
-  log(restart(home) ? 'restarting the console' : `the console is not running: node ${join(folder, 'scripts', 'run.mjs')} --detach starts it`)
+  if (!restart) log('the console restarts itself')
+  else log(restart(home) ? 'restarting the console' : `the console is not running: node ${join(folder, 'scripts', 'run.mjs')} --detach starts it`)
   return { status: 'updated', code: 0, sha }
 }
 
 function cli(argv) {
-  const o = { pull: true, core: undefined, giveUp: false }
+  const o = { pull: true, core: undefined, giveUp: false, restart: undefined }
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--no-pull') o.pull = false
     else if (argv[i] === '--core') o.core = resolve(argv[++i] ?? '')
     else if (argv[i] === '--give-up') o.giveUp = true
-    else throw new Error(`unknown argument ${argv[i]}\nusage: node scripts/update.mjs [--no-pull] [--core <core repo>] [--give-up]`)
+    else if (argv[i] === '--no-restart') o.restart = null
+    else throw new Error(`unknown argument ${argv[i]}\nusage: node scripts/update.mjs [--no-pull] [--core <core repo>] [--give-up] [--no-restart]`)
   }
   const home = consoleHome()
   if (o.giveUp) { console.log(giveUp({ home }) ? 'dropped the failed update' : 'no failed update'); return Promise.resolve({ code: 0 }) }
-  return update({ home, folder: HERE, core: o.core, pull: o.pull })
+  return update({ home, folder: HERE, core: o.core, pull: o.pull, restart: o.restart })
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {

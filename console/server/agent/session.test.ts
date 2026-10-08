@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { FailedUpdate } from '../../scripts/update.mjs'
 import type { AgentRec, Grants } from '../../src/model/agent.ts'
 import { Bus } from '../events.ts'
 import type { Ev } from '../events.ts'
@@ -11,14 +12,24 @@ import { Restarter } from '../restart.ts'
 import type { Applied } from './ops.ts'
 import { agentRecords } from './records.ts'
 import { AgentSession } from './session.ts'
-import type { SessionOps } from './session.ts'
+import type { Reintegration, SessionOps, UpdateEnd } from './session.ts'
+import type { Limits } from './limits.ts'
 
-type Turn = { prompt: string; resume?: string; system: string; tools: AskTool[]; abort: AbortController }
+type Turn = { prompt: string; resume?: string; system: string; tools: AskTool[]; limits: Limits; abort: AbortController }
 type Script = (t: Turn) => AsyncIterable<SdkEvent>
 
 const ok = (sha: string, summary: string, files = ['workspaces/w1/page.ts']): Applied => ({ ok: true, sha, summary, files })
 
-function setup(o: { grants?: Partial<Grants>; script?: Script[]; recs?: AgentRec[] } = {}) {
+const CORE = 'e'.repeat(40), FROM = 'f'.repeat(40)
+/** a failed update whose worktree is a folder beside the console's */
+const failedAt = (root: string, o: Partial<FailedUpdate> = {}): FailedUpdate => {
+  const worktree = join(root, 'updates', 'eeeeeee'), dir = join(worktree, 'console')
+  mkdirSync(join(dir, 'workspaces', 'w1'), { recursive: true })
+  return { core: CORE, from: FROM, repo: root, branch: 'update/eeeeeee', worktree, dir, pre: 'p', head: 'h', step: 'typecheck',
+    output: "workspaces/w1/page.ts(3,7): error TS2353: 'needDb' does not exist in type 'LocalOpts'", at: new Date().toISOString(), ...o }
+}
+
+function setup(o: { grants?: Partial<Grants>; script?: Script[]; recs?: AgentRec[]; update?: Partial<FailedUpdate>; ends?: ((f: FailedUpdate) => FailedUpdate | null)[] } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'wc-session-'))
   mkdirSync(join(root, 'workspaces', 'w1'), { recursive: true })
   if (o.grants) writeFileSync(join(root, 'workspaces', 'w1', 'grants.json'), JSON.stringify(o.grants))
@@ -41,8 +52,27 @@ function setup(o: { grants?: Partial<Grants>; script?: Script[]; recs?: AgentRec
   const bus = new Bus(), events: Ev[] = []
   bus.on((e) => events.push(e))
   const records = agentRecords({} as never, file)
-  const s = new AgentSession({ ws: 'w1', title: 'One', root, records, sdk, ops, bus, hold: () => restarter.hold(), taken: () => ({ ids: ['w1'], prefixes: ['W'] }) })
-  return { s, root, file, calls, turns, events, records, restarts: () => restarts }
+  // the update: its record, ops that note where they ran, and runs of update.mjs that end as ends says (default: applied)
+  const u = { failed: o.update ? failedAt(root, o.update) : null as FailedUpdate | null, updating: false, runs: [] as [string, boolean][] }
+  const ends = [...(o.ends ?? [])]
+  const reintegration: Reintegration = {
+    failed: () => u.failed,
+    diff: async () => 'diff --git a/server/browser/local.ts b/server/browser/local.ts\n-  needDb?: boolean\n+  db?: boolean',
+    opsAt: (dir) => ({ ...ops,
+      check: async () => { calls.push(['check', dir]); return { ok: true, failures: [] } },
+      apply: async (ws, s) => { calls.push(['apply', ws, s, dir]); return ok('d'.repeat(40), s) } }),
+    updating: () => u.updating,
+    run: async (kind, report) => {
+      u.runs.push([kind, restarter.holding])
+      const was = u.failed!, next = kind === 'give-up' ? null : (ends.shift() ?? (() => null))(was)
+      u.failed = next
+      const r: UpdateEnd = { code: next ? 3 : 0, output: next ? next.output : 'updated', updated: kind === 'apply' && !next, failed: next }
+      await report(r)
+      return r
+    },
+  }
+  const s = new AgentSession({ ws: 'w1', title: 'One', root, records, sdk, ops, bus, hold: () => restarter.hold(), taken: () => ({ ids: ['w1'], prefixes: ['W'] }), reintegration })
+  return { s, root, file, calls, turns, events, records, u, restarts: () => restarts }
 }
 
 const tool = (t: Turn, name: string) => t.tools.find((x) => x.name === name)!
@@ -193,4 +223,86 @@ test('a turn the console stopped in is failed when the records are read again', 
   const r = (await x.s.current())!
   assert.equal(r.status, 'failed')
   assert.match(r.error!, /stopped during the turn/)
+})
+
+test("a reintegration works in the update's worktree: the failing output and the core diff, its tools, and update.mjs once the turn ends", async () => {
+  const fix = (summary: string) => async function* (t: Turn): AsyncIterable<SdkEvent> {
+    yield { k: 'session', id: 's9' }
+    yield { k: 'text', t: await tool(t, 'apply').run({ summary }) }
+    yield { k: 'result', ok: true }
+  }
+  const x = setup({ grants: { packs: ['p'] }, update: {}, script: [fix('db, not needDb'), fix('the board test too')],
+    ends: [(f) => ({ ...f, step: 'tests', output: 'not ok 3 - the board keys' })] })
+  const dir = x.u.failed!.dir
+  const { rec, done } = await x.s.reintegrate()
+  assert.equal(rec.status, 'running')
+  assert.deepEqual(rec.reintegrate, { core: CORE, from: FROM, branch: 'update/eeeeeee', step: 'typecheck' })
+  await done
+  const t = x.turns[0]
+  assert.match(t.prompt, /from core fffffff to eeeeeee failed at typecheck/)
+  assert.match(t.prompt, /TS2353: 'needDb'/)
+  assert.match(t.prompt, /\+  db\?: boolean/)
+  assert.equal(t.limits.cwd, dir, 'the turn writes in the worktree')
+  assert.deepEqual(t.limits.write, ['workspaces/w1/**', 'tools/**'])
+  assert.deepEqual(t.tools.map((y) => y.name), ['check', 'apply', 'give_up'])
+  assert.match(t.system, /update\/eeeeeee/)
+  assert.deepEqual(x.calls, [['apply', 'w1', 'db, not needDb', dir]], 'committed in the worktree, nothing in the folder')
+  assert.deepEqual(x.u.runs, [['apply', false]], 'update.mjs runs after the turn let go of the console')
+  let r = (await x.s.current())!
+  assert.equal(r.reintegrate?.end, 'apply')
+  assert.match(r.turns.at(-1)!.t, /failed again at tests/)
+  assert.deepEqual(r.commits.map((c) => [c.kind, c.summary]), [['reintegrate', 'db, not needDb']])
+  await assert.rejects(x.s.undo('d'.repeat(40)), /cannot be undone here/)
+
+  await (await x.s.send('go on')).done
+  assert.match(x.turns[1].prompt, /failed again at tests[\s\S]*not ok 3 - the board keys[\s\S]*go on$/)
+  assert.equal(x.turns[1].resume, 's9')
+  assert.deepEqual(x.u.runs.map((y) => y[0]), ['apply', 'apply'])
+  r = (await x.s.current())!
+  assert.match(r.turns.at(-1)!.t, /The update applied/)
+  assert.equal(x.restarts(), 0, 'the restart is the update run, not the session')
+  await assert.rejects(x.s.send('anything else?'), /is over/)
+  const n = await x.s.fresh()
+  assert.equal(n.reintegrate, undefined)
+})
+
+test('a reintegration is refused with no update, for a sync failure and during a turn; give_up drops it; no turn starts while the console updates', async () => {
+  const x = setup({ grants: { packs: ['p'] }, script: [async function* (t) {
+    yield { k: 'session', id: 's1' }
+    yield { k: 'text', t: await tool(t, 'give_up').run({ reason: 'the fix is in a core file' }) }
+    yield { k: 'result', ok: true }
+  }] })
+  await assert.rejects(x.s.reintegrate(), /no core update waits/)
+  x.u.failed = failedAt(x.root, { step: 'sync' })
+  await assert.rejects(x.s.reintegrate(), /failed at sync/)
+  x.u.failed = failedAt(x.root)
+  const { done } = await x.s.reintegrate()
+  await assert.rejects(x.s.reintegrate(), /still answering/)
+  await done
+  assert.deepEqual(x.u.runs, [['give-up', false]])
+  assert.equal(x.u.failed, null)
+  const r = (await x.s.current())!
+  assert.equal(r.reintegrate?.end, 'give-up')
+  assert.ok(r.turns.some((y) => y.who === 'agent' && /dropped/.test(y.t)))
+  assert.match(r.turns.at(-1)!.t, /given up/)
+  await assert.rejects(x.s.send('and now?'), /is over/)
+  await x.s.fresh()
+  x.u.updating = true
+  await assert.rejects(x.s.send('hello'), /the console is updating/)
+})
+
+test('a reintegrate turn stopped after its apply runs no update; the banner is left to do it', async () => {
+  const x = setup({ grants: { packs: ['p'] }, update: {}, script: [async function* (t) {
+    yield { k: 'session', id: 's1' }
+    await tool(t, 'apply').run({ summary: 'a fix' })
+    // stopped as soon as the apply is seen, maybe before this line
+    await new Promise((_ok, no) => t.abort.signal.aborted ? no(new Error('aborted')) : t.abort.signal.addEventListener('abort', () => no(new Error('aborted'))))
+  }] })
+  const { done } = await x.s.reintegrate()
+  while (!x.calls.length) await new Promise((ok) => setTimeout(ok, 5))
+  x.s.stop(); await done
+  assert.deepEqual(x.u.runs, [])
+  const r = (await x.s.current())!
+  assert.equal(r.reintegrate?.end, undefined)
+  assert.ok(r.turns.some((y) => y.who === 'note' && /Apply on the banner runs it/.test(y.t)))
 })

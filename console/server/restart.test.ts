@@ -45,3 +45,16 @@ test('a restart waits for every held turn to end, and fires once', () => {
   r.want()
   assert.equal(n, 2, 'nothing held: at once')
 })
+
+test('idle settles once the last held turn ends; holding says whether one runs', async () => {
+  const r = new Restarter(() => {})
+  await r.idle()
+  const a = r.hold()
+  assert.equal(r.holding, true)
+  let done = false
+  const p = r.idle().then(() => { done = true })
+  await new Promise((ok) => setTimeout(ok, 5))
+  assert.equal(done, false)
+  a(); await p
+  assert.equal(r.holding, false)
+})

@@ -26,6 +26,7 @@ export function update(o: {
   check?: (dir: string) => Checked
   sync?: (o: { core: string; to: string; rev: string }) => void
   build?: (dir: string) => { ok: boolean; output?: string }
-  restart?: (home: string) => boolean
+  /** null = the caller restarts the console */
+  restart?: ((home: string) => boolean) | null
   log?: (line: string) => void
 }): Promise<{ status: 'current' | 'updated' | 'reintegrate' | 'refused' | 'failed'; code: number; sha?: string; branch?: string }>

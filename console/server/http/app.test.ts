@@ -193,6 +193,8 @@ test('state: the PC zone in home, one block per workspace with its jobs, playboo
     assert.equal(st.status, 200, st.text)
     assert.deepEqual(st.json.home, { tz: 'Asia/Tokyo', pc: 'pc' })
     assert.ok(st.json.push.key); assert.equal(st.json.side, 'loopback')
+    assert.equal(st.json.update, null, 'no updater: no failed update')
+    assert.equal((await call(lp, 'POST', '/api/update/apply', { body: {} })).json.error.code, 'no_updates')
     assert.deepEqual(Object.keys(st.json.ws), ['acme', 'beta'])
     const { acme: a, beta: b } = st.json.ws
     for (const w of [a, b]) {

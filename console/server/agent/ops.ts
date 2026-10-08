@@ -15,7 +15,8 @@ import type { NewWorkspace } from './template.ts'
 /* What the agent's console tools do, over git and an injectable exec: check, apply (check, build, commit, restart),
    undo one of its commits, write accepted grants and add a workspace. One at a time; a failed step leaves no commit and the served build. */
 
-export type Exec = (cmd: string, args: string[], o: { cwd: string; timeoutMs?: number }) => Promise<{ code: number; out: string }>
+/** env = variables set over the server's own */
+export type Exec = (cmd: string, args: string[], o: { cwd: string; timeoutMs?: number; env?: Record<string, string> }) => Promise<{ code: number; out: string }>
 export type Applied = { ok: true; sha: string; files: string[]; summary: string } | { ok: false; error: string; failures?: string[] }
 export interface Checked { ok: boolean; failures: string[] }
 
@@ -23,7 +24,7 @@ const CHECK_MS = 15 * 60_000, BUILD_MS = 10 * 60_000
 
 /** runs a command and gives its exit code and output; npm through the shell on Windows, a hung one killed with its children */
 export const realExec: Exec = (cmd, args, o) => new Promise((ok) => {
-  const p = spawn(cmd, args, { cwd: o.cwd, shell: process.platform === 'win32' && cmd === 'npm', windowsHide: true, env: process.env })
+  const p = spawn(cmd, args, { cwd: o.cwd, shell: process.platform === 'win32' && cmd === 'npm', windowsHide: true, env: o.env ? { ...process.env, ...o.env } : process.env })
   let out = ''
   p.stdout.on('data', (b) => { out += b }); p.stderr.on('data', (b) => { out += b })
   const t = o.timeoutMs ? setTimeout(() => {

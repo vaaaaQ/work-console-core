@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import type { AgentCommit, AgentRec, AgentWho, Grants } from '../../src/model/agent.ts'
+import { existsSync } from 'node:fs'
+import type { FailedUpdate } from '../../scripts/update.mjs'
+import type { AgentCommit, AgentRec, AgentReintegrate, AgentWho, Grants } from '../../src/model/agent.ts'
+import { REINTEGRABLE } from '../../src/model/update.ts'
+import type { UpdateKind } from '../../src/model/update.ts'
 import { HttpError } from '../events.ts'
 import type { Bus } from '../events.ts'
 import { CONSOLE } from '../config.ts'
@@ -9,14 +13,29 @@ import type { SdkPick } from '../llm/providers.ts'
 import type { Sdk } from '../llm/sdk.ts'
 import { agentLimits } from './limits.ts'
 import type { Ops } from './ops.ts'
-import { agentSystem } from './prompt.ts'
+import { agentSystem, reintegrateAgain, reintegratePrompt, reintegrateSystem } from './prompt.ts'
 import type { AgentRecords } from './records.ts'
-import { agentTools } from './tools.ts'
+import { agentTools, reintegrateTools } from './tools.ts'
 
 /* One managed workspace's agent: one conversation at a time and one turn at a time. A turn holds the console's
-   restart until it ends; what the person decides or undoes meanwhile reaches the agent with its next prompt. */
+   restart until it ends; what the person decides or undoes meanwhile reaches the agent with its next prompt.
+   A reintegration is a conversation rooted at a failed core update's worktree; update.mjs runs once its turn ends. */
 
 export type SessionOps = Pick<Ops, 'check' | 'apply' | 'undo' | 'createWorkspace' | 'acceptGrants'>
+/** how a run of update.mjs ended: updated = the folder is on the new core; failed = the record it left */
+export interface UpdateEnd { code: number; output: string; updated: boolean; failed: FailedUpdate | null }
+/** the console's failed core update, for reintegrate conversations */
+export interface Reintegration {
+  failed(): FailedUpdate | null
+  /** the core's changes as they land in the folder */
+  diff(f: FailedUpdate): Promise<string>
+  /** ops rooted at the update's worktree, with no restart */
+  opsAt(dir: string): Pick<Ops, 'check' | 'apply'>
+  /** update.mjs runs now */
+  updating(): boolean
+  /** runs update.mjs once no turn runs; report hears its end before the console restarts */
+  run(kind: UpdateKind, report: (r: UpdateEnd) => Promise<void>): Promise<UpdateEnd>
+}
 export interface SessionOpts {
   ws: string; title: string; records: AgentRecords; sdk: Sdk | SdkPick; ops: SessionOps; bus: Bus
   /** marks a turn running; the release lets a restart asked for meanwhile go */
@@ -26,6 +45,7 @@ export interface SessionOpts {
   /** the console's folder; default the one this code runs from */
   root?: string
   turnMs?: number
+  reintegration?: Reintegration
 }
 
 const TURN_MS = 60 * 60_000
@@ -70,13 +90,24 @@ export class AgentSession {
   /** a new conversation; a waiting grants change and unheard lines move to it */
   async fresh(): Promise<AgentRec> {
     if (this.turn) throw busy()
-    const xs = await this.load(), last = xs.at(-1), rec = this.make(false)
-    if (last?.pending) { rec.pending = last.pending; delete last.pending }
-    if (last?.inbox?.length) { rec.inbox = last.inbox; delete last.inbox }
-    if (last) this.put(last)
-    xs.push(rec)
+    const rec = this.next(await this.load())
     await this.persist(rec)
     return clone(rec)
+  }
+
+  /** a new conversation that fixes the failed core update on its branch; it starts with the failing output and the core's diff */
+  async reintegrate(): Promise<{ rec: AgentRec; done: Promise<void> }> {
+    const ri = this.o.reintegration, f = ri?.failed()
+    if (!ri || !f) throw new HttpError(409, 'no_update', 'no core update waits to be reintegrated')
+    if (this.turn) throw busy()
+    if (!REINTEGRABLE.includes(f.step)) throw new HttpError(409, 'not_reintegrable', `the update failed at ${f.step}, before any workspace code ran: apply it again, or give it up`)
+    if (!existsSync(f.dir)) throw new HttpError(409, 'update_closed', `the update's worktree ${f.dir} is gone: give it up and update again`)
+    const diff = await ri.diff(f)
+    if (this.turn) throw busy()
+    const rec = this.next(await this.load())
+    rec.reintegrate = { core: f.core, from: f.from, branch: f.branch, step: f.step }
+    this.note(rec, `Reintegrating core ${f.core.slice(0, 7)}: the update failed at ${f.step}. The agent works on ${f.branch}.`)
+    return this.begin(reintegratePrompt({ ws: this.o.ws, core: f.core, from: f.from, step: f.step, output: f.output, diff }), false)
   }
 
   /** the person takes back one of the agent's commits from the page */
@@ -85,7 +116,10 @@ export class AgentSession {
     const xs = await this.load(), c = xs.flatMap((x) => x.commits).find((x) => x.sha === sha)
     if (!c) throw new HttpError(404, 'not_found', `${short(sha)} is not one of the agent's commits`)
     if (c.undoneBy) throw new HttpError(409, 'undone', `${short(c.sha)} is already undone by ${short(c.undoneBy)}`)
-    if (c.kind === 'grants' || c.kind === 'undo') throw new HttpError(409, 'not_undoable', `${short(c.sha)} is ${c.kind === 'grants' ? 'a grants change' : 'an undo'}; it cannot be undone here`)
+    if (c.kind === 'grants' || c.kind === 'undo' || c.kind === 'reintegrate') {
+      const what = c.kind === 'grants' ? 'a grants change' : c.kind === 'undo' ? 'an undo' : 'a fix for a core update'
+      throw new HttpError(409, 'not_undoable', `${short(c.sha)} is ${what}; it cannot be undone here`)
+    }
     const r = await this.o.ops.undo(this.o.ws, c.sha)
     if (!r.ok) throw new HttpError(409, 'undo_failed', [r.error, ...(r.failures ?? [])].join('\n'))
     const rec = await this.last()
@@ -144,6 +178,23 @@ export class AgentSession {
     return rec
   }
 
+  /** a new conversation pushed after the newest, which hands it its waiting grants change and unheard lines */
+  private next(xs: AgentRec[]): AgentRec {
+    const last = xs.at(-1), rec = this.make(false)
+    if (last?.pending) { rec.pending = last.pending; delete last.pending }
+    if (last?.inbox?.length) { rec.inbox = last.inbox; delete last.inbox }
+    if (last) this.put(last)
+    xs.push(rec)
+    return rec
+  }
+
+  /** why a reintegrate conversation can take no more turns: its update was applied, given up or replaced */
+  private closed(ri: AgentReintegrate): FailedUpdate | string {
+    const f = this.o.reintegration?.failed()
+    if (f && f.core === ri.core && f.branch === ri.branch && existsSync(f.dir)) return f
+    return `this conversation reintegrated core ${ri.core.slice(0, 7)}, and that update is over: start a new conversation`
+  }
+
   private make(interview: boolean): AgentRec {
     const at = iso()
     return { id: randomUUID(), ws: this.o.ws, provider: pickOf(this.o.sdk).auto(), turns: [], commits: [], status: 'idle', ...(interview ? { interview } : {}), created: at, updated: at }
@@ -156,6 +207,9 @@ export class AgentSession {
     if (this.turn) throw busy()
     const rec = await this.last()
     if (this.turn) throw busy()
+    if (this.o.reintegration?.updating()) throw new HttpError(409, 'updating', 'the console is updating: wait until it restarts')
+    const f = rec.reintegrate ? this.closed(rec.reintegrate) : null
+    if (typeof f === 'string') throw new HttpError(409, 'update_closed', f)
     const pick = pickOf(this.o.sdk)
     // a conversation the provider has not seen yet takes the auto provider now; one it has, stays with it
     if (!rec.session) rec.provider = pick.auto()
@@ -167,20 +221,31 @@ export class AgentSession {
     if (!prompt) throw new HttpError(400, 'bad_args', 'nothing to say to the agent')
     delete rec.inbox
     if (own) this.say(rec, 'you', text)
+    if (rec.reintegrate) delete rec.reintegrate.end
     rec.status = 'running'; delete rec.error
     const release = this.o.hold(), abort = new AbortController()
     this.abort = abort; this.stopped = false
-    const done = this.run(rec, sdk, prompt, abort, release)
+    const done = this.run(rec, sdk, prompt, abort, release, f)
     this.turn = done
     void this.persist(rec)
     return { rec: clone(rec), done }
   }
 
-  private async run(rec: AgentRec, sdk: Sdk, prompt: string, abort: AbortController, release: () => void) {
+  /** f = the update a reintegrate turn works on; its worktree is the turn's root */
+  private async run(rec: AgentRec, sdk: Sdk, prompt: string, abort: AbortController, release: () => void, f: FailedUpdate | null) {
     const timer = setTimeout(() => abort.abort(), this.o.turnMs ?? TURN_MS)
     let error = '', ok = false
     try {
-      const tools = agentTools({ ws: this.o.ws, ops: this.o.ops, hooks: {
+      const ri = rec.reintegrate
+      const tools = f && ri ? reintegrateTools({
+        ws: this.o.ws, branch: ri.branch, ops: this.o.reintegration!.opsAt(f.dir),
+        committed: (c) => { this.committed(rec, c); void this.persist(rec) },
+        end: (kind, reason) => {
+          ri.end = kind
+          if (kind === 'give-up') this.note(rec, `The agent gives the update up${reason ? `: ${reason}` : ''}.`)
+          void this.persist(rec)
+        },
+      }) : agentTools({ ws: this.o.ws, ops: this.o.ops, hooks: {
         grants: () => this.grants(),
         commits: () => (this.recs ?? []).flatMap((x) => x.commits),
         taken: () => this.o.taken(),
@@ -190,8 +255,10 @@ export class AgentSession {
           void this.persist(rec)
         },
       } })
-      const system = agentSystem({ ws: this.o.ws, title: this.o.title, interview: rec.interview === true, grants: this.grants() })
-      const events = sdk.agent!({ prompt, resume: rec.session, limits: agentLimits(this.root, this.o.ws), tools, system, abort })
+      const system = f && ri ? reintegrateSystem({ ws: this.o.ws, title: this.o.title, core: ri.core, from: ri.from, branch: ri.branch })
+        : agentSystem({ ws: this.o.ws, title: this.o.title, interview: rec.interview === true, grants: this.grants() })
+      const limits = agentLimits(f ? f.dir : this.root, this.o.ws)
+      const events = sdk.agent!({ prompt, resume: rec.session, limits, tools, system, abort })
       for await (const e of events) {
         if (e.k === 'session') { rec.session = e.id; continue }
         if (e.k === 'text') this.say(rec, 'agent', e.t)
@@ -205,11 +272,18 @@ export class AgentSession {
       }
     } catch (e) { error = (e as Error).message || String(e) }
     clearTimeout(timer)
+    const cut = this.stopped || abort.signal.aborted || !!error || !ok
     if (this.stopped) { rec.status = 'idle'; this.note(rec, 'Stopped.') }
     else if (abort.signal.aborted) { rec.status = 'failed'; rec.error = `the turn ran past ${Math.round((this.o.turnMs ?? TURN_MS) / 60_000)} min` }
     else if (error || !ok) { rec.status = 'failed'; rec.error = error || 'the turn ended without an answer' }
     else rec.status = 'idle'
     this.abort = null; this.turn = null
+    // a reintegration's update runs only after a turn that finished; a later turn on it starts without its end
+    const end = rec.reintegrate?.end
+    if (end && cut) {
+      delete rec.reintegrate!.end
+      this.note(rec, `The update was not run, since the turn did not finish: ${end === 'apply' ? 'Apply' : 'Give up'} on the banner runs it.`)
+    }
     await this.persist(rec).catch(() => {})
     // a rejection that came in during the turn is answered before a restart this turn asked for
     if (this.wake && rec.inbox?.length) {
@@ -217,6 +291,27 @@ export class AgentSession {
       await this.begin('', false).catch((e) => console.error(`agent ${this.o.ws}: telling it the rejection failed:`, (e as Error).message))
     }
     release()
+    if (end && !cut) await this.finish(rec, end)
+  }
+
+  /** update.mjs as the agent closed the reintegration; its end is noted, and a new failure goes to the agent */
+  private async finish(rec: AgentRec, end: UpdateKind) {
+    const ri = rec.reintegrate!
+    try {
+      await this.o.reintegration!.run(end, async (r) => {
+        const again = r.failed && r.failed.branch === ri.branch ? r.failed : null
+        if (end === 'give-up') this.note(rec, r.code === 0 ? 'The update is given up: its branch and worktree are dropped, and the console stays on its core.' : `Giving the update up failed (exit ${r.code}): ${lastLine(r.output)}`)
+        else if (r.updated) this.note(rec, `The update applied: the console is on core ${ri.core.slice(0, 7)} and restarts.`)
+        else if (again) {
+          this.note(rec, `The update failed again at ${again.step}.`)
+          this.tell(rec, reintegrateAgain(again))
+        } else this.note(rec, `The update did not apply (exit ${r.code}): ${lastLine(r.output)}`)
+        await this.persist(rec)
+      })
+    } catch (e) {
+      this.note(rec, `The update did not run: ${(e as Error).message}`)
+      await this.persist(rec).catch(() => {})
+    }
   }
 
   private committed(rec: AgentRec, c: AgentCommit, undoes?: string) {
@@ -249,5 +344,6 @@ export class AgentSession {
   }
 }
 
+const lastLine = (out: string) => out.trim().split(/\r?\n/).at(-1) ?? ''
 const busy = () => new HttpError(409, 'busy', 'the agent is still answering: wait, or stop it')
 const clone0 = (r: AgentRec | undefined) => (r ? clone(r) : null)

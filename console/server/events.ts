@@ -1,5 +1,6 @@
 import type { AgentRec } from '../src/model/agent.ts'
 import type { Job, RunRec } from '../src/model/types.ts'
+import type { UpdateView } from '../src/model/update.ts'
 
 /* Everything the page hears about travels on a bus; the SSE endpoint and Web Push listen to it. Each workspace
    has its own; the hub re-emits them all on a shared one, each event carrying the id of its workspace as ws. */
@@ -15,6 +16,8 @@ export type Ev = (
   | { kind: 'source'; concept: string; upserts: unknown[]; removes: string[]; reset?: boolean }
   /** a managed workspace's agent conversation, whole, on each change */
   | { kind: 'agent'; agent: AgentRec }
+  /** the console's failed core update, on each change; null = none waits */
+  | { kind: 'update'; update: UpdateView | null }
 ) & { ws?: string }
 
 export class Bus {
