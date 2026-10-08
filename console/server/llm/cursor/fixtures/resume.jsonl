@@ -1,0 +1,9 @@
+{"dir":">","x":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false},"clientInfo":{"name":"work-console-probe","version":"0"}}}}
+{"dir":"<","x":{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"mcpCapabilities":{"http":true,"sse":true},"promptCapabilities":{"audio":false,"embeddedContext":false,"image":true},"sessionCapabilities":{"list":{}}},"authMethods":[{"id":"cursor_login","name":"Cursor Login","description":"Authenticate using existing Cursor login credentials. Run 'agent login' first if not logged in."}]}}}
+{"dir":">","x":{"jsonrpc":"2.0","id":3,"method":"session/load","params":{"sessionId":"00000000-0000-4000-8000-000000000001","cwd":"<work>","mcpServers":[]}}}
+{"dir":"<","x":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"00000000-0000-4000-8000-000000000001","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"Reply with the single word pong."}}}}}
+{"dir":"<","x":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"00000000-0000-4000-8000-000000000001","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"pong"}}}}}
+{"dir":"<","x":{"jsonrpc":"2.0","id":3,"result":{}}}
+{"dir":">","x":{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"00000000-0000-4000-8000-000000000001","prompt":[{"type":"text","text":"Which single word did you reply with earlier in this chat? Answer with that word only."}]}}}
+{"dir":"<","x":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"00000000-0000-4000-8000-000000000001","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"pong"}}}}}
+{"dir":"<","x":{"jsonrpc":"2.0","id":4,"result":{"stopReason":"end_turn"}}}
