@@ -19,6 +19,9 @@ import type { PluginCtx, WorkspaceServer, WsConfig } from './workspace.ts'
 import type { WorkDir } from './llm/worktree.ts'
 import type { Store } from './store/port.ts'
 import { pgSource } from './store/pg.ts'
+import { localSource } from './bridge/local.ts'
+import type { Browser } from './browser/launcher.ts'
+import type { StateDocs } from './browser/state.ts'
 import type { PgSource } from './store/pg.ts'
 
 /** Acme under another id and prefix; its playbooks stay Acme's, so it brings none of its own */
@@ -327,18 +330,39 @@ test("a stored playbook's planned messages outlive a restart: sent works on the 
   } finally { await a?.close(); await b?.close(); await fake.close() }
 })
 
+test("a workspace's source learns its id, the home and, managed, its grants; a local source's packs give its actions", async () => {
+  install([{ page: acme }])
+  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-')), root = join(dir, 'console')
+  mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })
+  const hosts = ['outlook.office.com', 'graph.microsoft.com']
+  writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ packs: ['m365-mail'], hosts, acts: ['mail.send', 'chat.post'] }))
+  let seen: Parameters<NonNullable<WorkspaceServer['source']>>[1] | undefined
+  const idle: Browser = { endpoint: () => null, status: () => ({ state: 'off' }), start: async () => {}, stop: async () => {}, onChange: () => () => {} }
+  const docs: StateDocs = { load: async () => ({ docs: {}, seq: 0 }), put: async () => {}, seq: async () => {} }
+  const w: WorkspaceServer = { ...acmeServer, source: (cfg, o) => { seen = o; return localSource(cfg, { ...o, docs, browser: idle }) } }
+  const cfg = { ...wsCfg(dir), packs: ['other'], packConfig: { 'm365-mail': { host: 'outlook.office.com' } } }
+  const s = await makeSpace(w, { home: dir, artifactsDir: join(dir, 'arts'), sdk: fakeSdk().sdk, fake: false, push: async () => {}, cfg, root })
+  try {
+    assert.equal(seen?.ws, 'acme')
+    assert.equal(seen?.home, dir)
+    assert.deepEqual(seen?.grants?.(cfg), { packs: ['m365-mail'], hosts, acts: ['mail.send', 'chat.post'], config: { 'm365-mail': { host: 'outlook.office.com' } } })
+    assert.deepEqual([...s.acts], ['mail.send'])
+    assert.deepEqual(s.plugins.map((p) => p.name), ['browser'])
+  } finally { await s.close() }
+})
+
 test("a managed workspace's runs get exactly its grants' runTools, and its plugins reach only its granted hosts", async () => {
   install([{ page: acme }])
   const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-')), root = join(dir, 'console')
   mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })
-  writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ runTools: ['Grep'], hosts: ['api.example.com'], packs: ['m365-mail'], acts: ['mail.send', 'chat.post'] }))
+  writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ runTools: ['Grep'], hosts: ['api.example.com', 'outlook.office.com', 'graph.microsoft.com'], packs: ['m365-mail'], acts: ['mail.send', 'chat.post'] }))
   let http: PluginCtx['http'] | undefined
   const w: WorkspaceServer = { ...acmeServer, plugins: (x) => { http = x.http; return [] } }
   const o = { home: dir, artifactsDir: join(dir, 'arts'), sdk: fakeSdk().sdk, fake: true, push: async () => {} }
   const managed = await makeSpace(w, { ...o, cfg: { ...wsCfg(dir), runTools: ['Read', 'Bash'] }, root })
   try {
     assert.deepEqual(managed.cfg.runTools, ['Grep'])
-    assert.deepEqual(managed.grants?.hosts, ['api.example.com'])
+    assert.deepEqual(managed.grants?.hosts, ['api.example.com', 'outlook.office.com', 'graph.microsoft.com'])
     await assert.rejects(http!('https://evil.example/'), /host_not_granted/)
     assert.deepEqual([...managed.acts], ['mail.send'])
   } finally { await managed.close() }

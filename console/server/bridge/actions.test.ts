@@ -48,11 +48,15 @@ test('a gateway workspace keeps its eight actions', async () => {
 
 test("a managed workspace may act only through the core packs its grants name, and only as granted", () => {
   const said: string[] = []
-  const g = (packs: string[], acts: string[]) => [...grantedActs({ packs, acts }, PACKS_DIR, (m) => said.push(m))].sort()
+  const hosts = ['teams.microsoft.com', 'graph.microsoft.com', 'outlook.office.com', 'dev.azure.com']
+  const config = { 'azure-devops': { org: 'acme', project: 'core' } }
+  const g = (packs: string[], acts: string[], h = hosts) => [...grantedActs({ packs, hosts: h, acts, config }, PACKS_DIR, undefined, (m) => said.push(m))].sort()
   assert.deepEqual(g(['m365-teams', 'azure-devops'], ['chat.post', 'review.vote', 'mail.send']), ['chat.post', 'review.vote'])
   assert.deepEqual(g(['m365-teams'], []), [], 'nothing granted, nothing allowed')
   assert.deepEqual(g([], ['chat.post']), [], 'a granted act no pack declares is not allowed')
   assert.deepEqual(g(['no-such-pack', 'm365-mail'], ['mail.send']), ['mail.send'], 'a pack that does not load gives nothing')
-  assert.equal(said.length, 1)
+  assert.deepEqual(g(['m365-teams'], ['chat.post'], ['graph.microsoft.com']), [], 'nor does one whose hosts are not granted')
+  assert.equal(said.length, 2)
   assert.match(said[0], /no-such-pack/)
+  assert.match(said[1], /m365-teams.*teams\.microsoft\.com is not granted/)
 })

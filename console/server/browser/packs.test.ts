@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PACKS_DIR, configGrants, grantedPacks } from './packs.ts'
+import { PACKS_DIR, configGrants, grantedPacks, grantsFrom } from './packs.ts'
 import type { PackGrants } from './packs.ts'
 import { validator } from './schema.ts'
 import type { WsConfig } from '../workspace.ts'
@@ -98,6 +98,12 @@ test('configGrants reads packs, hosts, packConfig and acts from the workspace co
   const cfg = { packs: ['fixture'], hosts: ['board.example'], packConfig: { fixture: { org: 'acme' } }, acts: ['work.comment'] } as unknown as WsConfig
   assert.deepEqual(configGrants(cfg), { packs: ['fixture'], hosts: ['board.example'], config: { fixture: { org: 'acme' } }, acts: ['work.comment'] })
   assert.deepEqual(configGrants({} as WsConfig), { packs: [], hosts: [], config: {} })
+})
+
+test("a managed workspace's grants name its packs, hosts and acts; its pack settings stay in its config", () => {
+  const cfg = { packs: ['other'], hosts: ['evil.example'], acts: ['mail.send'], packConfig: { fixture: { org: 'acme' } } } as unknown as WsConfig
+  const g = grantsFrom({ packs: ['fixture'], hosts: ['board.example'], acts: ['work.comment'] })
+  assert.deepEqual(g(cfg), { packs: ['fixture'], hosts: ['board.example'], acts: ['work.comment'], config: { fixture: { org: 'acme' } } })
 })
 
 test("the core's packs dir holds the example pack", () => {

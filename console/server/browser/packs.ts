@@ -1,14 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import type { WsConfig } from '../workspace.ts'
-import { packConfig, readPack, renderPack } from './manifest.ts'
-import type { PackConfig } from './manifest.ts'
+import { PACKS_DIR, packConfig, readPack, renderPack } from '../bridge/packs.ts'
+import type { PackConfig } from '../bridge/packs.ts'
 import { SCHEMAS_DIR, validator } from './schema.ts'
 
 /* Which packs a workspace runs, with what settings, onto which hosts: the grants, and the packs loaded under them. */
 
-export const PACKS_DIR = fileURLToPath(new URL('../../../packs/', import.meta.url))
+export { PACKS_DIR }
 const NAME = /^[a-z][a-z0-9-]{0,40}$/
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]'])
 
@@ -24,6 +23,10 @@ export const configGrants: GrantsFn = (cfg) => {
   if (Array.isArray(cfg.acts)) g.acts = strings(cfg.acts)
   return g
 }
+
+/** a managed workspace's: packs, hosts and acts from its grants.json, each pack's settings from its config */
+export const grantsFrom = (g: { packs: readonly string[]; hosts: readonly string[]; acts: readonly string[] }): GrantsFn =>
+  (cfg) => ({ packs: [...g.packs], hosts: [...g.hosts], acts: [...g.acts], config: configGrants(cfg).config })
 
 export type LoadedPack = {
   name: string; zone: string; script: string; config: PackConfig

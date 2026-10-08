@@ -163,13 +163,45 @@ test('the same actionId twice runs once', async () => {
   assert.equal(plain(board.ctx.ACTS).length, 1)
 })
 
-test('an act refused before it ran can run again under the same actionId', async () => {
+test("an act refused before it ran answers a repeat of its actionId with that refusal; a new Send runs it", async () => {
   const { src, br } = make({ browser: { state: 'unavailable', reason: 'Edge is closed' } })
   const a = { action: 'work.comment', actionId: 'retry', args: { id: 'W-1', text: 'later' } }
   assert.equal((await src.act(a)).error?.code, 'source_unavailable')
   br.set({ state: 'up' })
-  assert.equal((await src.act(a)).status, 'ok')
+  assert.equal((await src.act(a)).error?.code, 'source_unavailable', 'one Send is never sent twice')
+  assert.equal(plain(board.ctx.ACTS ?? []).length, 0)
+  assert.equal((await src.act({ ...a, actionId: 'again' })).status, 'ok')
   assert.equal(plain(board.ctx.ACTS).length, 1)
+})
+
+test('the actions are what the loaded packs declare, less what the grants leave out', () => {
+  assert.deepEqual([...make().src.actions()], ['work.comment'], 'acts absent: every declared action')
+  assert.deepEqual([...make({ grants: grants({ acts: ['work.comment', 'mail.send'] }) }).src.actions()], ['work.comment'])
+  assert.deepEqual([...make({ grants: grants({ acts: [] }) }).src.actions()], [])
+  assert.deepEqual([...make({ grants: grants({ packs: [] }) }).src.actions()], [])
+})
+
+test('down, it names its own state store and why, and says each new reason once', async () => {
+  const said: string[] = []
+  let n = 0
+  const docs: StateDocs = { load: async () => { n++; throw new Error('Postgres not running') }, put: async () => {}, seq: async () => {} }
+  const src = localSource(CFG, { bus: new Bus(), ws: 'w', grants: grants({ packs: [] }), docs, log: (l) => said.push(l), backoffMs: [5] })
+  live.push(src)
+  assert.equal(src.via, 'store')
+  src.start()
+  await until(() => n >= 3)
+  assert.equal(src.available(), false)
+  assert.equal(src.why!(), 'Postgres not running')
+  assert.equal(said.filter((l) => /Postgres not running/.test(l)).length, 1)
+})
+
+test("its run MCP never takes the gateway's port 47821", async () => {
+  const src = localSource({ ...CFG, gatewayUrl: 'http://127.0.0.1:47821' }, { bus: new Bus(), ws: 'w', grants: grants({ packs: [] }), docs: memDocs(), mcp: true, log: () => {} })
+  live.push(src)
+  src.start()
+  await until(() => !!src.status().mcpError)
+  assert.equal(src.status().mcp, null)
+  assert.match(src.status().mcpError!, /47821/)
 })
 
 test('B: put and new-job-id round trip; anything else is bad_request', async () => {

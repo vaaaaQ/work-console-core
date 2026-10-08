@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { HttpError } from '../events.ts'
-import { PACKS_DIR, loadPacks } from './packs.ts'
+import { grantedPacks } from '../browser/packs.ts'
+import type { PackGrants } from '../browser/packs.ts'
 import type { PackManifest } from './packs.ts'
 import type { ActReq } from './wire.ts'
 
@@ -14,10 +15,11 @@ export function actionsOf(packs: readonly Declares[], acts?: readonly string[]):
   return acts === undefined ? declared : new Set(acts.filter((a) => declared.has(a)))
 }
 
-/** a managed workspace's allowed set: what the packs its grants name declare, less what they do not grant;
-    a pack that does not load gives nothing */
-export function grantedActs(g: { packs: readonly string[]; acts: readonly string[] }, dir = PACKS_DIR, warn: (m: string) => void = console.error): ReadonlySet<string> {
-  const packs = g.packs.flatMap((n) => { try { return loadPacks(dir, [n]) } catch (e) { warn(`pack ${n} gives no actions: ${(e as Error).message}`); return [] } })
+/** a managed workspace's allowed set on a source that loads no packs itself: what its granted packs declare, less
+    what its grants leave out; a pack that does not load under the grants gives nothing */
+export function grantedActs(g: PackGrants, dir?: string, schemas?: string, warn: (m: string) => void = console.error): ReadonlySet<string> {
+  const { packs, problems } = grantedPacks(g, dir, schemas)
+  for (const [n, why] of Object.entries(problems)) warn(`pack ${n} gives no actions: ${why}`)
   return actionsOf(packs, g.acts)
 }
 

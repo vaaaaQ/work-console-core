@@ -7,6 +7,7 @@ import { readToken } from './config.ts'
 import type { Bus } from './events.ts'
 import { grantsOf } from './grants.ts'
 import type { Bridge } from './http/app.ts'
+import type { GrantsFn } from './browser/packs.ts'
 import type { Jobs } from './jobs/jobs.ts'
 import type { WorkDir } from './llm/worktree.ts'
 import type { Store } from './store/port.ts'
@@ -43,9 +44,11 @@ export type FakeSeed = {
   concepts: Record<string, GatewayItem[]>; threads: Record<string, GatewayItem[]>
   get?: Record<string, (id: string, item: GatewayItem) => unknown>
 }
+export type SourceOpts = { bus: Bus; ws: string; home: string; grants?: GrantsFn; packsDir?: string }
 export interface WorkspaceServer {
   page: WorkspacePage; jobPrefix: string; defaults?: Partial<WsConfig>
-  source?(cfg: WsConfig, o: { bus: Bus }): Source          // default: gatewaySource
+  /** default: gatewaySource. ws, home: the workspace's id and the console's home; grants: a managed workspace's packs, hosts and acts */
+  source?(cfg: WsConfig, o: SourceOpts): Source
   /** default: bridgeStore over the source; playbooks = the built-in ones, the core's and the page's */
   store?(source: Source, cfg: WsConfig, o: { bus: Bus; home: string; ws: string; prefix: string; playbooks: Record<string, Playbook> }): Store
   /** bridge false: no gateway, so runs get neither the bridge MCP server nor its tools;

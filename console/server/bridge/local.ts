@@ -18,6 +18,7 @@ import { ensureToken, serveBridge } from '../browser/serve.ts'
 import type { Served } from '../browser/serve.ts'
 import { readToken } from '../config.ts'
 import { HttpError } from '../events.ts'
+import { actionsOf } from './actions.ts'
 import type { Bus } from '../events.ts'
 import type { Source, WsConfig } from '../workspace.ts'
 import type { ActReq, ActRes, ConceptReply } from './wire.ts'
@@ -29,13 +30,16 @@ import type { ActReq, ActRes, ConceptReply } from './wire.ts'
 export type LocalStatus = {
   browser: BrowserStatus; packs: Record<string, string>; tabs: { key: string; host: string; signin: boolean }[]; mcp: string | null; mcpError?: string
 }
-export type LocalSource = Source & { status(): LocalStatus; front(host: string): Promise<void>; local: true }
+/** actions: what the loaded packs declare, less what the grants leave out */
+export type LocalSource = Source & { status(): LocalStatus; front(host: string): Promise<void>; actions(): ReadonlySet<string>; local: true }
 export type LocalOptions = {
   bus: Bus; ws: string
   /** default: configGrants, the workspace config's packs, hosts, packConfig and acts */
   grants?: GrantsFn
   /** default: Postgres rows when cfg.pgUrl is set, else <home>/state/<ws>.json */
   docs?: StateDocs
+  /** B lives only in Postgres: without cfg.pgUrl and cfg.pgPasswordPath it stays down, saying this */
+  needDb?: string
   /** default: the console's own Edge on <home>/browser, shared by every workspace of this process */
   browser?: Browser
   packsDir?: string; schemasDir?: string; home?: string
@@ -44,9 +48,11 @@ export type LocalOptions = {
   /** how long a read waits for a concept's first poll */
   firstReadMs?: number
   runtime?: { evalMs?: number; actMs?: number; settleMs?: number }
-  /** serve the run MCP's read tools at cfg.gatewayUrl (loopback only) on the token in cfg.llmTokenPath, made when missing */
+  /** serve the run MCP's read tools at cfg.gatewayUrl (loopback only, never the gateway's 47821) on the token in cfg.llmTokenPath, made when missing */
   mcp?: boolean
   log?: (line: string) => void
+  /** the waits between tries to load B; tests shorten them */
+  backoffMs?: number[]
 }
 
 type Concept = {
@@ -55,7 +61,7 @@ type Concept = {
 }
 
 const WS = /^[a-z][a-z0-9-]{0,31}$/, PACK = /^[a-z][a-z0-9-]{0,40}$/
-const BACKOFF = [1000, 2000, 5000, 10_000, 30_000], DEDUPE_MS = 10 * 60_000
+const BACKOFF = [1000, 2000, 5000, 10_000, 30_000], DEDUPE_MS = 10 * 60_000, GATEWAY_PORT = 47821
 const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms))
 const within = (p: Promise<void>, ms: number) => new Promise<void>((ok) => {
   const t = setTimeout(ok, ms)
@@ -64,9 +70,13 @@ const within = (p: Promise<void>, ms: number) => new Promise<void>((ok) => {
 const err = (code: string, message: string): ActRes => ({ status: 'error', error: { code, message } })
 const why = (s: BrowserStatus) => (s.state === 'unavailable' ? `the browser is unavailable: ${s.reason ?? 'no reason given'}` : `the browser is ${s.state}`)
 
-function defaultDocs(cfg: WsConfig, home: string, ws: string): StateDocs {
+function defaultDocs(cfg: WsConfig, home: string, ws: string, needDb?: string): StateDocs {
   const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
   const url = str(cfg.pgUrl), pw = str(cfg.pgPasswordPath)
+  if (needDb && !(url && pw)) {
+    const no = async (): Promise<never> => { throw new Error(needDb) }
+    return { load: no, put: no, seq: no }
+  }
   if (url) return pgDocs({ url, password: pw ? () => readToken(pw) : undefined, schema: str(cfg.pgSchema), ws })
   return fileDocs(join(home, 'state', `${ws}.json`))
 }
@@ -89,7 +99,7 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
   const val = validator(schemasDir), watched = new Watched()
   const profile = join(home, 'browser')
   const browser: Browser | null = !packs.length ? null : o.browser
-    ?? sharedBrowser(profile, () => edgeBrowser({ dir: profile, exe: typeof cfg.edgePath === 'string' && cfg.edgePath ? cfg.edgePath : undefined }))
+    ?? sharedBrowser(profile, () => edgeBrowser({ dir: profile, exe: typeof cfg.edgePath === 'string' && cfg.edgePath ? cfg.edgePath : undefined, headless: cfg.edgeHeadless === true }))
   const carrier = cdpCarrier(() => browser?.endpoint() ?? null)
   const pool = new TabPool(carrier, (h) => g.hosts.includes(h))
 
@@ -107,7 +117,7 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
     for (const c of declared(packsDir, name)) if (!cs.has(c) && !STATE.includes(c)) down.set(c, `pack ${name} did not load: ${problem}`)
 
   const reset = (c: string) => { if (cs.has(c)) bus.emit({ kind: 'source', concept: c, upserts: [], removes: [], reset: true }) }
-  const docs = o.docs ?? defaultDocs(cfg, home, o.ws)
+  const docs = o.docs ?? defaultDocs(cfg, home, o.ws, o.needDb)
   const b = new StateB({
     docs,
     onChange: (c, upserts, removes) => {
@@ -118,7 +128,7 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
     },
   })
 
-  let running = false, timer: ReturnType<typeof setInterval> | undefined, unsub: (() => void) | null = null, lastSent = ''
+  let running = false, timer: ReturnType<typeof setInterval> | undefined, unsub: (() => void) | null = null, lastSent = '', bWhy = ''
   const done = new Map<string, { at: number; res: Promise<ActRes> }>()
 
   const concepts = (): Record<string, string> => {
@@ -132,7 +142,7 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
     const cur = concepts(), key = JSON.stringify([state, cur])
     if (key === lastSent) return
     lastSent = key
-    bus.emit({ kind: 'bridge', state, concepts: cur })
+    bus.emit({ kind: 'bridge', state, concepts: cur, via: 'store', ...(state === 'ok' ? {} : { why: bWhy }) })
   }
   // chat's join sorts and caps the threads, so a chat change is re-read whole
   const emitSource = (name: string, ch: Change) => {
@@ -177,11 +187,13 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
     for (const c of cs.values()) { changed = c.proj.fail('source_unavailable', why(s)) || changed; c.settle() }
     if (changed) emitBridge()
   }
+  const backoff = o.backoffMs ?? BACKOFF
   const loadB = async () => {
     for (let i = 0; running; i++) {
-      try { await b.load(); emitBridge(); return } catch (e) {
-        log(`local source ${o.ws}: loading its state failed: ${(e as Error).message}`)
-        await sleep(BACKOFF[Math.min(i, BACKOFF.length - 1)])
+      try { await b.load(); bWhy = ''; emitBridge(); return } catch (e) {
+        const m = (e as Error).message
+        if (m !== bWhy) { bWhy = m; log(`local source ${o.ws}: loading its state failed: ${m}`); lastSent = ''; emitBridge() }
+        await sleep(backoff[Math.min(i, backoff.length - 1)])
       }
     }
   }
@@ -209,6 +221,7 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
     try {
       const u = new URL(cfg.gatewayUrl)
       const host = u.hostname.replace(/^\[|\]$/g, ''), port = Number(u.port) || 80
+      if (port === GATEWAY_PORT) throw new Error(`${GATEWAY_PORT} is the gateway's port; give this workspace's gatewayUrl another`)
       ensureToken(cfg.llmTokenPath)
       const s = await serveBridge({ source: self, bus, host, port, llmToken: () => readToken(cfg.llmTokenPath), name: o.ws })
       if (running) served = s; else await s.close()
@@ -220,7 +233,10 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
 
   const self: LocalSource = {
     local: true,
+    via: 'store',
     available: () => b.ready,
+    why: () => (b.ready ? '' : bWhy),
+    actions: () => actionsOf(packs, g.acts),
     concepts,
     async read(names) {
       const out: Record<string, ConceptReply> = {}
@@ -259,10 +275,8 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
       if (had) return had.res
       const res = runAct(a)
       if (!a.actionId) return res
-      const id = a.actionId
-      done.set(id, { at: t, res })
-      // an error means it never ran, so a retry under the same id may run it
-      void res.then((r) => { if (r.status === 'error' && done.get(id)?.res === res) done.delete(id) })
+      // a refusal is kept too: one Send is never sent twice, and a new Send comes with a new id
+      done.set(a.actionId, { at: t, res })
       return res
     },
     async state(method, path, body) {

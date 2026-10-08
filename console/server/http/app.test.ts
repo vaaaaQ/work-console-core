@@ -418,11 +418,15 @@ test('sources come in page shapes; an act resolves the chat name and reaches onl
 test("a managed workspace acts only through what its granted packs declare and its grants name", async () => {
   const root = mkdtempSync(join(tmpdir(), 'wc-root-'))
   mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })
-  writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ packs: ['m365-teams', 'azure-devops'], acts: ['chat.post'] }))
+  writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({
+    packs: ['m365-teams', 'm365-mail'], hosts: ['teams.microsoft.com', 'outlook.office.com', 'graph.microsoft.com'], acts: ['chat.post'],
+  }))
   const { lp, fakes, stop } = await setup({ one: true, root })
   try {
-    const no = await call(lp, 'POST', '/api/ws/acme/act', { body: { action: 'work.comment', args: { id: 'x', text: 'hi' } } })
-    assert.equal(no.json.error?.code, 'unknown_action', no.text)
+    for (const [action, args] of [['work.comment', { id: 'x', text: 'hi' }], ['mail.send', { to: ['a@b.example'], subject: 's', body: 'b' }]] as const) {
+      const no = await call(lp, 'POST', '/api/ws/acme/act', { body: { action, args } })
+      assert.equal(no.json.error?.code, 'unknown_action', `${action}: ${no.text}`)
+    }
     const chat = (await call(lp, 'GET', '/api/ws/acme/sources?concepts=chat')).json.concepts.chat.items[0]
     const a = await call(lp, 'POST', '/api/ws/acme/act', { body: { action: 'chat.post', args: { chatName: chat.name, text: 'hello' } } })
     assert.equal(a.status, 200, a.text)
