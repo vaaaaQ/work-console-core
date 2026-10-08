@@ -61,7 +61,7 @@ test('a live read from a local test page through a real Edge on a temp profile',
     src.stop()
     await browser.stop()
     await new Promise<void>((ok) => { page.closeAllConnections(); page.close(() => ok()) })
-    // Edge's helpers may hold the profile for a few seconds after taskkill under load
-    if (!given) rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 500 })
+    // Edge's helpers may hold the profile past taskkill under load: a temp dir left behind fails no test
+    if (!given) { try { rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 500 }) } catch (e) { console.error(`left ${dir}: ${(e as Error).message}`) } }
   }
 })
