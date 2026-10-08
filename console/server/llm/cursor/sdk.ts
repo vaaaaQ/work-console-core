@@ -50,6 +50,8 @@ const blocks = (prompt: string, images: PromptImage[] = []): Block[] =>
 const withSystem = (system: string, prompt: string) => `<instructions>\n${system}\n</instructions>\n\n${prompt}`
 const SID = /^[\w-]{1,100}$/
 const DAY = 86400e3
+/** a kept session lasts as long as Claude Code keeps a transcript to resume: cleanupPeriodDays' default, from its last use */
+const KEEP = 30 * DAY
 const noEmail = (t: string) => t.replace(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g, '<email>')
 /** the CLI's own words on a turn it could not run, sent as one chunk that still ends as end_turn */
 const COULD_NOT = /^\n\n(Please sign in to continue|Upgrade your plan to continue|Add a payment method to continue|Check your settings to continue|Error: [\s\S]+)$/
@@ -75,9 +77,9 @@ function removeSoon(dir: string) {
 function runDir(runs: string): string {
   for (;;) { const d = join(runs, randomBytes(4).toString('hex')); if (!existsSync(d)) return d }
 }
-/** run folders a crashed console left behind */
-function sweep(runs: string) {
-  try { for (const d of readdirSync(runs)) { const p = join(runs, d); if (Date.now() - statSync(p).mtimeMs > DAY) removeSoon(p) } } catch { /* none yet */ }
+/** run folders a crashed console left behind, and sessions kept past KEEP */
+function sweep(dir: string, age: number) {
+  try { for (const d of readdirSync(dir)) { const p = join(dir, d); if (Date.now() - statSync(p).mtimeMs > age) removeSoon(p) } } catch { /* none yet */ }
 }
 
 /** why a session ended before its turn did */
@@ -96,7 +98,8 @@ export function cursorSdk(o: CursorOpts): Sdk {
 
   async function* turn(t: Turn): AsyncGenerator<Out> {
     if (t.abort.signal.aborted) { yield { k: 'result', ok: false, error: 'the session was stopped' }; return }
-    sweep(runs)
+    sweep(runs, DAY)
+    sweep(kept, KEEP)
     const dir = runDir(runs), d = { config: join(dir, 'config'), data: join(dir, 'data'), home: join(dir, 'home'), tmp: join(dir, 'tmp') }
     const store = join(d.config, 'acp-sessions', '0'.repeat(36), 'store.db').length
     if (process.platform === 'win32' && store > STORE_MAX) {

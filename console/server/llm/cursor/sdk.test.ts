@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { z } from 'zod'
@@ -81,6 +81,23 @@ test('a resume loads the kept session in a new run folder, without the history t
   assert.deepEqual(await start(r, { resume: '00000000-0000-4000-8000-000000000009' }), [{ k: 'result', ok: false, error: 'the Cursor session 00000000-0000-4000-8000-000000000009 is not kept in this console' }])
   assert.deepEqual(await start(r, { resume: '../x' }), [{ k: 'result', ok: false, error: 'the Cursor session ../x is not kept in this console' }])
   assert.equal(r.pids.length, n)
+  await gone(r)
+})
+
+test('a kept session goes 30 days after its last use, as long as Claude Code keeps a transcript to resume', async () => {
+  const r = rig(), kept = join(r.home, 'cursor', 'sessions')
+  const aged = (sid: string, days: number) => {
+    mkdirSync(join(kept, sid), { recursive: true })
+    writeFileSync(join(kept, sid, 'store.db'), '')
+    const t = new Date(Date.now() - days * 86400e3)
+    utimesSync(join(kept, sid), t, t)
+  }
+  aged('00000000-0000-4000-8000-00000000000a', 31)
+  aged('00000000-0000-4000-8000-00000000000b', 29)
+  aged(SID, 40)
+  await start(r)
+  for (let i = 0; i < 40 && readdirSync(kept).length > 2; i++) await new Promise((ok) => setTimeout(ok, 50))
+  assert.deepEqual(readdirSync(kept).sort(), ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-00000000000b'])
   await gone(r)
 })
 
