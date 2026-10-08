@@ -34,6 +34,31 @@ flowchart LR
 | `concepts.<c>.cap` | Max items kept |
 | `actions.<a>.concept` | Which concept to re-read after the act |
 
+### Config and hosts
+
+A pack that serves more than one workplace names no organisation, project or site. It declares the
+settings it takes, and the workspace supplies the values.
+
+```json
+"config": {
+  "org": { "about": "the organisation in the tool's URLs", "required": true, "pattern": "^[A-Za-z0-9-]+$" },
+  "done": { "about": "states that count as closed", "list": true, "default": ["Done"] }
+},
+"hosts": ["tracker.example", "api.tracker.example"],
+"tabs": { "site": { "match": "^https://tracker\\.example/{org}(/|$)", "open": "https://tracker.example/{org}" } }
+```
+
+| Field | Meaning |
+|---|---|
+| `config.<key>` | `about`, plus optional `required`, `default`, `pattern`, `enum`, and `list` for a list of strings |
+| `hosts` | Every host the script may call. The tab's host is not added for you |
+| `{key}` | A setting put into `tabs.*.match` (regex-escaped), `tabs.*.open` (URL-encoded) or `hosts` (as is, and the result must be a bare host name). A list key cannot be a template |
+
+The console checks the workspace's values with `packConfig` and renders the templates with
+`renderPack` (`console/server/bridge/packs.ts`). The script gets the values, defaults applied, as
+`call.config`. It checks them again, because it runs on its own in the tab: a missing or malformed
+value answers `bad_args` naming `config.<key>`, before any request.
+
 ## The call
 
 ```js
