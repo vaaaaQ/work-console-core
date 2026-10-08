@@ -22,7 +22,8 @@ node <dir>/scripts/run.mjs [--detach | --stop | --restart]                     #
 node <dir>/scripts/update.mjs [--give-up]                                      # pull the core, check, move on
 ```
 
-- Install checks Node 22.6+, git, npm and Docker, writes the folder with a `home` workspace, starts its
+- Install checks Node 22.6+, git, npm and Docker, writes the folder with a `home` workspace (the one workspace
+  template, managed with empty grants, so its agent opens with the interview), starts its
   Postgres (`postgres/compose.yaml`, port 55432 or the next free one), reports whether the provider is signed
   in (it never signs in), asks for an optional OpenAI key for voice, builds, and starts the console.
 - A port is the console's own only when its container `work-console-postgres` publishes it (`docker ps`);
@@ -30,8 +31,9 @@ node <dir>/scripts/update.mjs [--give-up]                                      #
   and says "Postgres not running — start Docker and run install again".
 - `WORK_CONSOLE_PG_CONTAINER` and `WORK_CONSOLE_PG_VOLUME`, set together, give a test install its own
   container and volume beside the real ones.
-- `<home>` is `WORK_CONSOLE_HOME` or `~/.work-console`: `config.json`, `install.json`, `postgres.password`,
-  `openai.key`, `run.json` and `logs/console.log`.
+- `--provider` writes `<home>/providers.json`; without it, install keeps the choice already there.
+- `<home>` is `WORK_CONSOLE_HOME` or `~/.work-console`: `config.json`, `install.json`, `providers.json`,
+  `postgres.password`, `openai.key`, `run.json`, `logs/console.log` and `browser/`, the console's own Edge profile.
 - `run.mjs` restarts the server at once on exit code 75 and after a backoff on any other exit. After a
   restart into a new build the page says "Updated — press Ctrl+F5".
 - `update.mjs` syncs and checks a new core in a worktree on `update/<sha7>`. A failure leaves the folder as
@@ -71,7 +73,7 @@ node <core>/console/scripts/sync-core.mjs --to <consumer console dir> [--ref <re
 
 | Whose | What |
 |---|---|
-| Core-owned, synced | everything under `console/` except the two rows below: `src/`, `server/`, `scripts/`, `package.json`, `package-lock.json`, and the example workspaces `acme` and `beta` |
+| Core-owned, synced | everything under `console/` except the two rows below: `src/`, `server/`, `scripts/`, `package.json`, `package-lock.json`, and the example workspaces `acme` and `beta`; and the core's `packs/` and `schemas/`, into the consumer's own `packs/` and `schemas/` |
 | The consumer's own | `workspaces/page.ts`, `workspaces/server.ts`, its `workspaces/<id>/` and `tools/` |
 | Written by sync | `core.lock.json`: the core commit and a sha256 per synced file |
 

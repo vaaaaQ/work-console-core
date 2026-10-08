@@ -156,7 +156,7 @@ Only `workspaces/page.ts` imports it.
 |---|---|
 | Check target | `--to` must already hold `workspaces/page.ts` and `workspaces/server.ts`, or the sync stops before reading anything |
 | Read | `sync-core.mjs` reads the core at `--ref` (default `HEAD`) with `git ls-tree` and `git cat-file`; the working tree is never read |
-| Write | every file of `console/` except `workspaces/page.ts`, `workspaces/server.ts` and `tools/` |
+| Write | every file of `console/` except `workspaces/page.ts`, `workspaces/server.ts` and `tools/`, plus the core's `packs/` and `schemas/` into the same folders of the consumer |
 | Delete | files the previous lock listed and this commit no longer has; the consumer's own files are never deleted. This runs before the writes, so a file the core renamed only in case is rewritten, not lost on a case-insensitive disk |
 | Lock | `core.lock.json`: `{ core: <sha>, files: { <path>: <sha256> } }` |
 
@@ -187,6 +187,22 @@ A workspace may have no gateway: its jobs live in PostgreSQL and its runs work i
 | `llm.screenshot` | the run tool `screenshot`: a png of an http, https or file url, kept as the step's artifact. The file url, and every file the page loads, must be under the run's dir. It reaches any http url, so it is only for workspaces whose runs read no untrusted text. `browserPath` in `config.json` picks the browser; unset, an installed Edge or Chrome |
 | `llm.jobTools` | the run tools `create_job` and `start_job`, in the run's workspace only. Defaults: playbook `board.start`, the pack's first project. At most 5 creates a run; the new job is signed `LLM` and its journal names the job it came from |
 
+### Local browser
+
+A workspace may also have no gateway and still read its tools: `localSource(cfg, o)` (`server/bridge/local.ts`)
+runs the packs its grants name in tabs of the console's own Edge (`<home>/browser`), and keeps B (jobs, runs,
+playbooks, marks) in PostgreSQL rows of kind `state` (`server/browser/pgdocs.ts`, the store's DDL).
+
+| Piece | What |
+|---|---|
+| Packs | `grants.packs` of `grants.json`, loaded from the core's `packs/` (a consumer's synced copy) with their `pack.json` settings from `packConfig` in `config.json`. Every host a pack declares or its settings produce must be in `grants.hosts`, or the pack does not load and its concepts say why |
+| Acts | what the loaded packs declare, less what `grants.acts` leaves out; a gateway workspace keeps `GATEWAY_ACTIONS` |
+| Edge | started only once a pack is granted; `edgeHeadless` in the workspace config hides it |
+| Down | without `pgUrl` and `pgPasswordPath` the source is down as a store and says so, `via: 'store'`; the page names the database, not the bridge |
+| Sign-in | a tab that answers unauthorized makes its concepts `signin_required` with the tab's host. The page shows *Sign in to <host>*, which calls `POST /api/ws/<id>/browser/front {host}`; `GET /browser/status` lists the tabs |
+| Acts kept | an act's id is kept with its result, a refusal included, so one Send is never sent twice |
+| Run MCP | off unless the workspace asks; never on the gateway's port 47821 |
+
 ### Workspace agent
 
 A workspace with `workspaces/<id>/grants.json` is **managed**: it has an agent, one multi-turn conversation that
@@ -212,7 +228,7 @@ person's approval.*
 | Limits | `server/agent/limits.ts`, provider-neutral. cwd = the console's folder; Read, Glob and Grep anywhere; Edit and Write only under `workspaces/<id>/**` and `tools/**`. Denied: its `grants.json`, the two registries, `core.lock.json` and every core file it lists, Bash, PowerShell. A path is matched after its links resolve and case-folded where the disk ignores case. The Claude provider maps them to `dontAsk` rules plus a PreToolUse guard, with `settingSources: ['project']` |
 | Tools | `check`, `apply {summary}`, `undo {sha}`, `propose_grants {change, reason}`, `create_workspace {id, prefix, title}` (`server/agent/tools.ts`) |
 | First conversation | of a workspace whose grants are still empty: the agent interviews the person, one question at a time, then proposes grants and sets up the board and playbooks |
-| Template | `consumer/workspace-template/`. `create_workspace` copies it, adds both registry lines and the workspace's database settings in `config.json`, and commits it with empty grants |
+| Template | `consumer/workspace-template/`, on the local browser. Install renders it as `home` with empty grants; `create_workspace` copies it, adds both registry lines and the workspace's database settings in `config.json`, and commits it with empty grants |
 
 - **Apply.** `server/agent/ops.ts`, one op at a time: refuse staged paths outside the two areas and any
   `grants.json`; refuse symlinks and junctions there; the static import check; `npm run typecheck` and
