@@ -5,6 +5,6 @@
     "types": ["node"],
     "erasableSyntaxOnly": true
   },
-  "include": ["server", "scripts/*.test.ts", "src/model", "src/data", "src/lib", "src/live/adapt.ts", "src/workspace.ts", "workspaces/**/*.ts", "consumer/**/*.ts"],
+  "include": ["server", "scripts/*.test.ts", "src/model", "src/data", "src/lib", "src/live/adapt.ts", "src/workspace.ts", "workspaces/**/*.ts", "tools/**/*.ts", "consumer/**/*.ts"],
   "exclude": ["workspaces/page.ts", "consumer/page.ts"]
 }

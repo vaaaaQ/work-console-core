@@ -2,10 +2,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { addRegistry, newWorkspaceIssue, render, TEMPLATE, varName } from './template.ts'
+import { addRegistry, newWorkspaceIssue, render, TEMPLATE, TEMPLATE_FILES, varName } from './template.ts'
 
 test('the template renders with no placeholder left; the variable is a safe identifier', () => {
-  for (const f of ['page.ts', 'server.ts']) {
+  for (const f of TEMPLATE_FILES) {
     const t = render(readFileSync(join(TEMPLATE, f), 'utf8'), { id: 'my-crm', prefix: 'CRM', title: 'My CRM' })
     assert.doesNotMatch(t, /__[A-Z]+__/, f)
     assert.match(t, /myCrm/)
@@ -20,7 +20,7 @@ test('the template renders with no placeholder left; the variable is a safe iden
 test('addRegistry adds an import and an entry to either registry, one line or many', () => {
   const page = "import type { Registered } from '../src/workspace.ts'\nimport acme from './acme/page.ts'\n\n/* x */\nexport const WORKSPACES: Registered[] = [{ page: acme }]\n"
   assert.equal(addRegistry(page, 'page', 'my-crm'),
-    "import type { Registered } from '../src/workspace.ts'\nimport acme from './acme/page.ts'\nimport myCrm from './my-crm/page.ts'\n\n/* x */\nexport const WORKSPACES: Registered[] = [{ page: acme }, { page: myCrm }]\n")
+    "import type { Registered } from '../src/workspace.ts'\nimport acme from './acme/page.ts'\nimport myCrm from './my-crm/page.ts'\nimport myCrmUi from './my-crm/ui.tsx'\n\n/* x */\nexport const WORKSPACES: Registered[] = [{ page: acme }, { page: myCrm, ui: myCrmUi }]\n")
   const server = "import type { WorkspaceServer } from '../server/workspace.ts'\r\nimport homeServer from './home/server.ts'\r\n\r\nexport const SERVERS: WorkspaceServer[] = [\r\n  homeServer,\r\n]\r\n"
   assert.equal(addRegistry(server, 'server', 'my-crm'),
     "import type { WorkspaceServer } from '../server/workspace.ts'\r\nimport homeServer from './home/server.ts'\r\nimport myCrmServer from './my-crm/server.ts'\r\n\r\nexport const SERVERS: WorkspaceServer[] = [\r\n  homeServer,\r\n  myCrmServer,\r\n]\r\n")

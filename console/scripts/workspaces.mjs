@@ -1,6 +1,9 @@
 /* What a new workspace is made of: consumer/workspace-template rendered for its id, its entry in both registries and
    grants.json granting nothing. install.mjs makes home with these; the workspace agent's create_workspace the others. */
 
+/** the template's files; ui.tsx is the page-only half, so the page registry lists it beside page.ts */
+export const TEMPLATE_FILES = ['page.ts', 'server.ts', 'ui.tsx']
+
 /** the workspace a new console starts with */
 export const HOME = { id: 'home', prefix: 'H', title: 'Home' }
 
@@ -22,9 +25,9 @@ export const EMPTY_GRANTS_JSON = JSON.stringify({ packs: [], hosts: [], acts: []
 
 /** the registry with the workspace's import after the last import and its entry last in the array */
 export function addRegistry(text, kind, id) {
-  const v = varName(id), name = kind === 'page' ? v : `${v}Server`, entry = kind === 'page' ? `{ page: ${v} }` : name
+  const v = varName(id), name = kind === 'page' ? v : `${v}Server`, entry = kind === 'page' ? `{ page: ${v}, ui: ${v}Ui }` : name
   const eol = text.includes('\r\n') ? '\r\n' : '\n', array = kind === 'page' ? 'WORKSPACES' : 'SERVERS'
-  if (text.includes(`'./${id}/`) || new RegExp(`\\b${name}\\b`).test(text)) throw new Error(`the registry already registers ${id}`)
+  if (text.includes(`'./${id}/`) || new RegExp(`\\b(${name}|${v}Ui)\\b`).test(text)) throw new Error(`the registry already registers ${id}`)
   const open = new RegExp(`export const ${array}\\b[^=]*=\\s*\\[`).exec(text)
   if (!open) throw new Error(`the registry has no ${array} array`)
   const start = open.index + open[0].length
@@ -40,7 +43,7 @@ export function addRegistry(text, kind, id) {
   } else next = `${inner.replace(/\s*,?\s*$/, '')}, ${entry}`
   const withEntry = text.slice(0, start) + next + text.slice(end)
   const imports = [...withEntry.matchAll(/^import [^\n]*$/gm)], last = imports.at(-1)
-  const line = `import ${name} from './${id}/${kind}.ts'`
+  const line = `import ${name} from './${id}/${kind}.ts'` + (kind === 'page' ? `${eol}import ${v}Ui from './${id}/ui.tsx'` : '')
   if (!last) return `${line}${eol}${withEntry}`
   const at = last.index + last[0].replace(/\r$/, '').length
   return withEntry.slice(0, at) + eol + line + withEntry.slice(at)

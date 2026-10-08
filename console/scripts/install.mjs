@@ -7,7 +7,7 @@ import { consoleHome, firstFree, gitId, isFree, npmChecks, readJson, run, writeJ
 import { dockerRunner, engine, envNames, postgres } from './postgres.mjs'
 import { startConsole } from './run.mjs'
 import { isCoreLayout, readCore, sync } from './sync-core.mjs'
-import { addRegistry, EMPTY_GRANTS_JSON, HOME, render } from './workspaces.mjs'
+import { addRegistry, EMPTY_GRANTS_JSON, HOME, render, TEMPLATE_FILES } from './workspaces.mjs'
 
 /* One command from an empty folder to a running console:
      node <core>/console/scripts/install.mjs --to <dir> [--provider claude|cursor] [--port n] [--force] [--no-start] [--no-prompt]
@@ -21,8 +21,7 @@ const REGISTRIES = ['workspaces/page.ts', 'workspaces/server.ts']
 const STARTERS = [
   ['workspaces/page.ts', (t) => addRegistry(t('consumer/page.ts'), 'page', HOME.id)],
   ['workspaces/server.ts', (t) => addRegistry(t('consumer/server.ts'), 'server', HOME.id)],
-  [`workspaces/${HOME.id}/page.ts`, (t) => render(t('consumer/workspace-template/page.ts'), HOME)],
-  [`workspaces/${HOME.id}/server.ts`, (t) => render(t('consumer/workspace-template/server.ts'), HOME)],
+  ...TEMPLATE_FILES.map((f) => [`workspaces/${HOME.id}/${f}`, (t) => render(t(`consumer/workspace-template/${f}`), HOME)]),
   [`workspaces/${HOME.id}/grants.json`, () => EMPTY_GRANTS_JSON],
 ]
 

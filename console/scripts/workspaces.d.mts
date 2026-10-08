@@ -1,6 +1,8 @@
 export interface NewWorkspace { id: string; prefix: string; title: string }
 /** the workspace a new console starts with */
 export const HOME: NewWorkspace
+/** the template's files; ui.tsx is the page-only half */
+export const TEMPLATE_FILES: string[]
 /** the id as a camel-case identifier: my-crm → myCrm; a reserved word gets a ws prefix */
 export function varName(id: string): string
 export function render(text: string, o: NewWorkspace): string

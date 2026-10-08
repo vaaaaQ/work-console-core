@@ -9,7 +9,7 @@ import { EMPTY_GRANTS, grantsOf, grantsPath, normGrants, writeGrants } from '../
 import { swapDist } from '../restart.ts'
 import { importCheck } from './imports.ts'
 import { agentLimits, canWrite, lockedFiles, linksUnder, relPath, writeAreas } from './limits.ts'
-import { addRegistry, newWorkspaceIssue, render, TEMPLATE } from './template.ts'
+import { addRegistry, newWorkspaceIssue, render, TEMPLATE, TEMPLATE_FILES } from './template.ts'
 import type { NewWorkspace } from './template.ts'
 
 /* What the agent's console tools do, over git and an injectable exec: check, apply (check, build, commit, restart),
@@ -266,7 +266,7 @@ export class Ops {
       }
       try {
         mkdirSync(dir)
-        for (const f of ['page.ts', 'server.ts']) writeFileSync(join(dir, f), render(readFileSync(join(this.template, f), 'utf8'), o))
+        for (const f of TEMPLATE_FILES) writeFileSync(join(dir, f), render(readFileSync(join(this.template, f), 'utf8'), o))
         writeGrants(this.root, o.id, EMPTY_GRANTS)
         writeFileSync(reg.page, next.page); writeFileSync(reg.server, next.server)
         if (from) {

@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { run, type Ran, type Runner } from './lib.mjs'
 import { folder } from './install.mjs'
+import { TEMPLATE_FILES } from './workspaces.mjs'
 import { sync } from './sync-core.mjs'
 import { EXIT_REINTEGRATE, failedUpdate, giveUp, update } from './update.mjs'
 
@@ -39,7 +40,7 @@ function setup() {
   put(origin, 'console/package-lock.json', '{ "v": 1 }\n')
   put(origin, 'console/.gitignore', 'node_modules/\ndist/\n')
   put(origin, 'console/server/a.ts', 'export const a = 1\n')
-  for (const t of ['page.ts', 'server.ts', 'workspace-template/page.ts', 'workspace-template/server.ts']) put(origin, `console/consumer/${t}`, readFileSync(join(CONSUMER, t), 'utf8'))
+  for (const t of ['page.ts', 'server.ts', ...TEMPLATE_FILES.map((f) => `workspace-template/${f}`)]) put(origin, `console/consumer/${t}`, readFileSync(join(CONSUMER, t), 'utf8'))
   git(origin, 'add', '-A')
   git(origin, 'commit', '-q', '-m', 'core')
   const core = join(tmp('core'), 'core')

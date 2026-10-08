@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { run, type Ran, type Runner } from './lib.mjs'
 import { AUTO_PROVIDERS, chooseProvider, consolePort, folder, install, parseArgs, provider, PROVIDER_IDS as IDS, tools, voice, writeConfig } from './install.mjs'
 import { PROVIDER_IDS, PROVIDERS } from '../server/llm/providers.ts'
-import { addRegistry, EMPTY_GRANTS_JSON, HOME, render } from './workspaces.mjs'
+import { addRegistry, EMPTY_GRANTS_JSON, HOME, render, TEMPLATE_FILES } from './workspaces.mjs'
 
 /* install.mjs against throwaway git repos: a "core" whose console/ carries the real consumer/ templates and a few
    stub files, and a consumer folder. Git runs for real; npm, docker and the provider CLIs are fakes. */
@@ -29,7 +29,7 @@ const read = (dir: string, p: string) => readFileSync(join(dir, p), 'utf8')
 const ok = (stdout = ''): Ran => ({ status: 0, stdout, stderr: '' })
 const quiet = () => {}
 const CONSUMER = fileURLToPath(new URL('../consumer/', import.meta.url))
-const TEMPLATES = ['page.ts', 'server.ts', 'workspace-template/page.ts', 'workspace-template/server.ts']
+const TEMPLATES = ['page.ts', 'server.ts', ...TEMPLATE_FILES.map((f) => `workspace-template/${f}`)]
 
 function makeCore() {
   const core = tmp('core')
@@ -103,7 +103,7 @@ test('folder: an empty dir becomes a synced consumer repo with home and one comm
   const tpl = (t: string) => readFileSync(join(CONSUMER, t), 'utf8')
   assert.equal(read(to, 'workspaces/page.ts'), addRegistry(tpl('page.ts'), 'page', 'home'))
   assert.equal(read(to, 'workspaces/server.ts'), addRegistry(tpl('server.ts'), 'server', 'home'))
-  for (const f of ['page.ts', 'server.ts']) assert.equal(read(to, `workspaces/home/${f}`), render(tpl(`workspace-template/${f}`), HOME), f)
+  for (const f of TEMPLATE_FILES) assert.equal(read(to, `workspaces/home/${f}`), render(tpl(`workspace-template/${f}`), HOME), f)
   assert.equal(read(to, 'workspaces/home/grants.json'), EMPTY_GRANTS_JSON, 'home is managed from the start, granted nothing')
   assert.equal(read(to, 'server/a.ts'), 'export const a = 1\n')
   assert.equal(JSON.parse(read(to, 'core.lock.json')).core, git(core, 'rev-parse', 'HEAD'))

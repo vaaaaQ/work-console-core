@@ -7,7 +7,7 @@ import type { NewWorkspace } from '../../scripts/workspaces.mjs'
 
 export const TEMPLATE = join(CONSOLE, 'consumer', 'workspace-template')
 
-export { addRegistry, render, varName } from '../../scripts/workspaces.mjs'
+export { addRegistry, render, TEMPLATE_FILES, varName } from '../../scripts/workspaces.mjs'
 export type { NewWorkspace } from '../../scripts/workspaces.mjs'
 
 /** why a workspace cannot be made so, or null */
