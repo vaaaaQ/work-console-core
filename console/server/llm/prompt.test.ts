@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { redoText, replyPrompt, buildPrompt, blockersText } from './prompt.ts'
+import { redoText, replyPrompt, buildPrompt, blockersText, manualText } from './prompt.ts'
 import { freshJob } from '../../src/model/transitions.ts'
 import { demoCtx } from '../testkit.ts'
 import type { Flow } from '../../src/model/types.ts'
@@ -50,4 +50,12 @@ test('a step whose draft a later step sends is told to submit the message alone'
   const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
   assert.match(buildPrompt(x, j, 'dr', 'go', { me: 'Valery' }), /the draft is the message "Send it" sends, word for word: submit_draft carries that message alone.*Remarks for Valery go in journal\(\)/)
   assert.doesNotMatch(buildPrompt(x, j, 'tr', 'go', {}), /word for word/)
+})
+
+test('a hand-made session on a step whose draft a later step sends is told to submit the message alone', () => {
+  const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
+  const t = manualText(x, j, 'dr', 'go', { me: 'Valery' })
+  assert.match(t, /the draft is the message "Send it" sends, word for word: submit_draft's output carries that message alone.*Remarks for Valery go in this session, not in the draft\./)
+  assert.doesNotMatch(t, /journal\(\)/)
+  assert.doesNotMatch(manualText(x, j, 'tr', 'go', {}), /word for word/)
 })

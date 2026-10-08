@@ -69,11 +69,16 @@ function parts(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn) {
 const join = (bs: string[]) => bs.filter(Boolean).join('\n\n')
 
 /** the steps whose planned messages carry this step's accepted draft, by title */
-const sentBy = (x: T.Ctx, j: Job, v: string) =>
-  T.steps(x, j.pb).filter((t) => (x.TPL[t.id] || []).some((m) => m[2].includes(`{${v}}`))).map((t) => `"${t.t}"`)
+const sentBy = (x: T.Ctx, j: Job, step: string) => {
+  const v = T.stepOf(x, j, step)?.out
+  return v ? T.steps(x, j.pb).filter((t) => (x.TPL[t.id] || []).some((m) => m[2].includes(`{${v}}`))).map((t) => `"${t.t}"`) : []
+}
+/** draft = how the session names what it hands in; remarks = where notes to the user go instead */
+const messageAlone = (by: string[], w: string, draft: string, remarks: string) =>
+  `- Once accepted, the draft is the message ${by.join(', ')} sends, word for word: ${draft} carries that message alone, in the language it goes out in, with nothing around it (no notes to ${w}, headings or separators). Remarks for ${w} go ${remarks}.`
 
 export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn = {}): string {
-  const p = parts(x, j, step, q, o), w = who(o), v = T.stepOf(x, j, step)?.out, by = v ? sentBy(x, j, v) : []
+  const p = parts(x, j, step, q, o), w = who(o), by = sentBy(x, j, step)
   return join([
     `You are working one step of a job in ${w}'s Work Console.`,
     ...p.data,
@@ -87,7 +92,7 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: Prompt
       `- Write progress with the run tool journal(observed, changed, next) at meaningful points.`,
       `- Save files the step expects with add_artifact(name, content), or with add_artifact_file(path) for a file already under your working dir; images show on the page.`,
       `- Finish by calling submit_draft(text) exactly once with the draft for ${w} to review. Without it the run counts as failed.`,
-      ...(by.length ? [`- Once accepted, the draft is the message ${by.join(', ')} sends, word for word: submit_draft carries that message alone, in the language it goes out in, with nothing around it (no notes to ${w}, headings or separators). Remarks for ${w} go in journal().`] : []),
+      ...(by.length ? [messageAlone(by, w, 'submit_draft', 'in journal()')] : []),
     ]),
     ...p.user,
   ])
@@ -95,7 +100,7 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: Prompt
 
 /** what a session taken up by hand reads through the console MCP's step_context: a run's prompt, how to work told for that session */
 export function manualText(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn = {}): string {
-  const p = parts(x, j, step, q, o), w = who(o)
+  const p = parts(x, j, step, q, o), w = who(o), by = sentBy(x, j, step)
   return join([
     `You are working one step of a job in ${w}'s Work Console, in a session ${w} opened by hand.`,
     ...p.data,
@@ -104,6 +109,7 @@ export function manualText(x: T.Ctx, j: Job, step: string, q: string, o: PromptI
       ...(o.images ? [`- [image N] in the text is the picture labelled [image N] before this text.`] : []),
       `- You never send anything to a source (no chat posts, mails, votes, comments or state changes): ${w} sends after review.`,
       `- Finish by calling submit_draft {id: "${j.id}", step: "${step}", output} on the work-console MCP server exactly once, with the draft for ${w} to review; files the step expects go in its artifacts as {name, content}.`,
+      ...(by.length ? [messageAlone(by, w, "submit_draft's output", 'in this session, not in the draft')] : []),
     ]),
     ...p.user,
   ])
