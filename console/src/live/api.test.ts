@@ -11,6 +11,9 @@ import { loadConfig } from '../../server/config.ts'
 import { main } from '../../server/main.ts'
 import type { Sdk } from '../../server/llm/sdk.ts'
 import type { WorkspaceServer } from '../../server/workspace.ts'
+import { localSource } from '../../server/bridge/local.ts'
+import { startFakeCdp } from '../../server/browser/fake-cdp.ts'
+import type { Browser } from '../../server/browser/launcher.ts'
 import acmeServer from '../../workspaces/acme/server.ts'
 import { acme } from '../testkit.ts'
 import { CHATS, JOBS, PB, S, TPL } from '../model/world.ts'
@@ -20,7 +23,7 @@ import * as api from './api.ts'
 import { LIVE } from './api.ts'
 import { setZone, zone } from '../lib/zone.ts'
 import { HID, hiddenOf, hideIn, loadHidden, unhideIn } from '../actions/hidden.ts'
-import { L, applyState, buildFeed, down, fromQuery, loadSources, onEvent, pbWs, srcState } from './boot.ts'
+import { L, applyState, buildFeed, down, fromQuery, loadSources, onEvent, pbWs, signinHost, srcState } from './boot.ts'
 
 /* The page's client against the real backend (fake gateways, scripted SDK): the shapes the page
    sends and reads are the ones the server speaks. Two workspaces: acme mints A-NNNN, beta is Acme
@@ -475,4 +478,34 @@ test('the state names the build the server serves; a later state with another bu
     applyState({ ...st, build: null })
     assert.equal(LIVE.updated, true, 'and keeps asking')
   } finally { Object.assign(LIVE, was); await m.close() }
+})
+
+test("a source waiting for a sign-in names its host; Sign in brings that tab of the console's browser forward", async () => {
+  const cdp = await startFakeCdp()
+  cdp.addTab('https://board.example/acme/core', { DATA: { work: [] } })
+  const inbox = cdp.addTab('https://mail.example/inbox', { DATA: { chat: [] } })
+  inbox.ctx.MODE = { mail: { ok: false, code: 'unauthorized', message: 'GET /api → 401' } }
+  const browser: Browser = { endpoint: () => cdp.url, status: () => ({ state: 'up' }), start: async () => {}, stop: async () => {}, onChange: () => () => {} }
+  const w: WorkspaceServer = {
+    page: { ...acme, id: 'own' }, jobPrefix: 'O',
+    source: (cfg, o) => localSource(cfg, {
+      ...o, browser, packsDir: join(import.meta.dirname, '..', '..', 'server', 'browser', 'testdata', 'packs'), tickMs: 20,
+      grants: () => ({ packs: ['fixture'], hosts: ['board.example', 'mail.example'], config: { fixture: { org: 'acme' } } }),
+      docs: { load: async () => ({ docs: {}, seq: 0 }), put: async () => {}, seq: async () => {} },
+    }),
+  }
+  const home = mkdtempSync(join(tmpdir(), 'wc-api-'))
+  const m = await main({ cfg: { ...loadConfig({ WORK_CONSOLE_HOME: home }), loopbackPort: 0 }, sdk, workspaces: [w] })
+  api.setBase(`http://127.0.0.1:${m.loopbackPort}`)
+  try {
+    applyState(await api.state())
+    api.LIVE.on = true
+    await until(async () => { await loadSources('own', ['mail', 'chat']); return signinHost('mail', 'own') !== undefined })
+    assert.equal(signinHost('mail', 'own'), 'mail.example')
+    assert.match(srcState('mail', 'own')!, /sign-in required at mail\.example/)
+    assert.equal(signinHost('chat', 'own'), undefined, 'a source that reads has nothing to sign in to')
+    await api.front('own', 'mail.example')
+    assert.deepEqual(cdp.activated, [inbox.id])
+    await assert.rejects(api.front('own', 'elsewhere.example'), /no tab/)
+  } finally { api.LIVE.on = false; await m.close(); await cdp.close() }
 })

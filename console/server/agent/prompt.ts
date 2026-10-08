@@ -34,6 +34,7 @@ export function agentSystem(o: { ws: string; title: string; interview: boolean; 
     '3. Which jobs repeat: daily, weekly, or on an event.',
     `Then propose the grants these need with propose_grants, set up the board and the playbooks in workspaces/${ws}/ and apply.`,
     'For each tool that lives in a browser, ask the person to sign in to its tab themselves; never ask for a password or a token.',
+    'Once its pack is granted, a source that waits for a sign-in shows a "Sign in to <host>" button on its page: tell the person to press it, sign in in the browser window it brings forward, and come back.',
   )
   return lines.join('\n')
 }

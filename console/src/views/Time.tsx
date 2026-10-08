@@ -118,7 +118,7 @@ function MonthCard({ it, last }: { it: TimeItem; last: boolean }) {
 export function TimeView() {
   const w = W(), st = srcState('time')
   if (!w.src.time) return <div className="empty">No timesheet source in {w.n}.</div>
-  if (st && st !== 'ok') return <Unavailable what="Time" st={st} />
+  if (st && st !== 'ok') return <Unavailable what="Time" st={st} concept="time" />
   const ms = months(), job = timesheetJob()
   return <>
     <div className="vh"><div><div className="eyebrow">{w.n} · sources</div><h1>Time</h1>

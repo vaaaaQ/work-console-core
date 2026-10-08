@@ -41,7 +41,7 @@ export function CalendarView() {
     <div className="acts"><div className="seg" role="group" aria-label="Week">
       {['This week', 'Next week'].map((l, i) => <button key={l} aria-pressed={wk === i} onClick={() => setWk(i)}>{l}</button>)}</div></div></div>
   if (!w.src.cal) return <>{head}<div className="empty">{w.n} has no calendar source yet.</div></>
-  if (!cal) return <>{head}<Unavailable what="Calendar" st={cst || 'loading'} /></>
+  if (!cal) return <>{head}<Unavailable what="Calendar" st={cst || 'loading'} concept="cal" /></>
   const today = dayOf(), days = shownDays(weekDays(wk), cal), jobs = wsJobs()
   return <>{head}
     <div className="wk" style={{ '--n': days.length } as React.CSSProperties}>

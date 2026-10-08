@@ -1,7 +1,8 @@
 /* Bridge A's wire, as its gateway serializes it (camelCase JSON). A concept reply is
    {status:'ok', rev, items} or {status:<error code>, message}; an act reply has the same shape. */
 
-export type ConceptReply = { status: string; rev?: number; items?: unknown; message?: string }
+/** host: where a signin_required concept's tab waits for the person to sign in */
+export type ConceptReply = { status: string; rev?: number; items?: unknown; message?: string; host?: string }
 export interface Snapshot {
   bridge: { state: string; at?: string }
   counts?: { chatUnread?: number; mailToReply?: number }

@@ -258,7 +258,7 @@ export function createApp(d: Deps) {
     const out: Record<string, ConceptReply> = {}
     for (const c of concepts) {
       const r = raw[c] || { status: 'unavailable', message: 'the bridge did not answer for this concept' }
-      if (!READY.has(r.status) || !Array.isArray(r.items)) { out[c] = { status: r.status === 'ok' ? 'unavailable' : r.status, message: r.message }; continue }
+      if (!READY.has(r.status) || !Array.isArray(r.items)) { out[c] = { status: r.status === 'ok' ? 'unavailable' : r.status, message: r.message, ...(r.host ? { host: r.host } : {}) }; continue }
       const items = r.items as Record<string, unknown>[]
       out[c] = {
         status: 'ok', rev: r.rev,

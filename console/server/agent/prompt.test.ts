@@ -13,6 +13,6 @@ test('the agent system text names the workspace, its areas, its tools and its gr
 
 test('the first conversation of a new workspace is an interview that ends in grants, a board, playbooks and sign-ins', () => {
   const t = agentSystem({ ws: 'crm', title: 'My CRM', interview: true, grants: EMPTY_GRANTS })
-  for (const s of [/interview/i, /one question at a time/i, /tools/i, /work item/i, /repeat/i, /propose_grants/, /board/i, /playbooks/i, /sign in/i, /password/i])
+  for (const s of [/interview/i, /one question at a time/i, /tools/i, /work item/i, /repeat/i, /propose_grants/, /board/i, /playbooks/i, /sign in/i, /password/i, /"Sign in to <host>" button/])
     assert.match(t, s)
 })

@@ -28,6 +28,12 @@ export function srcState(concept: string, ws: Ws = S.ws): string | null {
   return l.sources[concept] || 'loading'
 }
 
+/** the host a concept waits on for a sign-in, while it is not ok */
+export function signinHost(concept: string, ws: Ws = S.ws): string | undefined {
+  const st = srcState(concept, ws)
+  return st && st !== 'ok' && st !== 'loading' ? LIVE.ws[ws]?.signin[concept] : undefined
+}
+
 /** what is down in a workspace, named for its banner, its pill and its sources */
 export function down(ws: Ws = S.ws) {
   const l = L(ws)
@@ -86,6 +92,7 @@ export function applyState(st: State) {
 function applyConcept(ws: Ws, c: string, r: ConceptState | undefined) {
   const l = LIVE.ws[ws]
   if (!l) return
+  if (r?.status === 'signin_required' && r.host) l.signin[c] = r.host; else delete l.signin[c]
   if (!r || r.status !== 'ok' || !Array.isArray(r.items)) { l.sources[c] = r?.message || r?.status || 'unavailable'; return }
   l.sources[c] = 'ok'
   if (c === 'chat') {
@@ -108,7 +115,7 @@ export async function loadSources(ws: Ws, concepts = CONCEPTS) {
     // the thread on screen may have new messages
     if (concepts.includes('chat') && S.view === 'chats' && S.ws === ws) loadThread(S.chat[ws], ws)
   } catch (e) {
-    commit(() => concepts.forEach((c) => { const l = LIVE.ws[ws]; if (l) l.sources[c] = e instanceof api.ApiError ? e.message : 'unavailable' }))
+    commit(() => concepts.forEach((c) => { const l = LIVE.ws[ws]; if (l) { l.sources[c] = e instanceof api.ApiError ? e.message : 'unavailable'; delete l.signin[c] } }))
   }
 }
 

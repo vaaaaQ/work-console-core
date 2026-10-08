@@ -2,10 +2,10 @@ import * as React from 'react'
 import { CHATS, JOBS, S, W } from '../model/world.ts'
 import type { Chat, Msg } from '../model/types.ts'
 import { LIVE } from '../live/api.ts'
-import { loadThread, srcState } from '../live/boot.ts'
+import { loadThread, signinHost, srcState } from '../live/boot.ts'
 import { repaint } from '../store.ts'
 import { go } from '../actions/nav.tsx'
-import { HID, chatSubmit, curChat, hiddenOf, hideChat, loadHidden, msgDraft, msgJob, pickChat, summarize, toggleHidden, unhideChat } from '../actions/sources.tsx'
+import { HID, chatSubmit, curChat, hiddenOf, hideChat, loadHidden, msgDraft, msgJob, pickChat, signIn, summarize, toggleHidden, unhideChat } from '../actions/sources.tsx'
 import { Ic } from '../ui/Icon.tsx'
 
 /** the LLM summary of a thread or a mail, made only on request */
@@ -23,8 +23,11 @@ export function SumBox({ id, text }: { id: string; text: string }) {
 const last = (x: Chat) => x.msgs[x.msgs.length - 1] as Msg | undefined
 
 /** a source the bridge cannot serve right now says so instead of looking empty */
-export function Unavailable({ what, st }: { what: string; st: string }) {
-  return <div className="empty">{st === 'loading' ? `Loading ${what}…` : `${what} unavailable: ${st}.`}</div>
+/** concept: a source that waits for a sign-in gets a button that brings its tab to the front */
+export function Unavailable({ what, st, concept }: { what: string; st: string; concept?: string }) {
+  const host = concept ? signinHost(concept) : undefined
+  return <div className="empty">{st === 'loading' ? `Loading ${what}…` : `${what} unavailable: ${st}.`}
+    {host ? <div className="row"><button className="btn sm" onClick={() => signIn(host)}><Ic n="external" sm />Sign in to {host}</button></div> : null}</div>
 }
 
 export function Chats() {
@@ -32,7 +35,7 @@ export function Chats() {
   React.useEffect(() => { if (c) loadThread(c.id) }, [c?.id, st])
   // a hide or unhide anywhere changes the list, so the count follows it
   React.useEffect(() => { void loadHidden(ws) }, [ws, st, L.length])
-  if (st && st !== 'ok') return <Unavailable what="Chats" st={st} />
+  if (st && st !== 'ok') return <Unavailable what="Chats" st={st} concept="chat" />
   if (!c && !hid.length) return <div className="empty">{LIVE.on ? 'No chats.' : `No chat source in ${w.n}.`}</div>
   const jobs = c ? JOBS.filter((j) => j.chat === c.id) : [], tool = w.src.chat?.n
   return <>

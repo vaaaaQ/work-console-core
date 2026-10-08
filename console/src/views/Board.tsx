@@ -78,7 +78,7 @@ function Card({ it }: { it: BoardItem }) {
 
 export function BoardView() {
   const w = W(), st = srcState('board')
-  if (st && st !== 'ok') return <Unavailable what="Board" st={st} />
+  if (st && st !== 'ok') return <Unavailable what="Board" st={st} concept="board" />
   const items = LIVE.on ? L().board : demoItems()
   return <>
     <div className="vh"><div><div className="eyebrow">{w.n} · sources</div><h1>Board</h1>

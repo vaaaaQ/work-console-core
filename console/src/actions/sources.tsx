@@ -19,6 +19,12 @@ import { HID, hideIn, loadHidden, unhideIn } from './hidden.ts'
 export const curChat = () => { const L = CHATS[S.ws] || []; return L.find((x) => x.id === S.chat[S.ws]) || L[0] }
 export const mailOf = (id: string) => (MAIL[S.ws] || []).find((x) => x.id === id)
 
+/** the tab of host comes to the front of the console's own browser; the person signs in there, and the source reads again by itself */
+export function signIn(host: string, ws: Ws = S.ws) {
+  void api.front(ws, host).then(() => toast(<>Sign in to <b>{host}</b> in the console's browser window; this page follows by itself</>, undefined, undefined, 9000),
+    (e) => toast(`Could not open ${host}: ${(e as Error).message}`))
+}
+
 /** the LLM summary runs only when asked */
 export function summarize(id: string) {
   commit(() => { S.sum[id] = 'run' })

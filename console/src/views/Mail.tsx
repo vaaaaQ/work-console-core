@@ -28,7 +28,7 @@ function MailPane({ m }: { m: Mail }) {
 export function MailView() {
   const w = W(), L = MAIL[S.ws] || [], inCat = L.filter((x) => x.cat === S.mcat), m = inCat.find((x) => x.id === S.mail) || inCat[0]
   const st = srcState('mail')
-  if (st && st !== 'ok') return <Unavailable what="Mail" st={st} />
+  if (st && st !== 'ok') return <Unavailable what="Mail" st={st} concept="mail" />
   return <>
     <div className="vh"><div><div className="eyebrow">{w.n} · sources</div><h1>Mail</h1>
       <p>{w.src.mail?.n} Inbox and Sent, sorted by what each message needs from you. Replies are drafted on request and shown to you before they go out.</p></div></div>

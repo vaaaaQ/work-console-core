@@ -12,8 +12,8 @@ import { S } from '../model/world.ts'
    answers null and the page stays the in-memory demo. */
 
 export type CalItem = CalEvent & { id: string }
-/** status ok carries items; anything else (unavailable, signin_required, …) carries a message */
-export type ConceptState = { status: string; rev?: string; items?: unknown[]; message?: string }
+/** status ok carries items; anything else (unavailable, signin_required, …) carries a message; signin_required its host */
+export type ConceptState = { status: string; rev?: string; items?: unknown[]; message?: string; host?: string }
 export type Device = { id: string; name: string; at: string; lastSeen?: string }
 export type Part = 'ok' | 'unavailable'
 /** one workspace's part of the state, from its own gateway and B */
@@ -76,6 +76,8 @@ export interface LiveWs {
   via: 'gateway' | 'store'; why: string
   /** per concept: ok, loading, or why it is unavailable */
   sources: Record<string, string>; cal: CalItem[]; time: TimeItem[]; board: BoardItem[]
+  /** per concept waiting for a sign-in: the host of its tab in the console's own browser */
+  signin: Record<string, string>
   /** knowledge, the workspace's notes folder: the note index, proposals waiting in Approvals, and 'ok', 'loading' or why not */
   notes: NoteIndex[]; proposals: Proposal[]; kn: string
   parts: Record<string, Part>
@@ -85,7 +87,7 @@ export interface LiveWs {
   managed: boolean; agent: AgentRec | null
 }
 export const blankWs = (): LiveWs => ({
-  bridge: 'ok', concepts: {}, via: 'gateway', why: '', sources: {}, cal: [], time: [], board: [],
+  bridge: 'ok', concepts: {}, via: 'gateway', why: '', sources: {}, signin: {}, cal: [], time: [], board: [],
   notes: [], proposals: [], kn: 'loading', parts: { jobs: 'ok', runs: 'ok' }, plugins: {}, managed: false, agent: null,
 })
 
@@ -193,6 +195,8 @@ export const reply = (id: string, t: string, intent: RunIntent) => call<{ run: R
 export const runInfo = (id: string) => call<{ run: RunRec; feed: string[] }>('GET', `/api/runs/${enc(id)}`)
 export const sources = (ws: string, concepts: string[]) =>
   wsCall<{ concepts: Record<string, ConceptState> }>(ws, 'GET', `/sources?concepts=${concepts.map(enc).join(',')}`)
+/** the console's browser brings the tab of host to the front, for the person to sign in there */
+export const front = (ws: string, host: string) => wsCall<{ ok: boolean }>(ws, 'POST', '/browser/front', { host })
 export const chatThread = async (ws: string, id: string) =>
   (await wsCall<{ item: { messages?: Msg[] } }>(ws, 'GET', `/sources/chat/${enc(id)}`)).item.messages || []
 export const mailItem = async (ws: string, id: string) =>
