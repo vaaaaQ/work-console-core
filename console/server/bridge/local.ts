@@ -31,8 +31,8 @@ import type { ActReq, ActRes, ConceptReply } from './wire.ts'
 export type LocalStatus = {
   browser: BrowserStatus; packs: Record<string, string>; tabs: { key: string; host: string; signin: boolean }[]; mcp: string | null; mcpError?: string
 }
-/** actions: what the loaded packs declare, less what the grants leave out */
-export type LocalSource = Source & { status(): LocalStatus; front(host: string): Promise<void>; actions(): ReadonlySet<string>; local: true }
+/** actions: what the loaded packs declare, less what the grants leave out; mcp = it serves the run MCP once started */
+export type LocalSource = Source & { status(): LocalStatus; front(host: string): Promise<void>; actions(): ReadonlySet<string>; local: true; mcp: boolean }
 export type LocalOptions = {
   bus: Bus; ws: string
   /** default: configGrants, the workspace config's packs, hosts, packConfig and acts */
@@ -49,7 +49,7 @@ export type LocalOptions = {
   /** how long a read waits for a concept's first poll */
   firstReadMs?: number
   runtime?: { evalMs?: number; actMs?: number; settleMs?: number }
-  /** serve the run MCP's read tools at cfg.gatewayUrl (loopback only, never the gateway's 47821) on the token in cfg.llmTokenPath, made when missing */
+  /** serve the run MCP's read tools at cfg.gatewayUrl (loopback only, never the gateway's 47821; port 0 = a free one) on the token in cfg.llmTokenPath, made when missing */
   mcp?: boolean
   log?: (line: string) => void
   /** the waits between tries to load B; tests shorten them */
@@ -221,7 +221,7 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
   const serveMcp = async () => {
     try {
       const u = new URL(cfg.gatewayUrl)
-      const host = u.hostname.replace(/^\[|\]$/g, ''), port = Number(u.port) || 80
+      const host = u.hostname.replace(/^\[|\]$/g, ''), port = u.port === '' ? 80 : Number(u.port)
       if (port === GATEWAY_PORT) throw new Error(`${GATEWAY_PORT} is the gateway's port; give this workspace's gatewayUrl another`)
       ensureToken(cfg.llmTokenPath)
       const s = await serveBridge({ source: self, bus, host, port, llmToken: () => readToken(cfg.llmTokenPath), name: o.ws })
@@ -234,6 +234,7 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
 
   const self: LocalSource = {
     local: true,
+    mcp: o.mcp === true,
     via: 'store',
     available: () => b.ready,
     why: () => (b.ready ? '' : bWhy),

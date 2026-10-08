@@ -20,6 +20,9 @@ export function varName(id) {
 export const render = (text, o) =>
   text.replaceAll('__ID__', o.id).replaceAll('__PREFIX__', o.prefix).replaceAll('__TITLE__', o.title).replaceAll('__VAR__', varName(o.id))
 
+/** what a template workspace says while it has no database, as install says it */
+export const PG_DOWN = 'Postgres not running — start Docker and run install again'
+
 /** grants.json of a workspace granted nothing yet, byte for byte as the console writes it */
 export const EMPTY_GRANTS_JSON = JSON.stringify({ packs: [], hosts: [], acts: [], runTools: [], mcp: {} }, null, 2) + '\n'
 

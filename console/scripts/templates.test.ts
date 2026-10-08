@@ -1,6 +1,6 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -13,8 +13,8 @@ import { EMPTY_GRANTS, writeGrants } from '../server/grants.ts'
 import { checkWorkspaces, type WorkspaceServer, type WsConfig } from '../server/workspace.ts'
 import { WORKSPACES } from '../consumer/page.ts'
 import { SERVERS } from '../consumer/server.ts'
-import { PG_DOWN } from './install.mjs'
-import { EMPTY_GRANTS_JSON, HOME, render } from './workspaces.mjs'
+import { consoleHome } from './lib.mjs'
+import { EMPTY_GRANTS_JSON, HOME, PG_DOWN, render } from './workspaces.mjs'
 
 /* consumer/ holds what install.mjs and create_workspace write into a console's workspaces/: two empty registries and
    the one workspace template, here rendered for home into a temp dir whose imports point back at this console. */
@@ -46,7 +46,7 @@ test('the registries start empty; install and create_workspace add each workspac
   assert.deepEqual(SERVERS, [])
 })
 
-test('the template rendered for home is one valid workspace that starts a core playbook, without a bridge', async () => {
+test('the template rendered for home is one valid workspace that starts a core playbook, its run MCP on a loopback port of its own', async () => {
   const { page, server } = await renderHome()
   checkWorkspaces([server])
   assert.equal(page.id, 'home')
@@ -54,7 +54,9 @@ test('the template rendered for home is one valid workspace that starts a core p
   assert.equal(server.page, page)
   assert.ok(CORE_PB[page.board.start], 'its board starts a core playbook')
   assert.equal(server.defaults?.pgSchema, 'work_console')
-  assert.equal(server.llm?.bridge, false)
+  assert.equal(server.llm, undefined, 'its source says whether runs get the bridge tools')
+  assert.equal(server.defaults?.gatewayUrl, 'http://127.0.0.1:0', 'a free port, never the gateway on 47821')
+  assert.equal(server.defaults?.llmTokenPath, join(consoleHome(), 'llm-home.token'), "its own token, not the gateway's in ~/.bridge")
   assert.equal(server.store, undefined, 'its jobs are B, kept by the local source')
 })
 
@@ -74,6 +76,27 @@ test('home is a local source; without a database address it is down, as its stor
       assert.equal(src.status().browser.state, 'off', 'no pack granted, no Edge')
     } finally { src.stop() }
   }
+})
+
+test("with a pack granted, home serves the run MCP's read tools on a free port and its own token; with none it serves nothing", async () => {
+  const { server } = await renderHome()
+  const home = mkdtempSync(join(tmpdir(), 'wc-template-home-')), token = join(home, 'llm.token')
+  made.push(home)
+  const granted = () => ({ packs: ['not-installed'], hosts: [], config: {} })
+  const none = server.source!(cfg(server, { llmTokenPath: token }), { bus: new Bus(), ws: 'home', home, grants: () => ({ packs: [], hosts: [], config: {} }) })
+  assert.ok(isLocal(none) && none.mcp === false)
+  const src = server.source!(cfg(server, { llmTokenPath: token }), { bus: new Bus(), ws: 'home', home, grants: granted })
+  assert.ok(isLocal(src) && src.mcp === true)
+  src.start()
+  try {
+    await until(() => !!src.status().mcp || !!src.status().mcpError)
+    const url = new URL(src.status().mcp!)
+    assert.equal(url.hostname, '127.0.0.1')
+    assert.ok(Number(url.port) > 0 && Number(url.port) !== 47821, url.href)
+    assert.equal(url.pathname, '/mcp')
+    assert.ok(existsSync(token), 'the token is made where its config says')
+    assert.equal(src.status().browser.state, 'off', 'a pack that did not load starts no Edge')
+  } finally { src.stop() }
 })
 
 test("an empty grants.json from install is the one the console writes for a new workspace", () => {

@@ -201,7 +201,7 @@ playbooks, marks) in PostgreSQL rows of kind `state` (`server/browser/pgdocs.ts`
 | Down | without `pgUrl` and `pgPasswordPath` the source is down as a store and says so, `via: 'store'`; the page names the database, not the bridge |
 | Sign-in | a tab that answers unauthorized makes its concepts `signin_required` with the tab's host. The page shows *Sign in to <host>*, which calls `POST /api/ws/<id>/browser/front {host}`; `GET /browser/status` lists the tabs |
 | Acts kept | an act's id is kept with its result, a refusal included, so one Send is never sent twice |
-| Run MCP | off unless the workspace asks; never on the gateway's port 47821 |
+| Run MCP | the read tools a run gets as `bridge`, served by the source itself when the workspace asks (`mcp: true`); never on the gateway's port 47821, and `gatewayUrl` with port 0 takes a free one. The template asks once its grants list a pack, on a free port and `<home>/llm-<id>.token`; with no pack granted its runs get no bridge tools |
 
 ### Workspace agent
 

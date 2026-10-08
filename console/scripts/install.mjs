@@ -7,7 +7,7 @@ import { consoleHome, firstFree, gitId, isFree, npmChecks, readJson, run, writeJ
 import { dockerRunner, engine, envNames, postgres } from './postgres.mjs'
 import { startConsole } from './run.mjs'
 import { isCoreLayout, readCore, sync } from './sync-core.mjs'
-import { addRegistry, EMPTY_GRANTS_JSON, HOME, render, TEMPLATE_FILES } from './workspaces.mjs'
+import { addRegistry, EMPTY_GRANTS_JSON, HOME, PG_DOWN, render, TEMPLATE_FILES } from './workspaces.mjs'
 
 /* One command from an empty folder to a running console:
      node <core>/console/scripts/install.mjs --to <dir> [--provider claude|cursor] [--port n] [--force] [--no-start] [--no-prompt]
@@ -182,8 +182,6 @@ export async function voice(home, { prompt, ask = askHidden }) {
   writeFileSync(keyPath, key + '\n', { mode: 0o600 })
   return 'on: the key is saved'
 }
-
-export const PG_DOWN = 'Postgres not running — start Docker and run install again'
 
 export async function install(o = {}) {
   const { env = process.env, run: r = run, docker = dockerRunner(r), pg = postgres, free = isFree, log = console.log, ask, start = startConsole } = o

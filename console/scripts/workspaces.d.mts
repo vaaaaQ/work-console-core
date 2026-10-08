@@ -6,6 +6,8 @@ export const TEMPLATE_FILES: string[]
 /** the id as a camel-case identifier: my-crm → myCrm; a reserved word gets a ws prefix */
 export function varName(id: string): string
 export function render(text: string, o: NewWorkspace): string
+/** what a template workspace says while it has no database, as install says it */
+export const PG_DOWN: string
 /** grants.json of a workspace granted nothing yet, byte for byte as the console writes it */
 export const EMPTY_GRANTS_JSON: string
 /** the registry with the workspace's import after the last import and its entry last in the array */

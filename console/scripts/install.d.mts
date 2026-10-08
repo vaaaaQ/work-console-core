@@ -20,8 +20,6 @@ export function chooseProvider(home: string, name: ProviderId | null): { auto: P
 export function provider(name: ProviderId, r?: Runner, env?: NodeJS.ProcessEnv): { ok: boolean; line: string }
 /** 'on: ...' when a key is in place or typed, 'off: ...' otherwise */
 export function voice(home: string, o: { prompt: boolean; ask?: (question: string) => Promise<string> }): Promise<string>
-/** what home says while it has no database */
-export const PG_DOWN: string
 export type StepState = 'ok' | 'failed' | 'blocked' | 'skipped' | 'todo'
 export interface Step { name: string; state: StepState; line: string }
 /** env: WORK_CONSOLE_HOME, and WORK_CONSOLE_PG_CONTAINER + WORK_CONSOLE_PG_VOLUME for a test container */

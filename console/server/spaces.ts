@@ -134,6 +134,16 @@ export type SpaceOpts = {
   agent?: { ops: SessionOps; hold(): () => void; taken(): { ids: string[]; prefixes: string[] }; reintegration?: Reintegration }
 }
 
+/** whether a run gets the bridge tools: the workspace's own say, else a local source's run MCP; url = where they are
+    served when a run starts, since a local source's port is known only once it serves */
+export function runBridge(w: WorkspaceServer, source: Source, cfg: WsConfig): { bridge?: boolean; url(): string } {
+  const local = isLocal(source) ? source : null
+  return {
+    bridge: w.llm?.bridge ?? (local ? local.mcp : undefined),
+    url: () => local?.status().mcp?.replace(/\/mcp$/, '') ?? cfg.gatewayUrl,
+  }
+}
+
 export async function makeSpace(w: WorkspaceServer, o: SpaceOpts): Promise<Space> {
   const fake = o.fake ? await startFakeGateway({ seed: fakeSeed(w), me: w.page.me, board: w.page.board }) : null
   // a workspace hook that throws would leave the fake holding its port
@@ -172,23 +182,25 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
 
   const jobs = new Jobs({ store, bus, ctx, gate, via: source.via })
   // a new run takes the auto provider the settings name now; a resume or a reply the one its run recorded
-  const settings = new Settings(o.home)
+  const settings = new Settings(o.home), rb = runBridge(w, source, cfg)
   const sdk = o.sdk ?? providerPick(() => settings.read(), (p) => p.auto!({
-    gatewayUrl: cfg.gatewayUrl, llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools, mcp, bridge: w.llm?.bridge,
+    // a getter: a provider reads it as each session starts
+    get gatewayUrl() { return rb.url() },
+    llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools, mcp, bridge: rb.bridge,
     claudePath: () => settings.read().claudePath,
   }))
   // fake mode touches no real repo
   const workDir = fake ? undefined : w.workDir?.(cfg)
   const runner = new Runner({
     store, jobs, bus, sdk, cwd: cfg.workDir, max: cfg.maxSessions, gate, via: source.via, artifactsDir: o.artifactsDir, ctx,
-    context: (j) => resolveContext(source, j, w.page.me, notes), me: w.page.me, bridge: w.llm?.bridge, workDir,
+    context: (j) => resolveContext(source, j, w.page.me, notes), me: w.page.me, bridge: rb.bridge, workDir,
     screenshot: w.llm?.screenshot ? (s) => shoot({ ...s, browserPath: cfg.browserPath }) : undefined,
     jobTools: w.llm?.jobTools ? { ws: id, pb: w.page.board.start, prj: w.page.pack.prj, prefix: w.jobPrefix } : undefined, notes,
     autoResume: cfg.autoAsk === true,
   })
   const offAuto = cfg.autoAsk === true ? autoAsk({ jobs, runner, ctx, delay: o.askDelay }) : () => {}
   // a workspace without a gateway gives the builder no sources to read
-  const build = builder({ ws: id, page: w.page, sdk, notes, source: w.llm?.bridge === false ? null : source, ctx, bus, jobs: () => jobs.all() })
+  const build = builder({ ws: id, page: w.page, sdk, notes, source: rb.bridge === false ? null : source, ctx, bus, jobs: () => jobs.all() })
   const offInterrupt = bus.on((e) => {
     if (e.kind === 'bridge' && e.state === 'unavailable')
       void runner.interruptAll(`${downName(source.via)} went away`).catch((err) => console.error(`interrupting the runs of ${id}:`, (err as Error).message))

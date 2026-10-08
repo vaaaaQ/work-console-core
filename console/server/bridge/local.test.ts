@@ -1,5 +1,7 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Bus } from '../events.ts'
 import type { Ev } from '../events.ts'
@@ -193,6 +195,18 @@ test('down, it names its own state store and why, and says each new reason once'
   assert.equal(src.available(), false)
   assert.equal(src.why!(), 'Postgres not running')
   assert.equal(said.filter((l) => /Postgres not running/.test(l)).length, 1)
+})
+
+test('its run MCP on port 0 takes a free port, and its status names it', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wc-local-mcp-'))
+  const src = localSource({ ...CFG, gatewayUrl: 'http://127.0.0.1:0', llmTokenPath: join(dir, 'llm.token') }, { bus: new Bus(), ws: 'w', grants: grants({ packs: [] }), docs: memDocs(), mcp: true, log: () => {} })
+  live.push(src)
+  assert.equal(src.mcp, true)
+  src.start()
+  try {
+    await until(() => !!src.status().mcp || !!src.status().mcpError)
+    assert.match(src.status().mcp ?? src.status().mcpError!, /^http:\/\/127\.0\.0\.1:[1-9]\d*\/mcp$/)
+  } finally { src.stop(); await sleep(50); rmSync(dir, { recursive: true, force: true }) }
 })
 
 test("its run MCP never takes the gateway's port 47821", async () => {

@@ -11,12 +11,13 @@ import { startFakeGateway } from './bridge/fake.ts'
 import { Bus, HttpError } from './events.ts'
 import type { Ev } from './events.ts'
 import { GATEWAY_ACTIONS } from './bridge/actions.ts'
-import { hub, makeSpace, Spaces } from './spaces.ts'
+import { hub, makeSpace, runBridge, Spaces } from './spaces.ts'
 import type { Space } from './spaces.ts'
 import { acme, acmeServer, fakeSdk } from './testkit.ts'
 import { fakeSeed } from './workspace.ts'
 import type { PluginCtx, WorkspaceServer, WsConfig } from './workspace.ts'
 import type { WorkDir } from './llm/worktree.ts'
+import type { Source } from './workspace.ts'
 import type { Store } from './store/port.ts'
 import { pgSource } from './store/pg.ts'
 import { localSource } from './bridge/local.ts'
@@ -349,6 +350,27 @@ test("a workspace's source learns its id, the home and, managed, its grants; a l
     assert.deepEqual([...s.acts], ['mail.send'])
     assert.deepEqual(s.plugins.map((p) => p.name), ['browser'])
   } finally { await s.close() }
+})
+
+test("a run's bridge: the workspace's own say, else a local source's run MCP, at the address it serves on when the run starts", async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wc-spaces-'))
+  const docs: StateDocs = { load: async () => ({ docs: {}, seq: 0 }), put: async () => {}, seq: async () => {} }
+  const cfg = { ...wsCfg(dir), gatewayUrl: 'http://127.0.0.1:0', llmTokenPath: join(dir, 'llm.token') }
+  const none = () => ({ packs: [], hosts: [], config: {} })
+  const local = (mcp: boolean) => localSource(cfg, { bus: new Bus(), ws: 'acme', grants: none, docs, mcp, log: () => {} })
+  const served = local(true), off = local(false)
+  assert.equal(runBridge(acmeServer, off, cfg).bridge, false, 'a local source without its run MCP has no bridge tools')
+  assert.equal(runBridge({ ...acmeServer, llm: { bridge: false } }, served, cfg).bridge, false)
+  const gw = runBridge(acmeServer, { via: 'bridge', available: () => true } as unknown as Source, wsCfg(dir))
+  assert.deepEqual([gw.bridge, gw.url()], [undefined, 'http://127.0.0.1:9'])
+  const b = runBridge(acmeServer, served, cfg)
+  assert.equal(b.bridge, true)
+  served.start()
+  try {
+    for (const end = Date.now() + 5000; !served.status().mcp && Date.now() < end;) await new Promise((ok) => setTimeout(ok, 10))
+    assert.equal(b.url() + '/mcp', served.status().mcp)
+    assert.notEqual(b.url(), cfg.gatewayUrl)
+  } finally { served.stop() }
 })
 
 test("a managed workspace's runs get exactly its grants' runTools, and its plugins reach only its granted hosts", async () => {
