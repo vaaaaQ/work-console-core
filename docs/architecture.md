@@ -187,6 +187,55 @@ A workspace may have no gateway: its jobs live in PostgreSQL and its runs work i
 | `llm.screenshot` | the run tool `screenshot`: a png of an http, https or file url, kept as the step's artifact. The file url, and every file the page loads, must be under the run's dir. It reaches any http url, so it is only for workspaces whose runs read no untrusted text. `browserPath` in `config.json` picks the browser; unset, an installed Edge or Chrome |
 | `llm.jobTools` | the run tools `create_job` and `start_job`, in the run's workspace only. Defaults: playbook `board.start`, the pack's first project. At most 5 creates a run; the new job is signed `LLM` and its journal names the job it came from |
 
+### Workspace agent
+
+A workspace with `workspaces/<id>/grants.json` is **managed**: it has an agent, one multi-turn conversation that
+changes the workspace's own code. A workspace without the file is unmanaged and has neither the agent nor
+its panel.
+
+```mermaid
+flowchart LR
+  you[Agent panel] -->|message| s[AgentSession]
+  s -->|turn, resume by session id| p[auto provider]
+  p -->|edits| area["workspaces/#lt;id#gt;/ · tools/"]
+  p -->|apply| ops[Ops: check · build to stage · commit]
+  ops -->|after the turn| r[exit 75]
+  p -->|propose_grants| ap[Approvals] -->|accept| g[(grants.json commit)] --> r
+  ap -->|reject + reason| s
+```
+*The agent edits files; the console checks, builds, commits and restarts. Grants change only through a
+person's approval.*
+
+| Piece | What |
+|---|---|
+| Session | `server/agent/session.ts`; records of kind `agent` in the workspace's store (a JSON file under `<home>/agent/` when the store keeps none). One turn at a time, 60 minutes at most; Stop ends it idle. A turn left running when the console stopped reads back as failed |
+| Limits | `server/agent/limits.ts`, provider-neutral. cwd = the console's folder; Read, Glob and Grep anywhere; Edit and Write only under `workspaces/<id>/**` and `tools/**`. Denied: its `grants.json`, the two registries, `core.lock.json` and every core file it lists, Bash, PowerShell. A path is matched after its links resolve and case-folded where the disk ignores case. The Claude provider maps them to `dontAsk` rules plus a PreToolUse guard, with `settingSources: ['project']` |
+| Tools | `check`, `apply {summary}`, `undo {sha}`, `propose_grants {change, reason}`, `create_workspace {id, prefix, title}` (`server/agent/tools.ts`) |
+| First conversation | of a workspace whose grants are still empty: the agent interviews the person, one question at a time, then proposes grants and sets up the board and playbooks |
+| Template | `consumer/workspace-template/`. `create_workspace` copies it, adds both registry lines and the workspace's database settings in `config.json`, and commits it with empty grants |
+
+- **Apply.** `server/agent/ops.ts`, one op at a time: refuse staged paths outside the two areas and any
+  `grants.json`; refuse symlinks and junctions there; the static import check; `npm run typecheck` and
+  `npm test`; `vite build` into `node_modules/.cache/work-console/dist`; swap that into `dist/`; commit only
+  the two areas as `<id>: <summary>`. A failed check or build commits nothing and leaves `dist/` as it was. A
+  file outside the areas that changes during the check fails the apply.
+- **Undo** reverts one of the agent's own commits the same way, as `<id>: undo — <summary>`; grants commits
+  and undos are not undone. An Undo from the page is refused while a turn runs.
+- **Restart.** A commit asks for a restart; the console waits for the agent's turn to end, closes and exits
+  with `RESTART_EXIT` = 75 (`server/restart.ts`), for the process that runs the console to start it
+  again. The page compares the build id in `/api/state` with the one it loaded and says *Updated — press Ctrl+F5*.
+- **Grants.** `grants.json` = `{packs, hosts, acts, runTools, mcp}` (`server/grants.ts`, `grantsOf(id)`). A
+  managed workspace's runs get exactly its `runTools` and `mcp`; startup refuses one whose `server.ts` also
+  declares `llm.runTools` or `llm.mcp`. A plugin's `ctx.http` reaches only `hosts` (exact or `*.domain`).
+  Approvals shows a proposal as diff lines; accept commits `<id>: grants — <reason>` and restarts, reject
+  sends the reason back into the conversation.
+- **Import check** (`server/agent/imports.ts`), best effort, not a sandbox: code under the two areas may
+  not import `child_process`, `net`, `http`, `https`, `http2`, `dgram`, `tls`, `worker_threads`, `cluster`,
+  `vm` or `module`, nor require or import a computed name, nor use a global `fetch`, `WebSocket`,
+  `XMLHttpRequest` or `EventSource`.
+- **Routes** under `/api/ws/<id>/agent`: `GET`, `POST {text}`, `/stop`, `/new`, `/undo {sha}`,
+  `/grants {accept, reason}`; an unmanaged workspace answers 404 `not_managed`. Progress comes as `agent` events.
+
 ## LLM runs
 
 `console/server/llm/` runs one step at a time through the Claude Agent SDK.
