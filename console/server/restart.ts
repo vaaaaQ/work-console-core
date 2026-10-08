@@ -30,3 +30,19 @@ export async function swapDist(stage: string, dist: string): Promise<{ done(): v
     back: async () => { rmSync(dist, { recursive: true, force: true }); if (had) await move(old, dist) },
   }
 }
+
+/** a restart asked for while an agent's turn runs waits until the last such turn ends; hold() marks one, its release ends it */
+export class Restarter {
+  private held = 0
+  private wanted = false
+  private go: () => void
+  constructor(go: () => void) { this.go = go }
+  want() { this.wanted = true; this.fire() }
+  hold(): () => void {
+    this.held++
+    let done = false
+    return () => { if (done) return; done = true; this.held--; this.fire() }
+  }
+  get pending() { return this.wanted }
+  private fire() { if (this.wanted && this.held === 0) { this.wanted = false; this.go() } }
+}

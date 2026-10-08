@@ -3,6 +3,9 @@ import { CORE_PB, CORE_TPL } from '../src/data/playbooks.ts'
 import * as T from '../src/model/transitions.ts'
 import type { Job, Playbook, Tpl } from '../src/model/types.ts'
 import type { WorkspacePage } from '../src/workspace.ts'
+import { agentRecords } from './agent/records.ts'
+import { AgentSession } from './agent/session.ts'
+import type { SessionOps } from './agent/session.ts'
 import { BoardReturns } from './board/returns.ts'
 import { startItem } from './board/start.ts'
 import { startFakeGateway } from './bridge/fake.ts'
@@ -41,6 +44,8 @@ export interface Space {
   id: string; page: WorkspacePage; prefix: string; cfg: WsConfig
   /** grants.json's; null = an unmanaged workspace */
   grants: Grants | null
+  /** a managed workspace's agent; none unmanaged */
+  agent: AgentSession | null
   bus: Bus; source: Source; store: Store; jobs: Jobs; runner: Runner
   /** the workspace's knowledge folder */
   notes: Notes
@@ -114,8 +119,12 @@ export function onBridgeBack(bus: Bus, load: () => Promise<void>, backoff = [200
 }
 
 /** a workspace's instance; its source is not started, so the caller can wire what listens first;
-    askDelay = how long auto-ask waits before it asks, tests shorten it; root = the console's folder, where grants.json is read */
-export type SpaceOpts = { cfg: WsConfig; home: string; artifactsDir: string; sdk?: Sdk; fake: boolean; push: Push; askDelay?: number; root?: string }
+    askDelay = how long auto-ask waits before it asks, tests shorten it; root = the console's folder, where grants.json is read;
+    agent = what a managed workspace's agent shares with the others: the ops, the restart hold, the registered names */
+export type SpaceOpts = {
+  cfg: WsConfig; home: string; artifactsDir: string; sdk?: Sdk; fake: boolean; push: Push; askDelay?: number; root?: string
+  agent?: { ops: SessionOps; hold(): () => void; taken(): { ids: string[]; prefixes: string[] } }
+}
 
 export async function makeSpace(w: WorkspaceServer, o: SpaceOpts): Promise<Space> {
   const fake = o.fake ? await startFakeGateway({ seed: fakeSeed(w), me: w.page.me, board: w.page.board }) : null
@@ -197,6 +206,9 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     read: async () => { const r = (await source.read(['board'])).board; return r && READY.has(r.status) && Array.isArray(r.items) ? (r.items as { id: string }[]) : null },
   })
   const blockers = new Blockers({ jobs, ctx, push })
+  const agent = grants && o.agent ? new AgentSession({
+    ws: id, title: w.page.pack.n || id, records: agentRecords(store, join(o.home, 'agent', `${id}.json`)), sdk, bus, root: o.root, ...o.agent,
+  }) : null
 
   let recovered = false
   const stopLoading = onBridgeBack(bus, async () => {
@@ -212,13 +224,13 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   })
 
   return {
-    id, page: w.page, prefix: w.jobPrefix, cfg, grants, bus, source, store, jobs, runner, notes, ctx, known, fake, build,
+    id, page: w.page, prefix: w.jobPrefix, cfg, grants, agent, bus, source, store, jobs, runner, notes, ctx, known, fake, build,
     putPlaybook: async (pid, pb, tpl) => { await store.putPlaybook(pid, pb, tpl); await loadPbs() },
     start: startItem({ jobs, ctx, bridge: source, page: w.page }),
     plugins: w.plugins?.({ id, cfg, home: o.home, jobs, source, artifactsDir: o.artifactsDir, http: guardedHttp(grants?.hosts ?? null) }) ?? [],
     // a QA return or a woken blocker pushes its own message; the generic one would say it again
     onNeedsYou: (f) => jobs.onNeedsYou((j) => { if (!returns.handling(j.id) && !blockers.handling(j.id)) f(j) }),
     // the source going away on close is no reason to interrupt the runs
-    async close() { stopLoading(); offInterrupt(); offAuto(); blockers.stop(); source.stop(); await fake?.close() },
+    async close() { stopLoading(); offInterrupt(); offAuto(); blockers.stop(); agent?.close(); source.stop(); await fake?.close() },
   }
 }

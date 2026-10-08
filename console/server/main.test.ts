@@ -1,7 +1,7 @@
 import { acme, acmeServer } from './testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -191,4 +191,40 @@ test('a workspace key at the top of config.json goes to the one workspace with a
     assert.ok(lines.some((l) => l.includes('move runTools to workspaces.acme.runTools')), lines.join(' | '))
   } finally { await m.close() }
   await assert.rejects(main({ cfg, sdk: unused, workspaces: [acmeServer, beta2] }), /runTools.*workspaces\.<id>/)
+})
+
+test("a managed workspace has an agent behind /api/ws/<id>/agent and in /api/state; an unmanaged one has none", async () => {
+  const home = mkdtempSync(join(tmpdir(), 'wc-main-')), root = mkdtempSync(join(tmpdir(), 'wc-root-'))
+  mkdirSync(join(root, 'workspaces', 'beta2'), { recursive: true })
+  writeFileSync(join(root, 'workspaces', 'beta2', 'grants.json'), JSON.stringify({ packs: ['p'] }))
+  const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
+  const prompts: string[] = []
+  const sdk: Sdk = {
+    ...unused,
+    async *agent(o) { prompts.push(o.prompt); yield { k: 'session', id: 's1' }; yield { k: 'text', t: 'Hello.' }; yield { k: 'result', ok: true } },
+  }
+  let restarts = 0
+  const m = await main({ cfg, sdk, workspaces: [acmeServer, beta2], root, restart: () => { restarts++ } })
+  try {
+    const base = `http://127.0.0.1:${m.loopbackPort}`
+    const call = async (path: string, body?: unknown) => {
+      const r = await fetch(`${base}${path}`, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      return { status: r.status, json: (await r.json()) as Record<string, any> }
+    }
+    const st = (await call('/api/state')).json.ws
+    assert.deepEqual([st.acme.managed, st.acme.agent, st.beta2.managed, st.beta2.agent], [false, null, true, null])
+    assert.equal((await call('/api/ws/acme/agent', { text: 'hi' })).json.error.code, 'not_managed')
+    const sent = await call('/api/ws/beta2/agent', { text: 'hi' })
+    assert.equal(sent.status, 200)
+    assert.equal(sent.json.agent.interview, undefined, 'its grants are not empty: no interview')
+    const t0 = Date.now()
+    let rec = (await call('/api/ws/beta2/agent')).json.agent
+    while (rec.status === 'running') { if (Date.now() - t0 > 5000) throw new Error('the turn never ended'); await new Promise((r) => setTimeout(r, 20)); rec = (await call('/api/ws/beta2/agent')).json.agent }
+    assert.deepEqual(rec.turns.map((t: { who: string; t: string }) => [t.who, t.t]), [['you', 'hi'], ['agent', 'Hello.']])
+    assert.deepEqual(prompts, ['hi'])
+    assert.equal((await call('/api/ws/beta2/agent/grants', { accept: true })).json.error.code, 'no_pending')
+    assert.equal((await call('/api/ws/beta2/agent/stop', {})).json.error.code, 'idle')
+    assert.equal(restarts, 0)
+    assert.equal((await call('/api/state')).json.ws.beta2.agent.id, rec.id)
+  } finally { await m.close() }
 })

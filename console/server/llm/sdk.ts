@@ -1,5 +1,5 @@
 import { createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk'
-import type { HookCallback, McpServerConfig, Query, SDKResultMessage, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk'
+import type { HookCallback, McpServerConfig, SDKMessage, SDKResultMessage, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk'
 import { homedir } from 'node:os'
 import { sep } from 'node:path'
 import { z } from 'zod'
@@ -209,14 +209,15 @@ async function* once<T>(x: T) { yield x }
 /** the Claude Code binary the settings name; none = the SDK's own */
 export const exeOption = (p?: string) => (p ? { pathToClaudeCodeExecutable: p } : {})
 
-/** a session's messages as the console's events */
-async function* sessionEvents(q: Query): AsyncIterable<SdkEvent> {
+/** a session's messages as the console's events; own = the session's own MCP server, whose tools go by their bare names */
+export async function* sessionEvents(q: AsyncIterable<SDKMessage>, own?: string): AsyncIterable<SdkEvent> {
+  const pre = own ? `mcp__${own}__` : null
   for await (const m of q) {
     if (m.type === 'system' && m.subtype === 'init') yield { k: 'session', id: m.session_id }
     else if (m.type === 'assistant') {
       for (const b of m.message.content) {
         if (b.type === 'text' && b.text.trim()) yield { k: 'text', t: b.text }
-        else if (b.type === 'tool_use') yield { k: 'tool', name: b.name, input: JSON.stringify(b.input).slice(0, 300) }
+        else if (b.type === 'tool_use') yield { k: 'tool', name: pre && b.name.startsWith(pre) ? b.name.slice(pre.length) : b.name, input: JSON.stringify(b.input).slice(0, 300) }
       }
     } else if (m.type === 'result') {
       if (m.subtype === 'success' && !m.is_error) yield { k: 'result', ok: true, ...(typeof m.result === 'string' && m.result.trim() ? { t: m.result } : {}) }
@@ -261,7 +262,7 @@ export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runToo
         ...agentOptions({ limits, tools: tools.map((t) => t.name), system }), resume, abortController: abort,
         ...exeOption(o.claudePath?.()), mcpServers: { [AGENT]: own },
       } })
-      yield* sessionEvents(q)
+      yield* sessionEvents(q, AGENT)
     },
   }
 }

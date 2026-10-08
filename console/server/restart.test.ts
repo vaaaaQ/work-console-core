@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { swapDist } from './restart.ts'
+import { Restarter, swapDist } from './restart.ts'
 
 const dir = (r: string, name: string, text: string) => { mkdirSync(join(r, name)); writeFileSync(join(r, name, 'index.html'), text) }
 
@@ -28,4 +28,20 @@ test('swapDist with no build served yet', async () => {
   assert.equal(readFileSync(join(r, 'dist', 'index.html'), 'utf8'), 'first')
   await s.back()
   assert.equal(existsSync(join(r, 'dist')), false)
+})
+
+test('a restart waits for every held turn to end, and fires once', () => {
+  let n = 0
+  const r = new Restarter(() => { n++ })
+  const a = r.hold(), b = r.hold()
+  r.want(); r.want()
+  assert.equal(n, 0)
+  a(); a()
+  assert.equal(n, 0)
+  b()
+  assert.equal(n, 1)
+  r.hold()()
+  assert.equal(n, 1, 'no second restart without a second want')
+  r.want()
+  assert.equal(n, 2, 'nothing held: at once')
 })

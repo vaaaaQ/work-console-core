@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { homedir, tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
-import { ALLOW, DENY, agentOptions, askOptions, exeOption, mcpServers, permissions, runToolDefs, userMessage } from './sdk.ts'
+import { ALLOW, DENY, agentOptions, askOptions, exeOption, mcpServers, permissions, runToolDefs, sessionEvents, userMessage } from './sdk.ts'
 import { agentLimits } from '../agent/limits.ts'
 import type { RunTools } from './sdk.ts'
 
@@ -174,4 +174,19 @@ test("the workspace agent's options: project settings, the five file tools, edit
   assert.equal(await decide('Write', { file_path: join(root, 'workspaces', 'w1', 'grants.json') }), 'deny')
   assert.equal(await decide('NotebookEdit', { notebook_path: join(tmpdir(), 'n.ipynb') }), 'deny')
   assert.equal(await decide('Write', {}), 'deny')
+})
+
+test("the agent's own tools come out by their bare names; built-ins and others' tools keep theirs", async () => {
+  async function* msgs() {
+    yield { type: 'system', subtype: 'init', session_id: 's1' }
+    yield { type: 'assistant', message: { content: [
+      { type: 'tool_use', name: 'mcp__agent__apply', input: { summary: 'x' } },
+      { type: 'tool_use', name: 'Edit', input: {} },
+      { type: 'tool_use', name: 'mcp__other__apply', input: {} },
+    ] } }
+    yield { type: 'result', subtype: 'success', is_error: false, result: 'done' }
+  }
+  const got = []
+  for await (const e of sessionEvents(msgs() as never, 'agent')) got.push(e.k === 'tool' ? e.name : e.k)
+  assert.deepEqual(got, ['session', 'apply', 'Edit', 'mcp__other__apply', 'result'])
 })
