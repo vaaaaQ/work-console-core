@@ -15,8 +15,8 @@ import type { NewWorkspace } from './template.ts'
 /* What the agent's console tools do, over git and an injectable exec: check, apply (check, build, commit, restart),
    undo one of its commits, write accepted grants and add a workspace. One at a time; a failed step leaves no commit and the served build. */
 
-/** env = variables set over the server's own */
-export type Exec = (cmd: string, args: string[], o: { cwd: string; timeoutMs?: number; env?: Record<string, string> }) => Promise<{ code: number; out: string }>
+/** env = variables set over the server's own; out = all it printed, stdout = its standard output alone, which git's answers are read from */
+export type Exec = (cmd: string, args: string[], o: { cwd: string; timeoutMs?: number; env?: Record<string, string> }) => Promise<{ code: number; out: string; stdout: string }>
 export type Applied = { ok: true; sha: string; files: string[]; summary: string } | { ok: false; error: string; failures?: string[] }
 export interface Checked { ok: boolean; failures: string[] }
 
@@ -43,14 +43,14 @@ function testsUnder(root: string, dirs: string[]): string[] {
 /** runs a command and gives its exit code and output; npm through the shell on Windows, a hung one killed with its children */
 export const realExec: Exec = (cmd, args, o) => new Promise((ok) => {
   const p = spawn(cmd, args, { cwd: o.cwd, shell: process.platform === 'win32' && cmd === 'npm', windowsHide: true, env: o.env ? { ...process.env, ...o.env } : process.env })
-  let out = ''
-  p.stdout.on('data', (b) => { out += b }); p.stderr.on('data', (b) => { out += b })
+  let out = '', stdout = ''
+  p.stdout.on('data', (b) => { out += b; stdout += b }); p.stderr.on('data', (b) => { out += b })
   const t = o.timeoutMs ? setTimeout(() => {
     out += `\n(stopped after ${o.timeoutMs! / 1000} s)`
     if (process.platform === 'win32' && p.pid) spawn('taskkill', ['/pid', String(p.pid), '/T', '/F'], { windowsHide: true }); else p.kill('SIGKILL')
   }, o.timeoutMs) : null
-  p.on('error', (e) => { if (t) clearTimeout(t); ok({ code: -1, out: `${out}${e.message}` }) })
-  p.on('close', (code) => { if (t) clearTimeout(t); ok({ code: code ?? -1, out }) })
+  p.on('error', (e) => { if (t) clearTimeout(t); ok({ code: -1, out: `${out}${e.message}`, stdout }) })
+  p.on('close', (code) => { if (t) clearTimeout(t); ok({ code: code ?? -1, out, stdout }) })
 })
 
 const tail = (out: string, n = 40) => out.split(/\r?\n/).map((l) => l.trimEnd()).filter(Boolean).slice(-n)
@@ -88,13 +88,14 @@ export class Ops {
   }
 
   private async run(cmd: string, args: string[], timeoutMs?: number) {
-    try { return await this.exec(cmd, args, { cwd: this.root, timeoutMs }) } catch (e) { return { code: -1, out: (e as Error).message } }
+    try { return await this.exec(cmd, args, { cwd: this.root, timeoutMs }) } catch (e) { return { code: -1, out: (e as Error).message, stdout: '' } }
   }
 
+  /** its stdout: a warning git prints on stderr (LF to CRLF and the like) is no part of the answer */
   private async git(...args: string[]) {
     const r = await this.run('git', args)
     if (r.code !== 0) throw new Error(`git ${args[0]}: ${tail(r.out, 5).join(' ')}`)
-    return r.out
+    return r.stdout
   }
 
   private z = (out: string) => out.split('\0').filter(Boolean)
@@ -134,10 +135,13 @@ export class Ops {
     return [...new Set([...before.keys(), ...after.keys()])].filter((f) => before.get(f) !== after.get(f)).sort()
   }
 
-  private async checkIn(ws: string): Promise<Checked> {
+  /** files = changes refused as apply refuses them, once no link is in the way */
+  private async checkIn(ws: string, files: string[] = []): Promise<Checked> {
     const areas = writeAreas(ws)
     const links = linksUnder(this.root, areas).map((p) => `${p}: a symlink or junction; the agent areas hold plain files only`)
     if (links.length) return { ok: false, failures: links }
+    const why = this.refused(ws, files)
+    if (why) return { ok: false, failures: [why] }
     const locked = new Set(lockedFiles(this.root))
     const imports = importCheck(this.root, areas).filter((l) => !locked.has(l.slice(0, l.indexOf(':'))))
     if (imports.length) return { ok: false, failures: imports }
@@ -167,7 +171,8 @@ export class Ops {
     return { sha, files: this.z(await this.git('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', '--relative', sha)) }
   }
 
-  check(ws: string): Promise<Checked> { return this.lock(() => this.checkIn(ws)) }
+  /** with apply's refusals, so a passed check is one apply takes */
+  check(ws: string): Promise<Checked> { return this.lock(async () => this.checkIn(ws, await this.changed(ws))) }
 
   apply(ws: string, summary: string): Promise<Applied> {
     return this.lock(async () => {
@@ -218,7 +223,7 @@ export class Ops {
       const dir = mkdtempSync(join(tmpdir(), 'wc-undo-')), patch = join(dir, 'undo.patch')
       try {
         writeFileSync(patch, await this.git('diff', '--binary', '--no-renames', `${full}^`, full))
-        const atTop = (...a: string[]) => this.exec('git', a, { cwd: top }).catch((e: Error) => ({ code: -1, out: e.message }))
+        const atTop = (...a: string[]) => this.exec('git', a, { cwd: top }).catch((e: Error) => ({ code: -1, out: e.message, stdout: '' }))
         const ck = await atTop('apply', '-R', '--check', patch)
         if (ck.code !== 0) return fail(`${sha} does not revert cleanly: ${tail(ck.out, 5).join(' ')}`)
         const r = await atTop('apply', '-R', patch)

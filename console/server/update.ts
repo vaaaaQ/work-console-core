@@ -60,7 +60,7 @@ export class Updates implements Reintegration {
     const git = async (...a: string[]) => {
       const r = await this.exec('git', ['-C', f.dir, ...a], { cwd: f.dir })
       if (r.code !== 0) throw new Error(`git ${a[0]}: ${tail(r.out, 3)}`)
-      return r.out
+      return r.stdout
     }
     const sync = (await git('rev-list', '--reverse', `${f.pre}..HEAD`)).split(/\s+/).filter(Boolean)[0]
     if (!sync) return '(the update made no commit)'

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { realExec, Ops } from './ops.ts'
@@ -39,13 +39,13 @@ function fakeExec(o: { fail?: string[]; failOnce?: string[]; during?: (step: str
     calls.push(step)
     if (step === 'tests') tests.push(args.slice(args.indexOf('--test') + 1))
     o.during?.(step)
-    if (o.fail?.includes(step)) return { code: 1, out: `${step} went wrong\nline two` }
-    if (o.failOnce?.includes(step) && calls.filter((c) => c === step).length === 1) return { code: 1, out: `${step} flaked` }
+    if (o.fail?.includes(step)) return { code: 1, out: `${step} went wrong\nline two`, stdout: '' }
+    if (o.failOnce?.includes(step) && calls.filter((c) => c === step).length === 1) return { code: 1, out: `${step} flaked`, stdout: '' }
     if (step === 'build') {
       const out = args[args.indexOf('--outDir') + 1]
       mkdirSync(out, { recursive: true }); writeFileSync(join(out, 'index.html'), 'new build\n')
     }
-    return { code: 0, out: 'fine' }
+    return { code: 0, out: 'fine', stdout: 'fine' }
   }
   return { exec, calls, tests }
 }
@@ -74,6 +74,23 @@ test('apply checks, builds, commits only its own files as `<ws>: <summary>` and 
   assert.equal(read('dist/index.html'), 'new build\n')
   assert.equal(existsSync(join(r, 'dist.old')), false)
   assert.equal(restarts(), 1)
+})
+
+test('realExec keeps stdout apart from what went to stderr', async () => {
+  const r = await realExec(process.execPath, ['-e', "process.stdout.write('paths'); process.stderr.write('warning')"], { cwd: process.cwd() })
+  assert.equal(r.stdout, 'paths')
+  assert.match(r.out, /paths/); assert.match(r.out, /warning/)
+})
+
+test('a git warning on stderr (LF edits under core.autocrlf) is not read as a changed path', async () => {
+  const { r, put, git } = repo(), { o } = ops(r, fakeExec())
+  git('config', 'core.autocrlf', 'true')
+  put('workspaces/w1/page.ts', 'export const A = 2\n')
+  assert.match(spawnSync('git', ['diff', '--name-only', 'HEAD'], { cwd: r, encoding: 'utf8' }).stderr, /LF will be replaced by CRLF/)
+  assert.deepEqual(await o.check('w1'), { ok: true, failures: [] })
+  const a = await o.apply('w1', 'two')
+  assert.ok(a.ok, JSON.stringify(a))
+  assert.deepEqual(a.files, ['workspaces/w1/page.ts'])
 })
 
 test('a summary is one line: no body, so no trailers', async () => {
@@ -127,10 +144,13 @@ test('nothing changed is an error, not an empty commit', async () => {
   assert.deepEqual(f.calls, [])
 })
 
-test('grants.json and core files are refused before anything runs', async () => {
+test('grants.json and core files are refused before anything runs, by check as by apply', async () => {
   for (const [p, why] of [['workspaces/w1/grants.json', /propose_grants/], ['tools/core-helper.ts', /may not change tools\/core-helper\.ts/]] as const) {
     const { r, put, git } = repo(), f = fakeExec(), { o } = ops(r, f)
     put(p, '{"packs":["x"]}\n'); put('tools/t.ts', 'export const T = 1\n')
+    const c = await o.check('w1')
+    assert.equal(c.ok, false, p)
+    assert.match(c.failures.join('\n'), why)
     const head = git('rev-parse', 'HEAD'), a = await o.apply('w1', 'x')
     assert.equal(a.ok, false, p)
     assert.match(!a.ok ? a.error : '', why)

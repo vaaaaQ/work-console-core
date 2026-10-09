@@ -50,7 +50,8 @@ function setup(o: { step?: string } = {}) {
   const exec: Exec = async (cmd, args, opt) => {
     if (cmd === 'git') return realExec(cmd, args, opt)
     ran.push({ args, env: opt.env }); order.push('exec')
-    return then(args)
+    const r = then(args)
+    return { ...r, stdout: r.out }
   }
   const u = new Updates({
     home, root, exec, emit: (v) => views.push(v),
