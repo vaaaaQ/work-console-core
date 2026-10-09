@@ -1,4 +1,4 @@
-import type { AgentRec } from '../model/agent.ts'
+import type { AgentConv, AgentRec } from '../model/agent.ts'
 import type { CalEvent, Chat, Cmd, Job, Mail, Msg, Playbook, RunIntent, RunRec, Tpl } from '../model/types.ts'
 import type { NewJob } from '../model/transitions.ts'
 import type { Resolved } from '../model/context.ts'
@@ -87,12 +87,13 @@ export interface LiveWs {
   parts: Record<string, Part>
   /** each plugin's state block, by plugin name */
   plugins: Record<string, unknown>
-  /** managed = the workspace has an agent; agent = its newest conversation, null before the first */
-  managed: boolean; agent: AgentRec | null
+  /** managed = the agent may change the workspace's code; agent = the newest general conversation, null before the
+      first; agents = every conversation the tab holds, by id; convs = the list of them all, the latest changed first */
+  managed: boolean; agent: AgentRec | null; agents: Record<string, AgentRec>; convs: AgentConv[]
 }
 export const blankWs = (): LiveWs => ({
   bridge: 'ok', concepts: {}, via: 'gateway', why: '', sources: {}, signin: {}, cal: [], time: [], board: [],
-  notes: [], proposals: [], kn: 'loading', parts: { jobs: 'ok', runs: 'ok' }, plugins: {}, managed: false, agent: null,
+  notes: [], proposals: [], kn: 'loading', parts: { jobs: 'ok', runs: 'ok' }, plugins: {}, managed: false, agent: null, agents: {}, convs: [],
 })
 
 /** what the page knows about the backend: on = live mode, pc = opened on the PC itself (pairing, devices) */
@@ -236,10 +237,17 @@ export const format = (ws: string, b: { text: string; ctx?: string; field?: stri
 /** the New job form filled from what was said: say = every say so far, oldest first; id names the build in its events */
 export const build = async (ws: string, id: string, say: string[], form: BuildForm, signal?: AbortSignal) =>
   (await wsCall<{ form: BuildForm }>(ws, 'POST', '/build', { id, say, form }, 150000, signal)).form
-/** the workspace agent: a message starts a turn, whose progress comes as agent events */
+/** the workspace agent: a message starts a turn, whose progress comes as agent events; a job's conversation is
+    named by the job, any other by its id, none = the newest general one */
 type AgentRes = { agent: AgentRec }
-export const agentSay = async (ws: string, text: string) => (await wsCall<AgentRes>(ws, 'POST', '/agent', { text })).agent
-export const agentStop = (ws: string) => wsCall<object>(ws, 'POST', '/agent/stop')
+export type Where = { job?: string; conv?: string }
+const where = (w: Where) => ({ ...(w.job ? { job: w.job } : {}), ...(w.conv ? { conv: w.conv } : {}) })
+export const agentGet = async (ws: string, w: Where) =>
+  (await wsCall<{ agent: AgentRec | null }>(ws, 'GET', `/agent?${new URLSearchParams(where(w))}`)).agent
+export const agentConvs = async (ws: string) => (await wsCall<{ convs: AgentConv[] }>(ws, 'GET', '/agent/convs')).convs
+export const agentSay = async (ws: string, text: string, w: Where) => (await wsCall<AgentRes>(ws, 'POST', '/agent', { text, ...where(w) })).agent
+export const agentStop = (ws: string, conv: string) => wsCall<object>(ws, 'POST', '/agent/stop', { conv })
+export const agentRetry = async (ws: string, conv: string) => (await wsCall<AgentRes>(ws, 'POST', '/agent/retry', { conv })).agent
 export const agentNew = async (ws: string) => (await wsCall<AgentRes>(ws, 'POST', '/agent/new')).agent
 /** a new conversation that fixes the failed core update; the core's diff is read first */
 export const agentReintegrate = async (ws: string) => (await wsCall<AgentRes>(ws, 'POST', '/agent/reintegrate', undefined, 60_000)).agent

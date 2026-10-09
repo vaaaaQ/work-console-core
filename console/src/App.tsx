@@ -16,7 +16,8 @@ import { Ic } from './ui/Icon.tsx'
 import { ModalHost, closeModal, isModalOpen } from './ui/modal.tsx'
 import { openPalette } from './ui/Palette.tsx'
 import { Toasts } from './ui/toasts.tsx'
-import { AgentView } from './views/Agent.tsx'
+import { AgentButton, AgentPanel } from './views/AgentPanel.tsx'
+import { closeAgent } from './actions/agent.tsx'
 import { UpdateBanner } from './views/Update.tsx'
 import { Approvals } from './views/Approvals.tsx'
 import { BoardView } from './views/Board.tsx'
@@ -35,12 +36,12 @@ import { Workspaces } from './views/Workspaces.tsx'
 
 const TITLE: Record<View, string> = {
   jobs: 'Jobs', job: 'Job', approvals: 'Approvals', knowledge: 'Knowledge', today: 'Today', chats: 'Chats', mail: 'Mail',
-  calendar: 'Calendar', board: 'Board', time: 'Time', playbooks: 'Playbooks', workspaces: 'Workspaces', agent: 'Agent', devices: 'Devices', settings: 'Settings',
+  calendar: 'Calendar', board: 'Board', time: 'Time', playbooks: 'Playbooks', workspaces: 'Workspaces', devices: 'Devices', settings: 'Settings',
 }
 const BODY: Record<View, () => React.ReactElement> = {
   jobs: () => <Jobs />, job: () => <JobView />, approvals: () => <Approvals />, knowledge: () => <Knowledge />, today: () => <Today />,
   chats: () => <Chats />, mail: () => <MailView />, calendar: () => <CalendarView />, board: () => <BoardView />, time: () => <TimeView />,
-  playbooks: () => <Playbooks />, workspaces: () => <Workspaces />, agent: () => <AgentView />,
+  playbooks: () => <Playbooks />, workspaces: () => <Workspaces />,
   devices: () => <Devices />,
   settings: () => <Settings />,
 }
@@ -70,7 +71,8 @@ function listen() {
     const k = e.key, mod = e.ctrlKey || e.metaKey, open = isModalOpen(), t = e.target as HTMLElement
     if (mod && (k === 'k' || k === 'K')) { e.preventDefault(); if (open) dismiss(); else openPalette(); return }
     if (k === 'Escape') {
-      if (open) { e.preventDefault(); dismiss() } else if (document.getElementById('drawer')?.hidden === false && !escNarrow()) closeDrawer()
+      // the step drawer sits over the agent panel: it closes first
+      if (open) { e.preventDefault(); dismiss() } else if (document.getElementById('drawer')?.hidden === false) { if (!escNarrow()) closeDrawer() } else if (LIVE.on && S.agentOpen) closeAgent()
       return
     }
     if (mod && k === 'Enter') { const f = t.closest?.('form[data-form]') as HTMLFormElement | null; if (f) { e.preventDefault(); f.requestSubmit() } return }
@@ -121,7 +123,7 @@ export function App() {
   settleView()
   const dark = isDark()
   return <>
-    <div className="app">
+    <div className={'app' + (LIVE.on && S.agentOpen ? ' agp-on' : '')}>
       <header className="top">
         <div className="brand"><span className="brand-mark" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /><i /></span>Work Console</div>
         <button className="kbtn" id="kbtn" aria-label="Command palette" onClick={openPalette}><Ic n="search" /><span>Jump to a job, view or action…</span><kbd>Ctrl K</kbd></button>
@@ -143,6 +145,8 @@ export function App() {
         <section key={v} id={'v-' + v} className="view" hidden={S.view !== v} aria-label={TITLE[v]}>{S.view === v ? BODY[v]() : null}</section>
       ))}</main>
     </div>
+    <AgentPanel />
+    <AgentButton />
     <Drawer />
     <ModalHost onDismiss={dismiss} />
     <Toasts />

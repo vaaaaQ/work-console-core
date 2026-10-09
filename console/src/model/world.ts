@@ -1,7 +1,7 @@
 import { DEFAULT_WS, PACKS } from '../data/packs.ts'
 import { PB0 } from '../data/playbooks.ts'
 import { CHATS0, JOBS0, JR, LLMS, LOG0, MAIL0, OVR, PRI, RET0, TPL0 } from '../data/demo.ts'
-import { clone, hm, norm, refill } from '../lib/util.ts'
+import { clone, hm, norm, refill, store } from '../lib/util.ts'
 import * as T from './transitions.ts'
 import { preview } from './preview.ts'
 import { KINDS, ctxLabel, ctxOf, ctxUnit } from './context.ts'
@@ -18,7 +18,7 @@ export const MAIL: Partial<Record<Ws, Mail[]>> = {}
 const ui = (): Ui => ({
   ws: DEFAULT_WS, view: 'jobs', job: null, sel: null, f: 'all', prj: 'all', q: '', flash: null,
   chat: { [DEFAULT_WS]: 'c1' }, mail: 'm1', mcat: 'reply', pbv: null, sum: {}, focusB: null, cd: {},
-  pbRet: null, wide: null,
+  pbRet: null, wide: null, agentOpen: store.get<boolean>('agentOpen', false) === true, agentConv: null,
 })
 export const S: Ui = ui()
 /** the world as the installed workspaces seed it, rebuilt in place so every module keeps its reference */

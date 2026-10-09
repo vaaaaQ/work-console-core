@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import type { FailedUpdate } from '../../scripts/update.mjs'
 import type { AgentCommit, AgentConv, AgentRec, AgentReintegrate, AgentWho, Grants } from '../../src/model/agent.ts'
+import { convOf } from '../../src/model/agent.ts'
 import { REINTEGRABLE } from '../../src/model/update.ts'
 import type { UpdateKind } from '../../src/model/update.ts'
 import { HttpError } from '../events.ts'
@@ -95,7 +96,7 @@ export class AgentSession {
   /** every conversation, the latest changed first */
   async convs(): Promise<AgentConv[]> {
     return [...(await this.load())].sort((a, b) => b.updated.localeCompare(a.updated))
-      .map((r) => ({ id: r.id, ...(r.job ? { job: r.job } : {}), title: titleOf(r), status: r.status, updated: r.updated }))
+      .map(convOf)
   }
 
   /** the person's message as a new turn; done settles when the turn ends */
@@ -452,5 +453,3 @@ const lastLine = (out: string) => out.trim().split(/\r?\n/).at(-1) ?? ''
 const busy = () => new HttpError(409, 'busy', 'the agent is still answering: wait, or stop it')
 const clone0 = (r: AgentRec | undefined) => (r ? clone(r) : null)
 const general = (r: AgentRec) => !r.job
-const titleOf = (r: AgentRec) => oneLine(r.turns.find((t) => t.who === 'you')?.t ?? r.job
-  ?? (r.reintegrate ? `Reintegrating core ${r.reintegrate.core.slice(0, 7)}` : 'New conversation')).slice(0, 80)

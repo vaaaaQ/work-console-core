@@ -10,7 +10,7 @@ import { LIVE } from '../live/api.ts'
 import type { Proposal } from '../live/api.ts'
 import { L } from '../live/boot.ts'
 import { decide, editProposal } from '../actions/knowledge.tsx'
-import { grantsAccept, grantsReject } from '../actions/agent.tsx'
+import { grantsAccept, grantsReject, openAgent } from '../actions/agent.tsx'
 import type { AgentPending } from '../model/agent.ts'
 import { FillT } from '../ui/bits.tsx'
 import { DraftTalk } from '../ui/DraftTalk.tsx'
@@ -65,10 +65,10 @@ function KnCard({ p }: { p: Proposal }) {
 }
 
 /** a change to what the workspace may reach, proposed by its agent; accepting commits grants.json and restarts the console */
-function GrantsCard({ ws, p }: { ws: string; p: AgentPending }) {
+function GrantsCard({ ws, conv, p }: { ws: string; conv: string; p: AgentPending }) {
   return (
     <article className="dc">
-      <div className="dc-h"><span className="st"><Ic n="sliders" sm /><b>Grants · change</b></span><button className="lnk mono" onClick={() => go('agent')}>the workspace agent</button><span className="src">{tfmt(p.at)}</span></div>
+      <div className="dc-h"><span className="st"><Ic n="sliders" sm /><b>Grants · change</b></span><button className="lnk mono" onClick={() => openAgent({ conv })}>the workspace agent</button><span className="src">{tfmt(p.at)}</span></div>
       <div className="why">{p.reason}</div>
       <pre className="out diff">{p.diff.length ? p.diff.map((l, i) => <span key={i} className={l[0] === '+' ? 'add' : l[0] === '-' ? 'del' : undefined}>{l}{'\n'}</span>) : 'no change'}</pre>
       <div className="row"><button className="btn sm pri" onClick={() => void grantsAccept(ws)}><Ic n="check" sm />Accept</button>
@@ -82,7 +82,7 @@ export function Approvals() {
   return <>
     <div className="vh"><div><div className="eyebrow">{w.n} · work</div><h1>Approvals</h1>
       <p>LLM drafts, planned messages, the agent's proposals, knowledge proposals and grants changes that wait for you. Nothing is kept or sent until you press a button, here or on the step.</p></div></div>
-    <div className="dl">{G ? <GrantsCard ws={S.ws} p={G} /> : null}{P.map((j) => <ProposalCard key={j.id} j={j} where="approvals" />)}{K.map((p) => <KnCard key={p.id} p={p} />)}
+    <div className="dl">{G ? <GrantsCard ws={S.ws} conv={L().agent!.id} p={G} /> : null}{P.map((j) => <ProposalCard key={j.id} j={j} where="approvals" />)}{K.map((p) => <KnCard key={p.id} p={p} />)}
       {A.map((x) => <ApCard key={`${x.j.id}/${x.s.id}${x.k === 'msg' ? '/' + x.i : ''}`} x={x} />)}
       {!G && !P.length && !K.length && !A.length ? <div className="dc empty">Nothing waits for you. A draft lands here after you ask the LLM on a step; a knowledge proposal after an LLM suggests a note.</div> : null}</div>
   </>

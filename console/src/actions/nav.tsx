@@ -9,7 +9,7 @@ import { closeModal, modal, modalForm } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
 import { reopenNewJob } from './newjob.tsx'
 
-export const VIEWS: View[] = ['jobs', 'job', 'approvals', 'knowledge', 'today', 'chats', 'mail', 'calendar', 'board', 'time', 'playbooks', 'workspaces', 'agent', 'devices', 'settings']
+export const VIEWS: View[] = ['jobs', 'job', 'approvals', 'knowledge', 'today', 'chats', 'mail', 'calendar', 'board', 'time', 'playbooks', 'workspaces', 'devices', 'settings']
 export const isView = (h: string): h is View => (VIEWS as string[]).includes(h)
 
 /** the hash is a bare token: a job id or a view name */
@@ -31,7 +31,8 @@ export function go(v: View, id?: string, sel?: string) {
   const j = v === 'job' && id ? byId(id) : undefined
   if (v === 'job' && !j) return
   commit(() => {
-    if (j) { if (j.ws !== S.ws) setWs(j.ws, true); if (S.job !== j.id) S.sel = null; S.job = j.id }
+    // a job page's agent panel shows that job's conversation
+    if (j) { if (j.ws !== S.ws) setWs(j.ws, true); if (S.job !== j.id) S.sel = null; if (S.view !== 'job' || S.job !== j.id) S.agentConv = null; S.job = j.id }
     else S.sel = null
     S.view = v === 'mail' && !W().src.mail ? 'jobs' : v
     if (sel) S.sel = sel

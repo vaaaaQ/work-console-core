@@ -1,6 +1,7 @@
 import { CHATS, JOBS, MAIL, PB, S, TPL, byId, putJob, setJobs } from '../model/world.ts'
 import type { Chat, Mail, Ws } from '../model/types.ts'
 import type { AgentRec } from '../model/agent.ts'
+import { convOf } from '../model/agent.ts'
 import { DEFAULT_WS, PACKS } from '../data/packs.ts'
 import type { BoardItem } from '../data/board.ts'
 import { setZone } from '../lib/zone.ts'
@@ -85,6 +86,8 @@ export function applyState(st: State) {
       bridge: b.bridge.state, concepts: b.bridge.concepts, via: b.bridge.via ?? 'gateway', why: b.bridge.why ?? '', parts: { jobs: b.parts.jobs, runs: b.parts.runs }, plugins: b.plugins || {},
       managed: b.managed === true, agent: b.agent ?? null,
     })
+    const a = b.agent, l = LIVE.ws[id]
+    if (a && (!l.agents[a.id] || a.updated >= l.agents[a.id].updated)) l.agents[a.id] = a
   }
   clearTimeout(rereading)
   if (blocks.some(([, b]) => b.bridge.state === 'ok' && Object.values(b.parts).some((p) => p !== 'ok'))) rereadLater()
@@ -130,7 +133,7 @@ export async function loadKnowledge(ws: Ws = S.ws) {
 }
 
 /** every served workspace's sources and knowledge */
-function loadAll() { for (const ws of Object.keys(LIVE.ws)) { void loadSources(ws); void loadKnowledge(ws) } }
+function loadAll() { for (const ws of Object.keys(LIVE.ws)) { void loadSources(ws); void loadKnowledge(ws); void loadConvs(ws) } }
 
 /* a thread or a mail body is fetched when it is first shown; keys are workspace + id */
 const loaded = { chat: new Set<string>(), mail: new Set<string>() }
@@ -158,10 +161,33 @@ function soon(k: string, f: () => void) {
   clearTimeout(pending.get(k))
   pending.set(k, setTimeout(() => { pending.delete(k); f() }, 400))
 }
-/** the conversation on screen gives way to a newer one or a later frame of itself; a reply that lost the race to its events does not */
+/** a conversation's frame: the map keeps the latest of each and the list follows it; the general one on screen gives way
+    to a newer one or a later frame of itself; a reply that lost the race to its events does not */
 export function showAgent(ws: string, a: AgentRec) {
-  const l = LIVE.ws[ws], cur = l?.agent
-  if (l && (!cur || (cur.id === a.id ? a.updated >= cur.updated : a.created >= cur.created))) commit(() => { l.agent = a })
+  const l = LIVE.ws[ws]
+  if (!l) return
+  const had = l.agents[a.id], cur = l.agent
+  commit(() => {
+    if (!had || a.updated >= had.updated) {
+      l.agents[a.id] = a
+      l.convs = [convOf(a), ...l.convs.filter((c) => c.id !== a.id)].sort((x, y) => y.updated.localeCompare(x.updated))
+    }
+    if (!a.job && (!cur || (cur.id === a.id ? a.updated >= cur.updated : a.created >= cur.created))) l.agent = a
+  })
+}
+/** the list of conversations; a line a later frame already wrote stays */
+export async function loadConvs(ws: Ws) {
+  try {
+    const cs = await api.agentConvs(ws)
+    commit(() => {
+      const l = LIVE.ws[ws]
+      if (!l) return
+      const have = new Map(l.convs.map((c) => [c.id, c]))
+      l.convs = cs.map((c) => { const o = have.get(c.id); return o && o.updated > c.updated ? o : c })
+        .concat(l.convs.filter((c) => !cs.some((x) => x.id === c.id)))
+        .sort((x, y) => y.updated.localeCompare(x.updated))
+    })
+  } catch { /* the list stays as it is; the next open of the stream reads it again */ }
 }
 /** a build's progress lines, by the id the page gave it while it runs */
 export const buildFeed = new Map<string, (t: string, tool?: string) => void>()

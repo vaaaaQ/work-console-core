@@ -6,7 +6,8 @@ import { showAgent } from '../live/boot.ts'
 import type { UpdateKind } from '../model/update.ts'
 import { S } from '../model/world.ts'
 import { commit } from '../store.ts'
-import { go, setWs } from '../actions/nav.tsx'
+import { setWs } from '../actions/nav.tsx'
+import { openAgent } from '../actions/agent.tsx'
 import { CancelBtn } from '../ui/bits.tsx'
 import { Ic } from '../ui/Icon.tsx'
 import { closeModal, modal } from '../ui/modal.tsx'
@@ -30,7 +31,7 @@ function reintegrate(ws: string) {
     foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="wrench" sm />Reintegrate</button></>,
     onSubmit: () => {
       closeModal()
-      void api.agentReintegrate(ws).then((a) => { showAgent(ws, a); if (S.ws !== ws) setWs(ws); go('agent') }, (e) => toast(errText(e)))
+      void api.agentReintegrate(ws).then((a) => { showAgent(ws, a); if (S.ws !== ws) setWs(ws); openAgent({ conv: a.id }) }, (e) => toast(errText(e)))
     },
   })
 }
@@ -50,7 +51,7 @@ function run(kind: UpdateKind) {
 export function UpdateBanner() {
   const u = LIVE.update
   if (!LIVE.on || !u) return null
-  const ws = fixer(), answering = Object.values(LIVE.ws).some((l) => l.agent?.status === 'running')
+  const ws = fixer(), answering = Object.values(LIVE.ws).some((l) => l.convs.some((c) => c.status === 'running'))
   const out = u.last ? u.last.output : u.output
   const step = u.step === 'finish' ? 'npm ci or the build after the restart' : u.step
   const what = u.last && u.last.kind === 'apply' && u.last.code !== 0 ? `failed again at ${step}` : `failed at ${step}`

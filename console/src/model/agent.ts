@@ -29,3 +29,10 @@ export interface AgentRec {
 }
 /** a conversation as the panel lists it */
 export interface AgentConv { id: string; job?: string; title: string; status: AgentRec['status']; updated: string }
+const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim()
+/** its line in the list: titled by the first thing the person said, else its job, else what it is for */
+export const convOf = (r: AgentRec): AgentConv => ({
+  id: r.id, ...(r.job ? { job: r.job } : {}), status: r.status, updated: r.updated,
+  title: oneLine(r.turns.find((t) => t.who === 'you')?.t ?? r.job
+    ?? (r.reintegrate ? `Reintegrating core ${r.reintegrate.core.slice(0, 7)}` : 'New conversation')).slice(0, 80),
+})

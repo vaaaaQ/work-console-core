@@ -1,38 +1,56 @@
 import * as React from 'react'
 import * as api from '../live/api.ts'
-import { showAgent } from '../live/boot.ts'
+import type { Where } from '../live/api.ts'
+import { L, showAgent } from '../live/boot.ts'
+import { store } from '../lib/util.ts'
 import type { AgentCommit } from '../model/agent.ts'
+import type { Job } from '../model/types.ts'
+import { S } from '../model/world.ts'
+import { commit } from '../store.ts'
 import { CancelBtn } from '../ui/bits.tsx'
 import { Ic } from '../ui/Icon.tsx'
 import { closeModal, modal } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
 import { VoiceField } from '../ui/VoiceField.tsx'
 
-/* The workspace agent's buttons: a message, Stop, a new conversation, Undo of a commit, and the answer to a grants change. */
+/* The workspace agent's buttons: the panel, a message, Stop, Retry, a new conversation, Undo of a commit, and the answer
+   to a grants change. */
 
 const short = (sha: string) => sha.slice(0, 8)
 const errText = (e: unknown) => String((e as Error)?.message || e)
 const put = showAgent
 
+/** the panel open on a conversation; none named = the one the page leads to (a job page's own, else the newest general) */
+export function openAgent(w: { conv?: string } = {}) {
+  commit(() => { S.agentOpen = true; if (w.conv) S.agentConv = w.conv })
+  store.set('agentOpen', true)
+}
+export function closeAgent() {
+  commit(() => { S.agentOpen = false })
+  store.set('agentOpen', false)
+}
+/** a proposal talked over in the conversation that made it */
+export function discuss(j: Job) {
+  const by = j.pp?.by
+  openAgent(by && L(j.ws).convs.some((c) => c.id === by) ? { conv: by } : {})
+}
+
 /** true when the message was taken */
-export async function agentSend(ws: string, text: string): Promise<boolean> {
-  try { put(ws, await api.agentSay(ws, text)); return true } catch (e) { toast(errText(e)); return false }
+export async function agentSend(ws: string, text: string, w: Where): Promise<boolean> {
+  try { put(ws, await api.agentSay(ws, text, w)); return true } catch (e) { toast(errText(e)); return false }
 }
 
-export async function agentStop(ws: string) {
-  try { await api.agentStop(ws) } catch (e) { toast(errText(e)) }
+export async function agentStop(ws: string, conv: string) {
+  try { await api.agentStop(ws, conv) } catch (e) { toast(errText(e)) }
 }
 
-export function agentFresh(ws: string) {
-  modal({
-    title: 'A new conversation', form: 'agent-new',
-    body: <p className="why" style={{ margin: 0 }}>The agent starts afresh and no longer remembers this conversation. What it applied stays committed, and a grants change waiting in Approvals still waits.</p>,
-    foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="plus" sm />New conversation</button></>,
-    onSubmit: () => {
-      closeModal()
-      void api.agentNew(ws).then((a) => put(ws, a), (e) => toast(errText(e)))
-    },
-  })
+export async function agentRetry(ws: string, conv: string) {
+  try { put(ws, await api.agentRetry(ws, conv)) } catch (e) { toast(errText(e)) }
+}
+
+/** a new general conversation, shown in the panel; the others stay in its list */
+export async function agentFresh(ws: string) {
+  try { const a = await api.agentNew(ws); put(ws, a); commit(() => { S.agentConv = a.id }) } catch (e) { toast(errText(e)) }
 }
 
 export function agentUndo(ws: string, c: AgentCommit) {

@@ -417,7 +417,7 @@ test("the agent through the page's client: a managed workspace shows it; a messa
   try {
     applyState(await api.state())
     assert.deepEqual([L('acme').managed, L('beta').managed, L('beta').agent], [false, true, null])
-    assert.equal((await api.agentSay('beta', 'set it up')).status, 'running')
+    assert.equal((await api.agentSay('beta', 'set it up', {})).status, 'running')
     await until(idle)
     applyState(await api.state())
     const a = L('beta').agent!
@@ -437,6 +437,54 @@ test("the agent through the page's client: a managed workspace shows it; a messa
     onEvent({ kind: 'agent', ws: 'beta', agent: later })
     onEvent({ kind: 'agent', ws: 'beta', agent: { ...fresh, status: 'running' } })
     assert.equal(L('beta').agent!.updated, later.updated)
+  } finally { await m.close() }
+})
+
+test('agent calls carry job and conv in the query or body', async () => {
+  let broke = false
+  const withAgent: Sdk = {
+    ...sdk,
+    async *agent(o) {
+      yield { k: 'session', id: 's1' }
+      if (o.prompt.includes('hold on')) await new Promise((_ok, no) => o.abort.signal.addEventListener('abort', () => no(new Error('aborted')), { once: true }))
+      if (o.prompt.includes('break it') && !broke) { broke = true; throw new Error('broke') }
+      yield { k: 'text', t: 'ok' }
+      yield { k: 'result', ok: true }
+    },
+  }
+  const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: tempDir('api'), WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
+  const m = await main({ cfg, sdk: withAgent, workspaces: [acmeServer] })
+  api.setBase(`http://127.0.0.1:${m.loopbackPort}`)
+  try {
+    await until(async () => (await api.state()).ws.acme?.bridge.state === 'ok')
+    applyState(await api.state())
+    const { job } = await api.create({ t: 'Talk it over', key: 'ACME-77', pb: 'action', prj: 'platform', ws: 'acme' })
+    assert.equal(await api.agentGet('acme', { job: job.id }), null, 'a job has no conversation before its first message')
+    const jc = await api.agentSay('acme', 'hold on', { job: job.id })
+    assert.deepEqual([jc.job, jc.status], [job.id, 'running'])
+    assert.equal((await api.agentGet('acme', { job: job.id }))!.id, jc.id)
+    assert.equal((await api.agentGet('acme', { conv: jc.id }))!.job, job.id)
+    // Stop names the job's conversation: no general one runs
+    await api.agentStop('acme', jc.id)
+    await until(async () => (await api.agentGet('acme', { conv: jc.id }))!.status === 'idle')
+    const gc = await api.agentSay('acme', 'break it', {})
+    assert.equal(gc.job, undefined)
+    await until(async () => (await api.agentGet('acme', { conv: gc.id }))!.status === 'failed')
+    assert.equal((await api.agentRetry('acme', gc.id)).id, gc.id)
+    await until(async () => (await api.agentGet('acme', { conv: gc.id }))!.status === 'idle')
+    assert.equal((await api.agentSay('acme', 'and then?', { conv: jc.id })).id, jc.id, 'a conv goes to that conversation')
+    const cs = await api.agentConvs('acme')
+    assert.deepEqual(cs.map((c) => [c.id, c.job]).sort(), [[gc.id, undefined], [jc.id, job.id]].sort())
+    // an event for a conversation the tab never loaded lands in the map and the list; a general one is shown as the agent
+    const other = { ...jc, id: 'conv-x', job: 'A-0999', updated: new Date().toISOString() }
+    onEvent({ kind: 'agent', ws: 'acme', agent: other })
+    assert.equal(L('acme').agents['conv-x'].job, 'A-0999')
+    assert.ok(L('acme').convs.some((c) => c.id === 'conv-x' && c.job === 'A-0999'))
+    assert.notEqual(L('acme').agent?.id, 'conv-x', 'a job conversation is not the general one')
+    const g2 = await api.agentGet('acme', { conv: gc.id })
+    onEvent({ kind: 'agent', ws: 'acme', agent: g2! })
+    assert.equal(L('acme').agent!.id, gc.id)
+    assert.equal(L('acme').agents[gc.id].status, 'idle')
   } finally { await m.close() }
 })
 

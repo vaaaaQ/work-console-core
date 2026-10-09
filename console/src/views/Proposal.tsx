@@ -6,6 +6,8 @@ import { jctx, pview } from '../model/world.ts'
 import type { Job, Start } from '../model/types.ts'
 import { go } from '../actions/nav.tsx'
 import { ppAccept, ppEdit, ppReject } from '../actions/proposal.tsx'
+import { discuss } from '../actions/agent.tsx'
+import { LIVE } from '../live/api.ts'
 import { Ic } from '../ui/Icon.tsx'
 
 const STARTS: Start[] = ['hand', 'self', 'auto']
@@ -31,7 +33,8 @@ export function ProposalCard({ j, where }: { j: Job; where: 'board' | 'panel' | 
       })}</ul>
       {err ? <div className="errs">It no longer applies: {err}</div> : null}
       <div className="row"><button className="btn sm pri" onClick={() => void ppAccept(j.id)}><Ic n="check" sm />Accept</button>
-        <button className="btn sm" onClick={() => ppReject(j.id)}><Ic n="x" sm />Reject…</button></div>
+        <button className="btn sm" onClick={() => ppReject(j.id)}><Ic n="x" sm />Reject…</button>
+        {where !== 'panel' && LIVE.on ? <button className="btn sm ghost" onClick={() => discuss(j)}><Ic n="bot" sm />Discuss</button> : null}</div>
     </article>
   )
 }
