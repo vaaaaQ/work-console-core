@@ -6,13 +6,18 @@ import type { FailedUpdate } from '../../scripts/update.mjs'
 import type { AgentRec, Grants } from '../../src/model/agent.ts'
 import { Bus } from '../events.ts'
 import type { Ev } from '../events.ts'
+import { Jobs } from '../jobs/jobs.ts'
+import { notesStore } from '../knowledge/notes.ts'
 import type { AskTool, Sdk, SdkEvent } from '../llm/sdk.ts'
 import { Restarter } from '../restart.ts'
 import type { Applied } from './ops.ts'
+import type { JobDeps } from './jobTools.ts'
 import { agentRecords } from './records.ts'
 import { AgentSession } from './session.ts'
 import type { Reintegration, SessionOps, UpdateEnd } from './session.ts'
 import type { Limits } from './limits.ts'
+import { fileStore } from '../store/file.ts'
+import { demoCtx } from '../testkit.ts'
 import { tempDir } from '../testdirs.ts'
 
 type Turn = { prompt: string; resume?: string; system: string; tools: AskTool[]; limits: Limits; abort: AbortController }
@@ -29,7 +34,7 @@ const failedAt = (root: string, o: Partial<FailedUpdate> = {}): FailedUpdate => 
     output: "workspaces/w1/page.ts(3,7): error TS2353: 'needDb' does not exist in type 'LocalOpts'", at: new Date().toISOString(), ...o }
 }
 
-function setup(o: { grants?: Partial<Grants>; script?: Script[]; recs?: AgentRec[]; update?: Partial<FailedUpdate>; ends?: ((f: FailedUpdate) => FailedUpdate | null)[]; managed?: boolean; max?: number; noAgent?: boolean } = {}) {
+function setup(o: { grants?: Partial<Grants>; script?: Script[]; recs?: AgentRec[]; update?: Partial<FailedUpdate>; ends?: ((f: FailedUpdate) => FailedUpdate | null)[]; managed?: boolean; max?: number; noAgent?: boolean; job?: JobDeps } = {}) {
   const root = tempDir('session')
   mkdirSync(join(root, 'workspaces', 'w1'), { recursive: true })
   if (o.grants) writeFileSync(join(root, 'workspaces', 'w1', 'grants.json'), JSON.stringify(o.grants))
@@ -72,7 +77,7 @@ function setup(o: { grants?: Partial<Grants>; script?: Script[]; recs?: AgentRec
       return r
     },
   }
-  const s = new AgentSession({ ws: 'w1', title: 'One', root, records, sdk, ops, bus, hold: () => restarter.hold(), taken: () => ({ ids: ['w1'], prefixes: ['W'] }), reintegration, managed: o.managed ?? true, max: o.max })
+  const s = new AgentSession({ ws: 'w1', title: 'One', root, records, sdk, ops, bus, hold: () => restarter.hold(), taken: () => ({ ids: ['w1'], prefixes: ['W'] }), reintegration, managed: o.managed ?? true, max: o.max, job: o.job })
   return { s, root, file, calls, turns, events, records, u, restarts: () => restarts }
 }
 
@@ -435,4 +440,24 @@ test('retry on a failed conversation carries on; on an idle one it is refused', 
   assert.deepEqual(r.turns.filter((t) => t.who === 'you').map((t) => t.t), ['do it'])
   await assert.rejects(x.s.retry(r.id), /did not fail/)
   await assert.rejects(x.s.retry('nope'), /no conversation nope/)
+})
+
+test("a job conversation's turn reads the job between the heard lines and the text, with the job tools; a general one reads the open jobs", async () => {
+  const jobs = new Jobs({ store: fileStore(join(tempDir('sj'), 's.json')), bus: new Bus(), ctx: demoCtx, gate: () => true })
+  const c = await jobs.create({ t: 'Local stand', key: 'K-1', pb: 'action', prj: 'p', ws: 'acme' })
+  const j = (await jobs.cmd(c.id, { op: 'start' }, c.v)).job
+  const job: JobDeps = { jobs, runs: async () => [], ctx: demoCtx, notes: notesStore(join(tempDir('sj-kn'), 'kn')), source: null, key: (i) => i, proposer: { propose: async () => '' } }
+  const x = setup({ grants: { packs: ['p'] }, job, script: [() => reply('ok'), () => reply('hi')] })
+  await x.s.hear({ job: j.id }, 'A reply came in: yes', false)
+  await (await x.s.send('what now?', { job: j.id })).done
+  const t = x.turns[0], NL = String.fromCharCode(10)
+  assert.ok(t.prompt.startsWith(`A reply came in: yes${NL}${NL}# The job now: ${j.id} “Local stand”`), t.prompt)
+  assert.ok(t.prompt.endsWith(`${NL}${NL}what now?`))
+  assert.match(t.system, new RegExp(`job ${j.id} “Local stand”`))
+  assert.deepEqual(t.tools.map((y) => y.name), ['list_jobs', 'get_job', 'step_output', 'propose', 'knowledge_search', 'knowledge_read'])
+  await (await x.s.send('hello')).done
+  const g = x.turns[1]
+  assert.ok(g.prompt.startsWith('# Open jobs (newest first)') && g.prompt.includes(j.id) && g.prompt.endsWith(`${NL}${NL}hello`), g.prompt)
+  assert.deepEqual(g.tools.map((y) => y.name).slice(0, 4), ['list_jobs', 'get_job', 'step_output', 'propose'])
+  assert.deepEqual(codeTools(g), CODE_TOOLS)
 })

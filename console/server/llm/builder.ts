@@ -256,7 +256,7 @@ const catLine = (k: string, pb: Playbook, TPL: Record<string, Tpl[]>) => [
   ...(pb.needs ? [`  needs: ${pb.needs}`] : []),
   ...pb.ph.map((h) => `  ${h.c} ${h.n}: ${h.s.map((s) => `${s.t} (${s.m === 'llm' ? 'LLM' : 'you'}${TPL[s.id]?.length ? `; sends ${[...new Set(TPL[s.id].map(sendsTo))].join(', ')}` : ''})`).join('; ')}`),
 ].join('\n')
-const noteLine = (n: NoteIndex) => `- ${n.id}: ${n.title}${n.tags.length ? ` · tags ${n.tags.join(', ')}` : ''}${n.playbooks.length ? ` · read by every run of ${n.playbooks.join(', ')}` : ''}`
+export const noteLine = (n: NoteIndex) => `- ${n.id}: ${n.title}${n.tags.length ? ` · tags ${n.tags.join(', ')}` : ''}${n.playbooks.length ? ` · read by every run of ${n.playbooks.join(', ')}` : ''}`
 
 export const OPEN_MAX = 60
 const clip = (t: string, n: number) => (t.length > n ? t.slice(0, n) + '…' : t)
@@ -273,9 +273,9 @@ function blockerLines(x: T.Ctx, w: Job, bl: BlockerForm): string[] {
     '',
   ]
 }
-/** the workspace's open jobs but the waiting one and the recurring ones, newest first, with what each already holds */
-function openLines(x: T.Ctx, w: Job, all: Job[]): string[] {
-  const open = all.filter((j) => !T.isClosed(j) && j.st !== 'recurring' && j.id !== w.id).sort((a, b) => b.ts - a.ts).slice(0, OPEN_MAX)
+/** the workspace's open jobs but the recurring ones and but, newest first, with what each already holds */
+export function openJobLines(x: T.Ctx, all: Job[], but?: string): string[] {
+  const open = all.filter((j) => !T.isClosed(j) && j.st !== 'recurring' && j.id !== but).sort((a, b) => b.ts - a.ts).slice(0, OPEN_MAX)
   return ['# Open jobs (newest first)', ...(open.length ? open.map((j) => {
     const h = holdsOf(all, j.id).map((r) => `${r.job.id}/${r.step}`), d = j.d ? one(j.d.split('\n')[0], 100) : ''
     return `- ${j.id}: ${j.t} · ${x.PB[j.pb]?.n ?? j.pb} · ${j.st}${d ? ` · ${d}` : ''}${h.length ? ` · holds ${h.join(', ')}` : ''}`
@@ -304,7 +304,7 @@ export function buildPrompt(o: { page: WorkspacePage; PB: Record<string, Playboo
     '# Sources',
     o.sources ? 'source_list lists the work items, chats and mail with their ids; source_get reads one.' : 'This workspace has no sources to read: context can name notes, and ids the user said.',
     '',
-    ...(o.blocker && o.form.bl ? [...blockerLines({ PB, TPL: o.TPL ?? {} }, o.blocker.waiter, o.form.bl), ...openLines({ PB, TPL: o.TPL ?? {} }, o.blocker.waiter, o.blocker.all)] : []),
+    ...(o.blocker && o.form.bl ? [...blockerLines({ PB, TPL: o.TPL ?? {} }, o.blocker.waiter, o.form.bl), ...openJobLines({ PB, TPL: o.TPL ?? {} }, o.blocker.all, o.blocker.waiter.id)] : []),
     '# The form now',
     '```json', JSON.stringify(formOut(o.form, o.tz), null, 2), '```',
     '',

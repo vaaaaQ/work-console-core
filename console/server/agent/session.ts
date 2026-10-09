@@ -11,9 +11,11 @@ import { EMPTY_GRANTS, grantsDiff, grantsOf } from '../grants.ts'
 import { PROVIDERS, isProvider, pickOf } from '../llm/providers.ts'
 import type { SdkPick } from '../llm/providers.ts'
 import type { Sdk } from '../llm/sdk.ts'
+import { jobAgentTools } from './jobTools.ts'
+import type { JobDeps } from './jobTools.ts'
 import { agentLimits, readOnly } from './limits.ts'
 import type { Ops } from './ops.ts'
-import { agentSystem, reintegrateAgain, reintegratePrompt, reintegrateSystem } from './prompt.ts'
+import { agentSystem, jobState, jobSystem, reintegrateAgain, reintegratePrompt, reintegrateSystem, wsState } from './prompt.ts'
 import type { AgentRecords } from './records.ts'
 import { agentTools, reintegrateTools } from './tools.ts'
 
@@ -51,6 +53,8 @@ export interface SessionOpts {
   managed: boolean
   /** turns at once across the workspace; default 3 */
   max?: number
+  /** the workspace's jobs, notes and sources and its proposer: every conversation's job tools and per-turn state */
+  job?: JobDeps
 }
 /** a job's conversation, a conversation by id, or neither: the newest general one */
 export type Target = { job?: string; conv?: string }
@@ -281,15 +285,15 @@ export class AgentSession {
     let sdk: Sdk
     try { sdk = pick.get(id) } catch (e) { throw new HttpError(503, 'provider_unavailable', (e as Error).message) }
     if (!sdk.agent) throw new HttpError(501, 'no_agent', `${PROVIDERS[id].label} cannot be a workspace agent`)
-    const prompt = [...(rec.inbox ?? []), text].filter(Boolean).join('\n\n')
-    if (!prompt) throw new HttpError(400, 'bad_args', 'nothing to say to the agent')
+    const heard = rec.inbox ?? []
+    if (!heard.length && !text) throw new HttpError(400, 'bad_args', 'nothing to say to the agent')
     delete rec.inbox
     if (own) this.say(rec, 'you', text)
     if (rec.reintegrate) delete rec.reintegrate.end
     rec.status = 'running'; delete rec.error
     const release = this.o.hold(), l: Live = { abort: new AbortController(), stopped: false, wake: false, general: !rec.job }
     this.live.set(rec.id, l)
-    const done = this.run(rec, sdk, prompt, l, release, f)
+    const done = this.run(rec, sdk, { heard, text }, l, release, f)
     void this.persist(rec)
     return { rec: clone(rec), done }
   }
@@ -308,13 +312,29 @@ export class AgentSession {
   /** the slot goes to the turn waiting longest, else back */
   private give() { const go = this.waiting.shift(); if (go) go(); else this.used-- }
 
-  /** f = the update a reintegrate turn works on; its worktree is the turn's root */
-  private async run(rec: AgentRec, sdk: Sdk, prompt: string, l: Live, release: () => void, f: FailedUpdate | null) {
+  /** the job, or the workspace's open jobs, as a turn starts; title = the job's */
+  private async state(rec: AgentRec): Promise<{ text: string; title: string }> {
+    const d = this.o.job
+    if (!d) return { text: '', title: '' }
+    try {
+      const x = d.ctx(), all = await d.jobs.all(), notes = await d.notes.list()
+      if (!rec.job) return { text: wsState(x, all, notes), title: '' }
+      const j = all.find((o) => o.id === rec.job)
+      return j ? { text: jobState(x, j, { all, notes }), title: j.t } : { text: `# The job now: ${rec.job}\nIt is no longer in this workspace.`, title: '' }
+    } catch (e) { return { text: `# The jobs now\nThey could not be read: ${(e as Error).message}`, title: '' } }
+  }
+
+  /** said = the lines heard and the text, which the job's state goes between; f = the update a reintegrate turn
+      works on, whose worktree is the turn's root */
+  private async run(rec: AgentRec, sdk: Sdk, said: { heard: string[]; text: string }, l: Live, release: () => void, f: FailedUpdate | null) {
     const abort = l.abort, got = await this.take(abort.signal)
     const timer = got ? setTimeout(() => abort.abort(), this.o.turnMs ?? TURN_MS) : undefined
     let error = '', ok = false
     if (got) try {
       const ri = rec.reintegrate, code = this.o.managed && !rec.job
+      const st = f ? { text: '', title: '' } : await this.state(rec)
+      const prompt = [...said.heard, st.text, said.text].filter(Boolean).join('\n\n')
+      const jt = this.o.job && !f ? jobAgentTools({ ws: this.o.ws, conv: rec.id, d: this.o.job }) : []
       const tools = f && ri ? reintegrateTools({
         ws: this.o.ws, branch: ri.branch, ops: this.o.reintegration!.opsAt(f.dir),
         committed: (c) => { this.committed(rec, c); void this.persist(rec) },
@@ -323,7 +343,7 @@ export class AgentSession {
           if (kind === 'give-up') this.note(rec, `The agent gives the update up${reason ? `: ${reason}` : ''}.`)
           void this.persist(rec)
         },
-      }) : !code ? [] : agentTools({ ws: this.o.ws, ops: this.o.ops, hooks: {
+      }) : !code ? jt : [...jt, ...agentTools({ ws: this.o.ws, ops: this.o.ops, hooks: {
         grants: () => this.grants(),
         commits: () => (this.recs ?? []).flatMap((x) => x.commits),
         taken: () => this.o.taken(),
@@ -332,8 +352,9 @@ export class AgentSession {
           rec.pending = { id: randomUUID(), change, reason, at: iso(), diff: grantsDiff(this.grants(), change) }
           void this.persist(rec)
         },
-      } })
+      } })]
       const system = f && ri ? reintegrateSystem({ ws: this.o.ws, title: this.o.title, core: ri.core, from: ri.from, branch: ri.branch })
+        : rec.job ? jobSystem({ ws: this.o.ws, title: this.o.title, job: { id: rec.job, t: st.title } })
         : agentSystem({ ws: this.o.ws, title: this.o.title, interview: rec.interview === true, grants: this.grants(), managed: code })
       const limits = f ? agentLimits(f.dir, this.o.ws) : code ? agentLimits(this.root, this.o.ws) : readOnly(this.root)
       const events = sdk.agent!({ prompt, resume: rec.session, limits, tools, system, abort })

@@ -3,6 +3,7 @@ import { CORE_PB, CORE_TPL } from '../src/data/playbooks.ts'
 import * as T from '../src/model/transitions.ts'
 import type { Job, Playbook, Tpl } from '../src/model/types.ts'
 import type { WorkspacePage } from '../src/workspace.ts'
+import { Proposer } from './agent/proposer.ts'
 import { agentRecords } from './agent/records.ts'
 import { AgentSession } from './agent/session.ts'
 import type { Reintegration, SessionOps } from './agent/session.ts'
@@ -233,10 +234,13 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   const blockers = new Blockers({ jobs, ctx, push })
   // an ask step's answer, found in chat or mail as the source reports changes
   const replies = new Replies({ jobs, source, bus })
+  // the agent changes a job only by a proposal, which the person accepts or rejects
+  const proposer = new Proposer({ jobs, ctx, push })
   // every workspace has an agent; only a managed one's general conversations change code
   const agent = o.agent ? new AgentSession({
     ws: id, title: w.page.pack.n || id, records: agentRecords(store, join(o.home, 'agent', `${id}.json`)), sdk, bus, root: o.root, ...o.agent,
     managed: grants !== null, max: cfg.maxSessions,
+    job: { jobs, runs: () => runner.all(), ctx, notes, source: rb.bridge === false ? null : source, me: w.page.me, key: (i) => w.page.board.key(i), proposer },
   }) : null
 
   let recovered = false
@@ -259,8 +263,8 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     putPlaybook: async (pid, pb, tpl) => { await store.putPlaybook(pid, pb, tpl); await loadPbs() },
     start: startItem({ jobs, ctx, bridge: source, page: w.page }),
     plugins: [...browserPlugin(source), ...w.plugins?.({ id, cfg, home: o.home, jobs, source, artifactsDir: o.artifactsDir, http: guardedHttp(grants?.hosts ?? null) }) ?? []],
-    // a QA return or a woken blocker pushes its own message; the generic one would say it again
-    onNeedsYou: (f) => jobs.onNeedsYou((j) => { if (!returns.handling(j.id) && !blockers.handling(j.id)) f(j) }),
+    // a QA return, a woken blocker or a proposal pushes its own message; the generic one would say it again
+    onNeedsYou: (f) => jobs.onNeedsYou((j) => { if (!returns.handling(j.id) && !blockers.handling(j.id) && !proposer.handling(j.id)) f(j) }),
     // the source going away on close is no reason to interrupt the runs
     async close() { stopLoading(); offInterrupt(); offAuto(); blockers.stop(); replies.stop(); agent?.close(); source.stop(); await fake?.close() },
   }

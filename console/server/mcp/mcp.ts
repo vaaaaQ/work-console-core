@@ -72,10 +72,13 @@ export function detail(x: T.Ctx, j: Job, ws: string, runs: RunRec[] = [], all: J
         const f = j.flow[s.id], talk = thread(runs, j.id, s.id)
         return {
           id: s.id, title: s.t, who: s.m, state: f.s, doneWhen: s.x, meta: f.m || undefined,
+          start: s.start, added: s.add ? { at: s.add.at, by: s.add.by, why: s.add.why } : undefined, asks: s.ask ? true : undefined,
           notes: f.b.length ? f.b.map((b, i) => ({ i, kind: b.k, text: b.t, open: !!b.o, answer: b.r || undefined })) : undefined,
           draft: f.dr ? clip(f.dr.t) : undefined, output: f.out ? clip(f.out) : undefined, running: f.run ? true : undefined,
           waitsFor: f.w?.length ? f.w.map((l) => ({ job: l.j, title: all.find((o) => o.id === l.j)?.t ?? l.t, state: l.st, plan: l.plan, outcome: l.out ? clip(l.out) : undefined })) : undefined,
           blockerAsked: f.bb?.say,
+          waitsReply: f.rw ? { src: f.rw.src, ch: f.rw.ch, to: f.rw.to, at: f.rw.at } : undefined,
+          replies: f.rp?.length ? f.rp.map((r) => ({ at: r.at, from: r.from, t: clip(r.t) })) : undefined,
           conversation: talk.some((r) => r.parent) ? talk.map((r) => ({ q: clip(r.q), intent: r.intent, state: r.state, a: r.a ? clip(r.a) : undefined })) : undefined,
           artifacts: f.arts.length ? f.arts.map((a) => a.n + (a.ok ? '' : ' (planned)')) : undefined,
           plannedMessages: T.tplOf(x, j, s.id).length ? T.tplOf(x, j, s.id).map((_, i) => (f.sent[i] ? `${i}: sent` : `${i}: not sent`)) : undefined,
@@ -84,6 +87,8 @@ export function detail(x: T.Ctx, j: Job, ws: string, runs: RunRec[] = [], all: J
     })),
     holds: (() => { const h = holdsOf(all, j.id); return h.length ? h.map((r) => ({ job: r.job.id, title: r.job.t, step: r.step })) : undefined })(),
     rounds: j.rounds?.length ? j.rounds.map((r) => ({ n: r.n, from: r.from, ended: r.at, by: r.by, why: r.why })) : undefined,
+    // an agent's open proposal: what it says and its changes, one line each; err = why the last accept failed
+    proposal: j.pp ? { at: j.pp.at, by: j.pp.by, say: j.pp.say, changes: j.pp.cmds.map((c) => JSON.stringify(c)), err: j.pp.err } : undefined,
     journal: j.jr.slice(0, 10).map((e) => `${e.ts} ${e.a}: ${e.o} ${e.c} Next: ${e.n}`),
   }
 }

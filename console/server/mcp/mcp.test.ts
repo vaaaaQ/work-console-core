@@ -480,6 +480,20 @@ const mkJob = async (s: Awaited<ReturnType<typeof setup>>, title: string) => {
   return (await s.jobs.cmd(j.id, { op: 'start' }, j.v)).job
 }
 
+test('get_job returns the own steps and the open proposal; a session cannot send ppAccept', async (t) => {
+  const s = await setup(t), a = await mkJob(s, 'Local stand')
+  await s.jobs.cmd(a.id, { op: 'ppSet', say: 'after the daily', by: 'c1', cmds: [{ op: 'stepAdd', after: 'tr', step: { t: 'Ask Imre', m: 'llm', start: 'self' }, why: 'ask first' }] }, undefined, 'console')
+  await s.jobs.cmd(a.id, { op: 'ppAccept' })
+  await s.jobs.cmd(a.id, { op: 'ppSet', say: 'one more question', by: 'c2', cmds: [{ op: 'noteAdd', step: 'tr', k: 'q', t: 'who signs?' }] }, undefined, 'console')
+  const g = (await s.call('get_job', { id: a.id })).json()
+  const added = (g.phases as { steps: { title: string; start?: string; added?: { why: string } }[] }[]).flatMap((p) => p.steps).find((x) => x.title === 'Ask Imre')!
+  assert.deepEqual([added.start, added.added?.why], ['self', 'ask first'])
+  assert.deepEqual([g.proposal.by, g.proposal.say, g.proposal.changes], ['c2', 'one more question', [JSON.stringify({ op: 'noteAdd', step: 'tr', k: 'q', t: 'who signs?' })]])
+  const r = await s.call('job_command', { id: a.id, op: 'ppAccept' })
+  assert.equal(r.err, true, r.text)
+  assert.ok((await s.jobs.get(a.id))!.pp, 'the proposal still waits for the person')
+})
+
 test('job_command waitDel unlinks a blocker: waitsFor is gone and the step is back in progress', async (t) => {
   const s = await setup(t), a = await mkJob(s, 'Local stand'), b = await mkJob(s, 'Ask Imre')
   assert.equal((await s.call('job_command', { id: a.id, op: 'waitAdd', step: 'tr', j: b.id })).err, false)

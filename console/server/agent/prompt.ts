@@ -1,17 +1,51 @@
 import type { Grants } from '../../src/model/agent.ts'
+import { holdsOf } from '../../src/model/blockers.ts'
+import { ctxOf } from '../../src/model/context.ts'
+import * as T from '../../src/model/transitions.ts'
+import type { Job } from '../../src/model/types.ts'
+import type { NoteIndex } from '../knowledge/notes.ts'
+import { noteLine, openJobLines } from '../llm/builder.ts'
 import { BANNED } from './imports.ts'
 
 /* The workspace agent's system text, added to the provider's own; the interview opens a new workspace's first conversation,
-   and a reintegration fixes the workspace for a core update that failed its checks. */
+   and a reintegration fixes the workspace for a core update that failed its checks. A job's conversation works on
+   that job; every turn of a conversation starts with the job, or the workspace's open jobs, as they are now. */
+
+/** what a proposal's cmds may hold, for the system text and the propose tool */
+export const PP_HELP = [
+  "What a proposal's cmds may hold; a step is its id, as get_job and each turn's job state give it:",
+  '- stepAdd {before | after: step, step: {t, x?: when it is done, m: llm | you, start?, ask?: 1, a?: [artifact names]}, tpl?: [[source, channel, text]], why?}: a step of this job only. '
+    + 'start = how an llm step begins: hand (the person starts it), self (it starts by itself) or auto (it starts by itself and its draft is accepted). '
+    + 'ask: 1 = once its planned message is sent it waits for the reply. why = the reason, shown on the step; it defaults to what the proposal says.',
+  '- stepDel {step}, stepMove {step, before | after: step}: a step not reached yet',
+  '- stepEdit {step, t?, x?, m?, start?: hand | self | auto | null, ask?: 1 | null}',
+  '- returnTo {step, why}: back to a passed step, e.g. to the design for another approval; a new round starts there',
+  '- waitAdd {step, j, plan?}: the step waits for another open job of this workspace; plan = what it does with that job\'s outcome. waitDel {step, j}',
+  '- stepDone {step, force?}: the step is done; force drops its open blockers',
+  '- noteAdd {step, k: q question | c contradiction | d design note | p problem, t}',
+  "- describe {d}: the job's description, Markdown",
+  "- ctxAdd {k: work | chat | mail | note, id, n?}, ctxDel {k, id}: what the job's LLM runs read",
+  'A proposal holds 1–30 cmds, applied in order and all or none; a new one replaces the open one.',
+].join('\n')
+
+const JOBS = [
+  "The workspace's jobs: each turn starts with its open jobs as they are now. list_jobs, get_job and step_output read them; knowledge_search and knowledge_read its notes; source_list and source_get its sources, where it has them.",
+  "propose {job, say, cmds} proposes changes to one job's steps; the person accepts or rejects it on the board and in Approvals. A job's own conversation, on its page, is the place for a long talk about it.",
+  "You never send a message, act on a source or do a step's work: a step's work is a step you propose.",
+]
 
 export function agentSystem(o: { ws: string; title: string; interview: boolean; grants: Grants; managed?: boolean }): string {
   const { ws, title } = o
   if (o.managed === false) return [
-    `You are the agent of the Work Console workspace "${title}" (id ${ws}). You help the person with the workspace's jobs: you read them and answer.`,
+    `You are the agent of the Work Console workspace "${title}" (id ${ws}). You help the person with the workspace's jobs: you answer their questions about them and propose changes to their steps.`,
     '',
-    "Your working directory is the console's folder. You may read it; you change no file, send nothing and act on no source.",
+    ...JOBS,
+    '',
+    "Your working directory is the console's folder. You may read it; you change no file.",
     '',
     'Write to the person briefly and plainly.',
+    '',
+    PP_HELP,
   ].join('\n')
   const lines = [
     `You are the agent of the Work Console workspace "${title}" (id ${ws}). In this conversation you shape the workspace with the person who owns it: its pack, board, playbooks, plugins and tools.`,
@@ -33,7 +67,11 @@ export function agentSystem(o: { ws: string; title: string; interview: boolean; 
     '',
     `The workspace's grants now: ${JSON.stringify(o.grants)}`,
     '',
+    ...JOBS,
+    '',
     'Write to the person briefly and plainly; show code only when they ask. Apply when a change is ready, not after every edit.',
+    '',
+    PP_HELP,
   ]
   if (o.interview) lines.push(
     '',
@@ -87,3 +125,73 @@ export function reintegratePrompt(o: { ws: string; core: string; from: string; s
 /** what the agent hears when the update it applied failed again */
 export const reintegrateAgain = (o: { step: string; output: string }) =>
   `The update ran again with your fix and failed again at ${o.step}:\n\`\`\`\n${o.output.trim()}\n\`\`\``
+
+/** a job conversation's system text: the job, how it changes, and what a heard line asks for */
+export function jobSystem(o: { ws: string; title: string; job: { id: string; t: string } }): string {
+  const { id } = o.job
+  return [
+    `You are the agent of the Work Console workspace "${o.title}" (id ${o.ws}). In this conversation you work on job ${id} “${o.job.t}” with the person: you answer their questions about it, and you turn what they tell you (a meeting's outcome, an idea, a reply) into changes to its steps.`,
+    '',
+    'Each turn starts with the job as it is now. Read before you propose: get_job and step_output give its steps and their outputs; the notes and the sources say the rest.',
+    `You change the job only with propose {job: "${id}", say, cmds}: say is what the proposal does, in a sentence for the person. The person accepts or rejects it on the board and in Approvals.`,
+    "You never send a message, act on a source or do a step's work: a step's work is a step you propose, with start auto or self when it can run by itself.",
+    'A step with ask: 1 waits for a reply once its message is sent; the console finds the reply by itself and tells you in a line.',
+    "When a line says a reply came in, decide whether it answers the step. If it does, propose stepDone for that step, with what the reply settles and the steps that follow from it; if it does not, say so and propose nothing.",
+    'A proposal that was refused or did not apply comes back to you as a line: read the job again, fix the changes and propose again.',
+    'Other jobs of the workspace: list_jobs and get_job read them; waitAdd makes a step of this job wait for one of them.',
+    '',
+    'Write to the person briefly and plainly.',
+    '',
+    PP_HELP,
+  ].join('\n')
+}
+
+const one = (t: string, n = 200) => { const s = t.replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s }
+const firstLines = (t: string, n: number) => t.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, n)
+const notesBlock = (notes: NoteIndex[]) => ['# Knowledge notes', ...(notes.length ? notes.map(noteLine) : ['none'])]
+
+/** a job conversation's per-turn block: steps (state, mode, start, added), first lines of outputs, waits,
+    replies, rounds, the last 20 journal lines, the open pp, the context list, the notes index */
+export function jobState(x: T.Ctx, j: Job, o: { all: Job[]; notes: NoteIndex[] }): string {
+  const at = T.atOf(x, j), out: string[] = [
+    `# The job now: ${j.id} “${j.t}”`,
+    `Playbook ${x.PB[j.pb]?.n ?? j.pb} · status ${j.st} · round ${(j.rounds?.length ?? 0) + 1}${at ? ` · current step ${at}` : ''}${j.key ? ` · key ${j.key}` : ''}${j.ph ? ' · its own steps' : ''}`,
+    ...(j.d ? ['Description:', ...firstLines(j.d, 8).map((l) => `  ${one(l, 300)}`)] : []),
+    '',
+    '# Steps',
+  ]
+  for (const p of T.phasesOf(x, j)) {
+    out.push(`${p.c} ${p.n}`)
+    for (const s of p.s) {
+      const f = j.flow[s.id]
+      out.push(`- ${s.id} “${s.t}” · ${f?.s ?? 'fut'} · ${s.m === 'llm' ? `LLM · start ${s.start ?? 'default'}` : 'you'}${s.ask ? ' · asks for a reply' : ''}`
+        + `${s.add ? ` · added ${s.add.at.slice(0, 10)} by ${s.add.by}: ${one(s.add.why, 160)}` : ''}`)
+      if (!f) continue
+      if (f.out) out.push(`  output: ${one(firstLines(f.out, 3).join(' / '), 300)}`)
+      if (f.dr) out.push('  a draft waits for review')
+      if (f.run) out.push('  an LLM run works on it now')
+      for (const b of f.b) if (b.o) out.push(`  open note (${b.k}): ${one(b.t, 160)}`)
+      for (const l of f.w ?? []) out.push(`  waits for ${l.j}${l.t ? ` “${l.t}”` : ''} (${l.st})${l.plan ? `, plan: ${one(l.plan, 160)}` : ''}${l.out ? `, outcome: ${one(l.out, 200)}` : ''}`)
+      if (f.bb) out.push(`  a blocker was asked for: ${one(f.bb.say, 200)}`)
+      if (f.rw) out.push(`  waits for a reply in ${f.rw.src} since ${f.rw.at}`)
+      for (const r of f.rp ?? []) out.push(`  reply from ${r.from} at ${r.at}: ${one(r.t, 300)}`)
+    }
+  }
+  const held = holdsOf(o.all, j.id)
+  if (held.length) out.push('', '# Steps of other jobs that wait for this one', ...held.map((h) => `- ${h.job.id} “${h.job.t}”, step ${h.step}`))
+  if (j.rounds?.length) out.push('', '# Past rounds', ...j.rounds.map((r) => `- round ${r.n} from ${r.from}, ended ${r.at} by ${r.by}: ${one(r.why, 200)}`))
+  out.push('', '# Journal, newest first (last 20)', ...j.jr.slice(0, 20).map((e) => `- ${e.ts} ${e.a}: ${one(`${e.o} ${e.c} Next: ${e.n}`, 400)}`))
+  out.push('', ...(j.pp ? [
+    `# The open proposal (${j.pp.at}, by ${j.pp.by})`, `say: ${j.pp.say}`, ...j.pp.cmds.map((c, i) => `${i + 1}. ${JSON.stringify(c)}`),
+    ...(j.pp.err ? [`Its last accept failed: ${j.pp.err}`] : []),
+  ] : ['# No open proposal']))
+  const cx = ctxOf(j)
+  out.push('', "# Context the job's LLM runs read", ...(cx.length ? cx.map((c) => `- ${c.k} ${c.id}${c.name ? ` “${c.name}”` : ''} (${c.n})`) : ['none']))
+  out.push('', ...notesBlock(o.notes))
+  return out.join('\n')
+}
+
+/** a general conversation's per-turn block: open jobs newest first (at most 60) and the notes index */
+export function wsState(x: T.Ctx, all: Job[], notes: NoteIndex[]): string {
+  return [...openJobLines(x, all), ...notesBlock(notes)].join('\n')
+}
