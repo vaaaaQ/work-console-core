@@ -20,6 +20,8 @@ export const store = {
 export const hm = (d = new Date(), tz = zone()) => d.toLocaleTimeString('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit' })
 export const tfmt = (iso: string) =>
   new Date(iso).toLocaleString('en-GB', { timeZone: zone(), day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+/** dd.mm */
+export const dm = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { timeZone: zone(), day: '2-digit', month: '2-digit' }).replace('/', '.')
 export function ago(ts: number) {
   const m = Math.round((Date.now() - ts) / 60000)
   if (m < 1) return 'just now'

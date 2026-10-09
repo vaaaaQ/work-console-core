@@ -26,7 +26,7 @@ test('no pp, no preview', () => {
 
 test('an added step is marked add in its place; a removed one stays in its old place, marked del', () => {
   const j = roomy(), at = atOf(X, j)!, [n1, n2] = later(j)
-  const v = preview(X, pp(j, [{ op: 'stepAdd', after: at, step: llm }, { op: 'stepDel', step: n2.id }]))!
+  const pj = pp(j, [{ op: 'stepAdd', after: at, step: llm }, { op: 'stepDel', step: n2.id }]), v = preview(X, pj)!
   const want = stepsOf(X, j).map((s) => s.id)
   want.splice(want.indexOf(at) + 1, 0, 'n1')
   assert.deepEqual(ids(v.ph), want, 'the removed step keeps its place')
@@ -34,7 +34,8 @@ test('an added step is marked add in its place; a removed one stays in its old p
   assert.equal(v.flow.n1.s, 'fut')
   assert.deepEqual(v.flow[n2.id], j.flow[n2.id], 'a removed step shows its flow as it is')
   assert.equal(v.err, undefined)
-  assert.ok(n1)
+  assert.equal(v.flow[n1.id], pj.flow[n1.id], 'an untouched step keeps its own flow')
+  assert.ok(!JSON.stringify([v.flow.n1, v.flow[at]]).includes('"nw"'), 'a touched flow marks nothing new')
 })
 
 test('an edited step is marked edit; a moved one is marked edit and shown in its new place', () => {

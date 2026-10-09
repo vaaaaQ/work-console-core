@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { tfmt } from '../lib/util.ts'
-import { S, W, approvals, chName, tplOf } from '../model/world.ts'
+import { S, W, approvals, chName, proposals, tplOf } from '../model/world.ts'
 import type { Approval } from '../model/world.ts'
 import { go } from '../actions/nav.tsx'
 import { acceptDraft, editDraft, rejectDraft, tplSend } from '../actions/flow.tsx'
@@ -16,6 +16,7 @@ import { FillT } from '../ui/bits.tsx'
 import { DraftTalk } from '../ui/DraftTalk.tsx'
 import { Ic } from '../ui/Icon.tsx'
 import { OutSeg, OutText } from '../ui/outText.ts'
+import { ProposalCard } from './Proposal.tsx'
 
 function ApCard({ x }: { x: Approval }) {
   const { j, s, f } = x
@@ -77,12 +78,12 @@ function GrantsCard({ ws, p }: { ws: string; p: AgentPending }) {
 }
 
 export function Approvals() {
-  const w = W(), A = approvals(), K = LIVE.on ? L().proposals : [], G = LIVE.on ? L().agent?.pending : undefined
+  const w = W(), A = approvals(), K = LIVE.on ? L().proposals : [], G = LIVE.on ? L().agent?.pending : undefined, P = proposals()
   return <>
     <div className="vh"><div><div className="eyebrow">{w.n} · work</div><h1>Approvals</h1>
-      <p>LLM drafts, planned messages, knowledge proposals and grants changes that wait for you. Nothing is kept or sent until you press a button, here or on the step.</p></div></div>
-    <div className="dl">{G ? <GrantsCard ws={S.ws} p={G} /> : null}{K.map((p) => <KnCard key={p.id} p={p} />)}
+      <p>LLM drafts, planned messages, the agent's proposals, knowledge proposals and grants changes that wait for you. Nothing is kept or sent until you press a button, here or on the step.</p></div></div>
+    <div className="dl">{G ? <GrantsCard ws={S.ws} p={G} /> : null}{P.map((j) => <ProposalCard key={j.id} j={j} where="approvals" />)}{K.map((p) => <KnCard key={p.id} p={p} />)}
       {A.map((x) => <ApCard key={`${x.j.id}/${x.s.id}${x.k === 'msg' ? '/' + x.i : ''}`} x={x} />)}
-      {!G && !K.length && !A.length ? <div className="dc empty">Nothing waits for you. A draft lands here after you ask the LLM on a step; a knowledge proposal after an LLM suggests a note.</div> : null}</div>
+      {!G && !P.length && !K.length && !A.length ? <div className="dc empty">Nothing waits for you. A draft lands here after you ask the LLM on a step; a knowledge proposal after an LLM suggests a note.</div> : null}</div>
   </>
 }

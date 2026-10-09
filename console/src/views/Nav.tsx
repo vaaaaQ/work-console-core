@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { CHATS, MAIL, S, W, approvals, needsYou, wsJobs } from '../model/world.ts'
+import { CHATS, MAIL, S, W, approvals, needsYou, proposals, wsJobs } from '../model/world.ts'
 import type { View } from '../model/types.ts'
 import { LIVE } from '../live/api.ts'
 import { L } from '../live/boot.ts'
@@ -24,7 +24,7 @@ export function navDef(): [string, NavItem[]][] {
 
 function counts(): Partial<Record<View, number>> {
   return {
-    jobs: wsJobs().filter(needsYou).length, approvals: approvals().length + (LIVE.on ? L().proposals.length + (L().agent?.pending ? 1 : 0) : 0),
+    jobs: wsJobs().filter(needsYou).length, approvals: approvals().length + proposals().length + (LIVE.on ? L().proposals.length + (L().agent?.pending ? 1 : 0) : 0),
     chats: (CHATS[S.ws] || []).reduce((a, c) => a + c.unread, 0), mail: (MAIL[S.ws] || []).filter((m) => m.cat === 'reply' && !m.done).length,
   }
 }

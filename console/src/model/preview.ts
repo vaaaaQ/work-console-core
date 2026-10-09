@@ -12,6 +12,8 @@ const same = (a: Step, b: Step, x: T.Ctx, j: Job, k: Job) =>
   a.t === b.t && a.x === b.x && a.m === b.m && a.start === b.start && a.ask === b.ask
   && JSON.stringify(T.tplOf(x, j, a.id)) === JSON.stringify(T.tplOf(x, k, b.id))
 
+const calm = <V>(o: V): V => JSON.parse(JSON.stringify(o, (k, v) => (k === 'nw' ? undefined : v)))
+
 /** null = no open proposal */
 export function preview(x: T.Ctx, j: Job): Preview | null {
   const p = j.pp
@@ -26,7 +28,9 @@ export function preview(x: T.Ctx, j: Job): Preview | null {
   }
   const was = T.stepsOf(x, j), now = new Map(T.stepsOf(x, after).map((s) => [s.id, s]))
   const ph = T.phasesOf(x, after).map((q) => ({ ...q, s: [...q.s] })), mk: Record<string, Mark> = {}
-  const flow = { ...after.flow }
+  // derived on every render, so a flow the proposal touches marks nothing new: its node would replay the animation each time
+  const flow = Object.fromEntries(Object.entries(after.flow).map(([id, f]) =>
+    [id, JSON.stringify(f) === JSON.stringify(j.flow[id]) ? j.flow[id] : calm(f)]))
   const moved = new Set(p.cmds.flatMap((c) => (c.op === 'stepMove' ? [c.step] : [])))
   for (const [id] of now) if (!was.some((s) => s.id === id)) mk[id] = 'add'
   // a removed step stays after its old predecessor, which is on the board by now

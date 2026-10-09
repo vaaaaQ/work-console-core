@@ -3,6 +3,7 @@ import { PB0 } from '../data/playbooks.ts'
 import { CHATS0, JOBS0, JR, LLMS, LOG0, MAIL0, OVR, PRI, RET0, TPL0 } from '../data/demo.ts'
 import { clone, hm, norm, refill } from '../lib/util.ts'
 import * as T from './transitions.ts'
+import { preview } from './preview.ts'
 import { KINDS, ctxLabel, ctxOf, ctxUnit } from './context.ts'
 import type { BadgeKind, Chat, Cmd, CtxItem, Flow, Job, LogEntry, Mail, NodeState, Playbook, Src, SrcKey, Step, Tpl, Ui, Ws } from './types.ts'
 
@@ -37,6 +38,11 @@ export const keyShort = (j: Job) => { const r = PACKS[j.ws].strip; return r ? j.
 /* ===== job helpers: the transitions module holds the rules; these bind it to this world ===== */
 export const CTX: T.Ctx = { PB, TPL }
 export const byId = (id: string | null | undefined) => JOBS.find((j) => j.id === id)
+/** the rules with links: a proposal's waitAdd needs the other job */
+export const jctx = (): T.Ctx => ({ ...CTX, jobOf: byId })
+export const pview = (j: Job) => preview(jctx(), j)
+/** the workspace's jobs with an open proposal, newest first */
+export const proposals = () => wsJobs().filter((j) => j.pp).sort((a, b) => b.pp!.at.localeCompare(a.pp!.at))
 export const steps = (pb: string) => T.steps(CTX, pb)
 export const stepOf = (j: Job, id: string | null) => T.stepOf(CTX, j, id)
 /** a job's own phases, steps and planned messages once it has them, else its playbook's */
@@ -120,7 +126,7 @@ export function putJob(j: Job) {
 export function applyLocal(id: string, cmd: Cmd) {
   const j = byId(id)
   if (!j) throw new T.CmdError('bad_args', `no job ${id}`)
-  const r = T.apply({ ...CTX, jobOf: byId }, j, cmd)
+  const r = T.apply(jctx(), j, cmd)
   r.job.v = (j.v || 0) + 1
   putJob(r.job)
   return { job: r.job, nx: r.nx }
