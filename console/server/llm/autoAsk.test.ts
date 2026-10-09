@@ -2,13 +2,13 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import * as T from '../../src/model/transitions.ts'
-import type { Cmd, Job } from '../../src/model/types.ts'
+import type { Cmd, Flow, Job, Start } from '../../src/model/types.ts'
 import { Bus } from '../events.ts'
 import { Blockers } from '../jobs/blockers.ts'
 import { Jobs } from '../jobs/jobs.ts'
 import { fileStore } from '../store/file.ts'
 import { demoCtx, demoSeed, fakeSdk } from '../testkit.ts'
-import { autoAsk, madeCurrent } from './autoAsk.ts'
+import { autoAsk, holdOf, madeCurrent, startOf } from './autoAsk.ts'
 import { Runner } from './runner.ts'
 import { tempDir } from '../testdirs.ts'
 
@@ -51,7 +51,7 @@ function setup(delay = 0) {
   const bus = new Bus(), jobs = new Jobs({ store, bus, ctx: demoCtx, gate: () => true })
   const { sdk, sessions } = fakeSdk()
   const runner = new Runner({ store, jobs, bus, sdk, cwd: dir, gate: () => true, artifactsDir: join(dir, 'arts'), ctx: demoCtx })
-  const off = autoAsk({ jobs, runner, ctx: demoCtx, delay })
+  const off = autoAsk({ jobs, runner, ctx: demoCtx, on: true, delay })
   const job = () => jobs.create({ t: 'Reply to the mail', key: 'K-1', pb: 'action', prj: 'p', ws: 'acme' })
   const on = async (id: string, step: string) => (await runner.all()).filter((r) => r.job === id && r.step === step)
   return { jobs, runner, sessions, off, job, on }
@@ -139,7 +139,7 @@ test('madeCurrent counts a blockerClosed that turned the step current', () => {
 test('a woken llm step is asked; a woken you step is not', async () => {
   const store = fileStore(join(tempDir('aab'), 's.json'), demoSeed)
   const jobs = new Jobs({ store, bus: new Bus(), ctx: demoCtx, gate: () => true }), asked: string[] = []
-  const off = autoAsk({ jobs, runner: { ask: async (_id: string, sid: string) => { asked.push(sid) } } as unknown as Runner, ctx: demoCtx, delay: 0 })
+  const off = autoAsk({ jobs, runner: { ask: async (_id: string, sid: string) => { asked.push(sid) } } as unknown as Runner, ctx: demoCtx, on: true, delay: 0 })
   const mk = async (t: string) => { const j = await jobs.create({ t, key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' }); return (await jobs.cmd(j.id, { op: 'start' }, j.v)).job }
   const a = await mk('waits on tr'), c = await mk('waits on sn'), b = await mk('blocker')
   await jobs.cmd(a.id, { op: 'waitAdd', step: 'tr', j: b.id })
@@ -159,7 +159,7 @@ test('a drafted waiter whose blocker closes: one goes-on push, the note clears, 
   const jobs = new Jobs({ store, bus, ctx: demoCtx, gate: () => true })
   const { sdk, sessions } = fakeSdk()
   const runner = new Runner({ store, jobs, bus, sdk, cwd: dir, gate: () => true, artifactsDir: join(dir, 'arts'), ctx: demoCtx })
-  const off = autoAsk({ jobs, runner, ctx: demoCtx, delay: 0 })
+  const off = autoAsk({ jobs, runner, ctx: demoCtx, on: true, delay: 0 })
   const pushes: string[] = [], generic: string[] = []
   const blockers = new Blockers({ jobs, ctx: demoCtx, push: async (t) => { pushes.push(t) } })
   jobs.onNeedsYou((j) => { if (!blockers.handling(j.id)) generic.push(j.id) })
@@ -202,4 +202,117 @@ test('a drafted waiter whose blocker closes: one goes-on push, the note clears, 
   assert.equal((await get(a0.id)).st, 'waiting-user')
   assert.deepEqual(pushes, [`${a0.id} goes on`])
   off(); blockers.stop()
+})
+
+/* ===== start modes ===== */
+function modes(on: boolean, delay = 0) {
+  const dir = tempDir('start')
+  const store = fileStore(join(dir, 's.json'), demoSeed)
+  const bus = new Bus(), jobs = new Jobs({ store, bus, ctx: demoCtx, gate: () => true })
+  const { sdk, sessions } = fakeSdk()
+  const runner = new Runner({ store, jobs, bus, sdk, cwd: dir, gate: () => true, artifactsDir: join(dir, 'arts'), ctx: demoCtx })
+  const off = autoAsk({ jobs, runner, ctx: demoCtx, on, delay })
+  /** step changes come as a proposal the person accepts */
+  const change = async (id: string, cmds: Cmd[]) => {
+    await jobs.cmd(id, { op: 'ppSet', say: 'from the daily', cmds, by: 'c1' }, undefined, 'console')
+    return (await jobs.cmd(id, { op: 'ppAccept' })).job
+  }
+  /** a fresh action job whose tr starts as given; tr and dr are llm, sn is yours */
+  const job = async (start?: Start) => {
+    const j = await jobs.create({ t: 'Reply to the mail', key: 'K-1', pb: 'action', prj: 'p', ws: 'acme' })
+    return start ? change(j.id, [{ op: 'stepEdit', step: 'tr', start }]) : j
+  }
+  return { jobs, runner, sessions, off, job, change, get: async (id: string) => (await jobs.get(id))! }
+}
+
+test('startOf: a step of its own start keeps it; one without follows the workspace; a you step has none', () => {
+  const s = (m: 'you' | 'llm', start?: Start) => ({ id: 'a', t: 'a', m, x: 'a', ...(start ? { start } : {}) })
+  assert.equal(startOf(s('llm'), true), 'self')
+  assert.equal(startOf(s('llm'), false), 'hand')
+  assert.equal(startOf(s('llm', 'hand'), true), 'hand')
+  assert.equal(startOf(s('llm', 'auto'), false), 'auto')
+  assert.equal(startOf(s('you'), true), null)
+  assert.equal(startOf(undefined, true), null)
+})
+
+test('a hand step asks nothing, a self step asks, whatever the workspace says', async () => {
+  const a = modes(true), h = await a.job('hand')
+  await a.jobs.cmd(h.id, { op: 'start' }, h.v)
+  await tick(60)
+  assert.equal(a.sessions.length, 0)
+  a.off()
+  const b = modes(false), s = await b.job('self')
+  await b.jobs.cmd(s.id, { op: 'start' }, s.v)
+  await until(() => b.sessions.length === 1)
+  b.off()
+})
+
+test('without autoAsk a playbook llm step asks nothing; an added step with start self asks', async () => {
+  const s = modes(false), j = await s.job()
+  await s.jobs.cmd(j.id, { op: 'start' }, j.v)
+  await tick(60)
+  assert.equal(s.sessions.length, 0)
+  await s.change(j.id, [{ op: 'stepAdd', before: 'tr', step: { t: 'Look at the logs', m: 'llm', start: 'self' } }])
+  await until(() => s.sessions.length === 1)
+  assert.equal((await s.runner.all())[0].step, 'n1')
+  s.off()
+})
+
+test('a step added in front of the current one, alone or in an accepted proposal, is made current', () => {
+  let j = T.apply(X, T.freshJob(X, 'A-1', { t: 'Reply', key: 'K-1', pb: 'action', prj: 'p', ws: 'acme' }), start).job
+  const add: Cmd = { op: 'stepAdd', before: 'tr', step: { t: 'Look', m: 'llm' } }
+  assert.deepEqual(madeCurrent(add, j, T.apply(X, j, add).job), ['n1'])
+  const cx = { ...X, by: 'console' }
+  j = T.apply(cx, j, { op: 'ppSet', say: 'look first', cmds: [add], by: 'c1' }).job
+  const acc: Cmd = { op: 'ppAccept' }
+  assert.deepEqual(madeCurrent(acc, j, T.apply(X, j, acc).job), ['n1'])
+})
+
+test('an auto step\'s clean draft is accepted by the console, journaled automatically', async () => {
+  const s = modes(true), j = await s.job('auto')
+  await s.jobs.cmd(j.id, { op: 'start' }, (await s.get(j.id)).v)
+  await until(() => s.sessions.length === 1)
+  await s.sessions[0].tools.submitDraft('clear'); s.sessions[0].end()
+  await until(async () => (await s.get(j.id)).flow.tr.s === 'done')
+  const line = (await s.get(j.id)).jr.find((e) => e.o.startsWith('Accepted the LLM draft'))!
+  assert.equal(line.o, 'Accepted the LLM draft for “Understand the request” automatically.')
+  assert.equal(line.a, 'console')
+  await until(() => s.sessions.length === 2)
+  s.off()
+})
+
+test('an auto step\'s draft with an open question is held back and journaled', async () => {
+  const s = modes(false), j = await s.job('auto')
+  await s.jobs.cmd(j.id, { op: 'start' }, (await s.get(j.id)).v)
+  await until(() => s.sessions.length === 1)
+  await s.jobs.cmd(j.id, { op: 'noteAdd', step: 'tr', k: 'q', t: 'which mailbox?' })
+  await s.sessions[0].tools.submitDraft('maybe'); s.sessions[0].end()
+  await until(async () => (await s.get(j.id)).jr[0].o.startsWith('Held back'))
+  const a = await s.get(j.id)
+  assert.equal(a.jr[0].o, 'Held back the automatic accept of “Understand the request”: an open question.')
+  assert.equal(a.jr[0].a, 'console')
+  assert.equal(a.flow.tr.s, 'wait'); assert.ok(a.flow.tr.dr)
+  s.off()
+})
+
+test('holdOf names what keeps a draft from being accepted by itself', () => {
+  const f = (o: Partial<Flow>) => ({ s: 'wait', m: '', arts: [], b: [], rv: null, dr: { t: 'd', at: '' }, out: null, run: null, sent: {}, ...o }) as Flow
+  assert.equal(holdOf(f({})), null)
+  assert.equal(holdOf(f({ b: [{ k: 'q', t: 'x', r: 'y', o: 0 }] })), null)
+  assert.equal(holdOf(f({ b: [{ k: 'p', t: 'x', r: '', o: 1 }] })), 'a problem note')
+  assert.equal(holdOf(f({ bb: { say: 'wait for Imre', at: '' } })), 'a blocker asked for')
+  assert.equal(holdOf(f({ w: [{ j: 'J-2', st: 'open', at: '' }] as Flow['w'] })), 'open blockers')
+})
+
+test('a failed auto run accepts nothing', async () => {
+  const s = modes(true), j = await s.job('auto')
+  await s.jobs.cmd(j.id, { op: 'start' }, (await s.get(j.id)).v)
+  await until(() => s.sessions.length === 1)
+  s.sessions[0].end()
+  await until(async () => (await s.runner.all()).every((r) => r.ended))
+  await tick(60)
+  const a = await s.get(j.id)
+  assert.equal(a.flow.tr.s, 'cur')
+  assert.ok(!a.jr.some((e) => e.o.startsWith('Accepted the LLM draft') || e.o.startsWith('Held back')))
+  s.off()
 })

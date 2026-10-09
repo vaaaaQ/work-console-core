@@ -61,6 +61,8 @@ export class Jobs {
       const cur = await this.store.job(id)
       if (!cur) throw new HttpError(404, 'not_found', `no job ${id}`)
       if (who !== 'runner' && expectV != null && cur.v !== expectV) throw new HttpError(409, 'conflict', 'the job changed elsewhere')
+      if (who === 'console' && c.op === 'acceptDraft' && T.stepOf(this.ctx(), cur, c.step)?.start !== 'auto')
+        throw new HttpError(400, 'bad_state', `the console accepts a draft only on a step that starts auto`)
       // a link checks its blocker and walks the links for a cycle, so it reads the other jobs as they are now
       const links = c.op === 'ppSet' ? c.cmds : c.op === 'ppAccept' ? cur.pp?.cmds ?? [] : [c]
       const others = links.some((l) => l?.op === 'waitAdd') ? new Map((await this.store.jobs()).map((j) => [j.id, j])) : null

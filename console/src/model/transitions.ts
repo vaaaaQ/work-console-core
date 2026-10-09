@@ -575,7 +575,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       const dr = F.dr!, edited = cmd.text != null && cmd.text !== dr.t
       F.out = edited ? cmd.text! : dr.t; F.m = edited ? 'accepted with your edits' : 'draft accepted'
       nx = advance(x, j, sid, 'done')
-      jr(x, j, `Accepted the LLM draft for “${S.t}”${edited ? ' with edits' : ''}${cmd.said ? ' as said in the reply' : ''}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')
+      jr(x, j, `Accepted the LLM draft for “${S.t}”${edited ? ' with edits' : ''}${cmd.said ? ' as said in the reply' : ''}${cmd.auto ? ' automatically' : ''}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')
       break
     }
     case 'rejectDraft': {

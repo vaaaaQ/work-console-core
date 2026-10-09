@@ -199,3 +199,15 @@ test('a duplicate replyIn writes nothing and fires no listener', async () => {
   assert.equal(heard, 0)
   assert.equal(evs.length, n)
 })
+
+test('the console\'s acceptDraft on a step that is not auto is refused', async () => {
+  const { jobs } = setup(), j = await jobs.create({ t: 'Reply', key: 'K-1', pb: 'action', prj: 'p', ws: 'acme' })
+  await jobs.cmd(j.id, { op: 'start' })
+  await jobs.cmd(j.id, { op: 'runStart', step: 'tr', q: 'q', id: 'r1' }, undefined, 'runner')
+  await jobs.cmd(j.id, { op: 'runDraft', step: 'tr', t: 'd' }, undefined, 'runner')
+  await assert.rejects(jobs.cmd(j.id, { op: 'acceptDraft', step: 'tr' }, undefined, 'console'), code(400, 'bad_state'))
+  await jobs.cmd(j.id, { op: 'ppSet', say: 'auto', cmds: [{ op: 'stepEdit', step: 'tr', start: 'auto' }], by: 'c1' }, undefined, 'console')
+  await jobs.cmd(j.id, { op: 'ppAccept' })
+  const r = await jobs.cmd(j.id, { op: 'acceptDraft', step: 'tr', auto: true }, undefined, 'console')
+  assert.equal(r.job.flow.tr.s, 'done')
+})

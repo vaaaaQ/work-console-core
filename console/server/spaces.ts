@@ -198,7 +198,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     jobTools: w.llm?.jobTools ? { ws: id, pb: w.page.board.start, prj: w.page.pack.prj, prefix: w.jobPrefix } : undefined, notes,
     autoResume: cfg.autoAsk === true,
   })
-  const offAuto = cfg.autoAsk === true ? autoAsk({ jobs, runner, ctx, delay: o.askDelay }) : () => {}
+  const offAuto = autoAsk({ jobs, runner, ctx, on: cfg.autoAsk === true, delay: o.askDelay })
   // a workspace without a gateway gives the builder no sources to read
   const build = builder({ ws: id, page: w.page, sdk, notes, source: rb.bridge === false ? null : source, ctx, bus, jobs: () => jobs.all() })
   const offInterrupt = bus.on((e) => {

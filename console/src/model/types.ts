@@ -110,8 +110,8 @@ export type Cmd =
   /** why = the reason; with one the backend redoes the step in a fresh session */
   | { op: 'rejectDraft'; step: string; why?: string }
   | { op: 'stepWait'; step: string; m: string }
-  /** said = accepted on the replier's word, by an accept reply; force as for stepDone */
-  | { op: 'acceptDraft'; step: string; text?: string; said?: boolean; force?: boolean }
+  /** said = accepted on the replier's word, by an accept reply; force as for stepDone; auto = by the console, on an auto step */
+  | { op: 'acceptDraft'; step: string; text?: string; said?: boolean; force?: boolean; auto?: true }
   | { op: 'noteAdd'; step: string; k: BadgeKind; t: string }
   | { op: 'noteAnswer'; step: string; i: number; r: string } | { op: 'noteReopen'; step: string; i: number }
   /** ch = the chat or the mail replied to, rto = a new mail's addresses: where an ask step's reply comes from */
