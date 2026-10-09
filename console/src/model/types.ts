@@ -57,11 +57,15 @@ export interface Sent { at: string; t: string }
 /** a step's blocker: j = the job it waits for, t = its title when linked, st = its state as last seen,
     plan = what to do with its outcome, out = its outcome, copied in when it closed, at = when it closed */
 export interface WaitLink { j: string; t?: string; st: 'open' | 'done' | 'cancelled'; plan?: string; out?: string; at?: string }
-/** w = the jobs this step waits for; bb = a blocker the user asked for in a reply, waiting for the builder */
+/** the reply a sent ask waits for: src = the message's source, ch = the chat id or the mail replied to, to = a new mail's addresses */
+export interface ReplyWatch { src: string; ch: string; to?: string; at: string }
+export interface Reply { id: string; at: string; from: string; t: string; link?: string }
+/** w = the jobs this step waits for; bb = a blocker the user asked for in a reply, waiting for the builder;
+    rw = the reply its sent ask waits for; rp = the replies that came, newest last */
 export interface Flow extends New {
   s: NodeState; m: string; arts: Art[]; b: Badge[]; rv: Review | null; dr: Draft | null
   out: string | null; run: Run | null; sent: Record<number, Sent>
-  w?: WaitLink[]; bb?: { say: string; at: string }
+  w?: WaitLink[]; bb?: { say: string; at: string }; rw?: ReplyWatch; rp?: Reply[]
 }
 export type StepOverride = Partial<Pick<Flow, 's' | 'm' | 'arts' | 'b' | 'rv' | 'dr' | 'out'>>
 
@@ -110,7 +114,10 @@ export type Cmd =
   | { op: 'acceptDraft'; step: string; text?: string; said?: boolean; force?: boolean }
   | { op: 'noteAdd'; step: string; k: BadgeKind; t: string }
   | { op: 'noteAnswer'; step: string; i: number; r: string } | { op: 'noteReopen'; step: string; i: number }
-  | { op: 'sent'; step: string; i: number; t: string; to: string }
+  /** ch = the chat or the mail replied to, rto = a new mail's addresses: where an ask step's reply comes from */
+  | { op: 'sent'; step: string; i: number; t: string; to: string; ch?: string; rto?: string }
+  /** the console, when a reply to an ask step came */
+  | { op: 'replyIn'; step: string; id: string; at: string; from: string; t: string; link?: string }
   | { op: 'vote'; step: string; n: string; v: number } | { op: 'nudged'; to: string } | { op: 'replied'; subj: string }
   /** auto = the console started it by itself */
   | { op: 'runStart'; step: string; q: string; id: string; resumed?: boolean; auto?: boolean }

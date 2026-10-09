@@ -279,7 +279,7 @@ export function tplSend(id: string, sid: string, i: number) {
       if (!(await sendVia(k, to0, t, id, mail))) return
       closeModal()
       const to = mail ? chName(j, k, addrs(mail.to).join(', ') + (addrs(mail.cc).length ? `; cc ${addrs(mail.cc).join(', ')}` : '')) : chName(j, k, lbl)
-      const r = await doCmd(id, { op: 'sent', step: sid, i, t, to }, null)
+      const r = await doCmd(id, { op: 'sent', step: sid, i, t, to, ch: nm ? '' : to0 ?? '', ...(mail ? { rto: addrs(mail.to).join(', ') } : {}) }, null)
       if (!r) return
       if (!LIVE.on) commit(() => postToChat(r.job, k, lbl, t))
       if (allSent(r.job, sid) && isLive(r.job.flow[sid])) toast(`Sent to ${to}`, 'Mark step done', () => { const jj = byId(id); if (jj) void stepDone(jj, sid) })

@@ -35,7 +35,7 @@ export function settled(f: Flow): 'cur' | 'wait' | 'bad' | null {
   if (!live(f) || f.s === 'fut' || f.s === 'tpl') return null
   const w = f.w || []
   if (w.some((l) => l.st === 'cancelled')) return 'bad'
-  if (w.some((l) => l.st === 'open') || f.dr) return 'wait'
+  if (w.some((l) => l.st === 'open') || f.dr || f.rw) return 'wait'
   // a step is bad for other reasons too; only a blocker's bad clears here
   return f.s === 'wait' || (f.s === 'bad' && f.m.startsWith('blocker ')) ? 'cur' : null
 }

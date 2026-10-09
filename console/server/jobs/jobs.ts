@@ -64,11 +64,12 @@ export class Jobs {
       // a link checks its blocker and walks the links for a cycle, so it reads the other jobs as they are now
       const links = c.op === 'ppSet' ? c.cmds : c.op === 'ppAccept' ? cur.pp?.cmds ?? [] : [c]
       const others = links.some((l) => l?.op === 'waitAdd') ? new Map((await this.store.jobs()).map((j) => [j.id, j])) : null
-      let r: { job: Job; nx: string | null }
+      let r: { job: Job; nx: string | null; same?: true }
       try { r = T.apply({ ...this.ctx(), by: name || BY[as ?? who], ...(others ? { jobOf: (i: string) => others.get(i) } : {}) }, cur, c) } catch (e) {
         if (e instanceof T.CmdError) throw new HttpError(400, e.code, e.message)
         throw e
       }
+      if (r.same) return { job: cur, prev: cur, nx: null }
       try {
         const job = await this.put(cur, r.job, cur.v ?? null)
         for (const f of this.cmdf) { try { f({ who, cmd: c, prev: cur, job }) } catch (e) { console.error(`a listener of ${c.op} on ${id} failed:`, (e as Error).message) } }

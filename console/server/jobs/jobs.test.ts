@@ -5,6 +5,7 @@ import { demoSeed, demoCtx } from '../testkit.ts'
 import * as T from '../../src/model/transitions.ts'
 import { Bus, HttpError } from '../events.ts'
 import type { Ev } from '../events.ts'
+import type { Cmd } from '../../src/model/types.ts'
 import { fileStore } from '../store/file.ts'
 import { Jobs } from './jobs.ts'
 import { tempDir } from '../testdirs.ts'
@@ -180,4 +181,21 @@ test('ppAccept with a waitAdd reads the other jobs for the link', async () => {
   assert.equal(r.job.pp, undefined)
   assert.equal(r.job.flow[at].w![0].j, b.id)
   assert.match((await jobs.get(b.id))!.jr[0].o, /^Holds /)
+})
+
+test('a duplicate replyIn writes nothing and fires no listener', async () => {
+  const { jobs, evs } = setup(), j = await openJob(jobs), at = T.atOf(demoCtx(), j)!
+  const add: Cmd = { op: 'stepAdd', before: at, step: { t: 'Ask', m: 'you', ask: 1 }, tpl: [['chat', 'team', 'ok?']] }
+  await jobs.cmd(j.id, { op: 'ppSet', say: 'ask the PO', cmds: [add], by: 'c1' }, undefined, 'console')
+  await jobs.cmd(j.id, { op: 'ppAccept' })
+  await jobs.cmd(j.id, { op: 'sent', step: 'n1', i: 0, t: 'ok?', to: 'team', ch: 'c-1' })
+  const reply: Cmd = { op: 'replyIn', step: 'n1', id: 'm1', at: new Date().toISOString(), from: 'Ana', t: 'yes' }
+  const one = await jobs.cmd(j.id, reply, undefined, 'console')
+  let heard = 0
+  jobs.onCmd(() => { heard++ })
+  const n = evs.length
+  const two = await jobs.cmd(j.id, reply, undefined, 'console')
+  assert.equal(two.job.v, one.job.v)
+  assert.equal(heard, 0)
+  assert.equal(evs.length, n)
 })

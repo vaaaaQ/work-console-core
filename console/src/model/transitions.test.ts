@@ -836,3 +836,69 @@ test('an open proposal makes the job need you', () => {
   const p = pp(j, [{ op: 'describe', d: 'what the daily said' }]).job
   assert.equal(needsYou(X, p), true)
 })
+
+/* ===== ask steps ===== */
+const asking = () => {
+  const j = roomy(), at = atOf(X, j)!
+  return apply(X, j, { op: 'stepAdd', before: at, step: { t: 'Ask the PO', m: 'you', ask: 1 }, tpl: [['chat', 'team', 'Is it ok?']] }).job
+}
+const sentAsk = () => apply(X, asking(), { op: 'sent', step: 'n1', i: 0, t: 'Is it ok?', to: 'team', ch: 'c-1' }).job
+const reply = (id = 'm1', t = 'Yes, go ahead'): Cmd => ({ op: 'replyIn', step: 'n1', id, at: T0.toISOString(), from: 'Ana', t })
+
+test('sent on an ask step waits for a reply with rw from the planned message; the job is waiting-external', () => {
+  const j = sentAsk(), f = j.flow.n1
+  assert.equal(f.s, 'wait')
+  assert.equal(f.m, 'waits for a reply')
+  assert.deepEqual(f.rw, { src: 'chat', ch: 'c-1', at: T0.toISOString() })
+  assert.equal(j.st, 'waiting-external')
+})
+
+test('sent on a step without ask is unchanged', () => {
+  const j = roomy(), at = atOf(X, j)!
+  const a = apply(X, j, { op: 'stepAdd', before: at, step: { t: 'Tell the PO', m: 'you' }, tpl: [['chat', 'team', 'FYI']] }).job
+  const s = apply(X, a, { op: 'sent', step: 'n1', i: 0, t: 'FYI', to: 'team', ch: 'c-1' }).job
+  assert.equal(s.flow.n1.s, 'cur')
+  assert.equal(s.flow.n1.rw, undefined)
+})
+
+test('replyIn appends a reply and journals it; the same id again is same and writes nothing', () => {
+  const j = sentAsk(), cx: Ctx = { ...X, by: 'console' }
+  const r = apply(cx, j, reply())
+  assert.deepEqual(r.job.flow.n1.rp, [{ id: 'm1', at: T0.toISOString(), from: 'Ana', t: 'Yes, go ahead' }])
+  assert.equal(r.job.flow.n1.s, 'wait')
+  assert.equal(r.job.jr[0].o, 'Reply from Ana on “Ask the PO”: Yes, go ahead')
+  assert.equal(r.job.jr[0].a, 'console')
+  assert.equal(r.same, undefined)
+  const again = apply(cx, r.job, reply())
+  assert.equal(again.same, true)
+  assert.equal(again.job.jr.length, r.job.jr.length)
+})
+
+test('replyIn on a step that does not wait is bad_state', () => {
+  code(() => apply(X, asking(), reply()), 'bad_state')
+})
+
+test('a waiting ask step stays in wait when a blocker is added and removed', () => {
+  const j = sentAsk(), b = find((o) => o.id !== j.id && !isClosed(o) && o.st !== 'recurring')
+  const x: Ctx = { ...X, jobOf: (id) => (id === b.id ? b : undefined) }
+  const w = apply(x, j, { op: 'waitAdd', step: 'n1', j: b.id }).job
+  assert.equal(w.flow.n1.s, 'wait')
+  const d = apply(x, w, { op: 'waitDel', step: 'n1', j: b.id }).job
+  assert.equal(d.flow.n1.s, 'wait')
+  assert.equal(d.flow.n1.m, 'waits for a reply')
+})
+
+test('stepDone on a waiting ask step needs no force and ends the watch', () => {
+  const d = apply(X, sentAsk(), { op: 'stepDone', step: 'n1' }).job
+  assert.equal(d.flow.n1.s, 'done')
+  assert.equal(d.flow.n1.rw, undefined)
+})
+
+test('returnTo on a job with its own steps keeps ph in the round, and the restarted steps drop rw', () => {
+  const j = apply(X, sentAsk(), reply()).job, prev = stepsOf(X, j).filter((s) => j.flow[s.id].s === 'done').at(-1)!
+  const back = apply(X, j, { op: 'returnTo', step: prev.id, why: 'again' }).job
+  assert.deepEqual(back.rounds!.at(-1)!.ph, j.ph)
+  assert.deepEqual(back.rounds!.at(-1)!.flow.n1.rw, j.flow.n1.rw)
+  assert.equal(back.flow.n1.rw, undefined)
+  assert.equal(back.flow.n1.rp, undefined)
+})

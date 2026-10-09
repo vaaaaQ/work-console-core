@@ -213,18 +213,20 @@ function settle(f: Flow): boolean {
   const was = f.s
   f.s = g
   if (g === 'wait' && openOf(f).length) f.m = waitsM(f)
+  else if (g === 'wait' && f.rw) f.m = WAITS_REPLY
   else if (g === 'wait' && f.m.startsWith('waits for ')) f.m = ''
   else if (g === 'bad') f.m = `blocker ${(f.w || []).filter((l) => l.st === 'cancelled').map((l) => l.j).join(', ')} cancelled`
   else if (g === 'cur' && was !== 'cur') f.m = ''
   if (was !== g) f.nw = 1
   return was !== 'cur' && g === 'cur'
 }
+const WAITS_REPLY = 'waits for a reply'
 /** a step the flow moves onto: current, unless its blockers say otherwise */
 function onto(g: Flow) { g.s = 'cur'; g.nw = 1; settle(g) }
 
 function advance(x: Ctx, j: Job, sid: string, state: NodeState) {
   const f = j.flow[sid]
-  f.s = state; f.nw = 1; f.dr = null
+  f.s = state; f.nw = 1; f.dr = null; delete f.rw
   if (state === 'done') f.arts.forEach((a) => { if (!a.ok) { a.ok = true; a.nw = 1 } })
   if (j.st === 'draft' || j.st === 'ready') j.st = 'active'
   const nx = atOf(x, j)
@@ -260,7 +262,7 @@ function returnTo(x: Ctx, j: Job, sid: string, why: string) {
   const rounds = j.rounds || []
   const kept: Round = {
     n: rounds.length + 1, from: j.rf || all[0].id, at: nowOf(x).toISOString(), by: by(x), why, st: j.st,
-    flow: Object.fromEntries(roundSteps(x, j, j.rf).map((s) => [s.id, noNew(clone(j.flow[s.id]))])),
+    flow: Object.fromEntries(roundSteps(x, j, j.rf).map((s) => [s.id, noNew(clone(j.flow[s.id]))])), ...(j.ph ? { ph: clone(j.ph) } : {}),
   }
   j.rounds = [...rounds, kept]; j.rf = sid
   const back = all.slice(ti)
@@ -436,10 +438,11 @@ function ppAccept(x: Ctx, j: Job): { job: Job; nx: string | null } {
 
 const STEP_OPS = new Set(['returnTo', 'stepDone', 'stepSkip', 'stepWait', 'stepResume', 'stepReopen', 'acceptDraft', 'rejectDraft',
   'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'runStart', 'runReply', 'runDraft', 'draftIn', 'runAnswer', 'runEnd', 'artifact',
-  'waitAdd', 'waitDel', 'blockerClosed', 'runBlocker', 'blockerDrop', 'stepDel', 'stepEdit', 'stepMove'])
+  'waitAdd', 'waitDel', 'blockerClosed', 'runBlocker', 'blockerDrop', 'stepDel', 'stepEdit', 'stepMove', 'replyIn'])
 
-/** runs one command on a copy of the job; nx is the step to show next, when the command moved on */
-export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null } {
+/** runs one command on a copy of the job; nx is the step to show next, when the command moved on;
+    same = it changed nothing, so nothing needs writing */
+export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null; same?: true } {
   const j = clone(job)
   let nx: string | null = null
   const needOpen = () => { if (isClosed(j)) throw new CmdError('bad_state', `${j.id} is closed`) }
@@ -562,7 +565,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     }
     case 'stepResume':
       if (openOf(F).length) throw new CmdError('bad_state', `“${S.t}” ${waitsM(F)}; remove them, or mark it done with force`)
-      F.s = 'cur'; F.m = ''
+      F.s = 'cur'; F.m = ''; delete F.rw
       jr(x, j, `Resumed “${S.t}”.`, 'step back in progress.', `finish “${S.t}”.`, by(x), 'cur'); syncStatus(x, j)
       break
     case 'acceptDraft': {
@@ -607,7 +610,10 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     case 'sent': {
       if (!tplOf(x, j, sid)[cmd.i]) throw new CmdError('bad_args', `“${S.t}” has no planned message ${cmd.i}`)
       F.sent[cmd.i] = { at: nowOf(x).toISOString(), t: cmd.t }
-      jr(x, j, `Sent to ${cmd.to}.`, 'message recorded on the step.', allSent(x, j, sid) ? `mark “${S.t}” done.` : 'send the remaining messages.', by(x), 'ok')
+      const src = tplOf(x, j, sid)[cmd.i][0], asks = !!S.ask && isLive(F) && !F.dr && (src === 'chat' || src === 'mail')
+      if (asks) { F.s = 'wait'; F.m = WAITS_REPLY; F.nw = 1; F.rw = { src, ch: cmd.ch ?? '', ...(cmd.rto ? { to: cmd.rto } : {}), at: nowOf(x).toISOString() } }
+      jr(x, j, `Sent to ${cmd.to}.`, asks ? 'the step waits for a reply.' : 'message recorded on the step.',
+        asks ? 'the reply is picked up when it comes.' : allSent(x, j, sid) ? `mark “${S.t}” done.` : 'send the remaining messages.', by(x), 'ok')
       syncStatus(x, j)
       break
     }
@@ -790,6 +796,14 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     }
     case 'ppAccept':
       return ppAccept(x, j)
+    case 'replyIn': {
+      if (!isLive(F) || !F.rw) throw new CmdError('bad_state', `“${S.t}” does not wait for a reply`)
+      if (F.rp?.some((r) => r.id === cmd.id)) return { job, nx: null, same: true }
+      const t = String(cmd.t ?? '').slice(0, 4000)
+      F.rp = [...(F.rp ?? []), { id: cmd.id, at: cmd.at, from: cmd.from, t, ...(cmd.link ? { link: cmd.link } : {}) }].slice(-20); F.nw = 1
+      jr(x, j, `Reply from ${cmd.from} on “${S.t}”: ${line(t)}`, 'the step keeps waiting.', 'the agent reads it.', by(x), 'wait')
+      break
+    }
     case 'ppReject': {
       const p = j.pp
       if (!p) throw new CmdError('bad_state', `${j.id} has no proposal`)
