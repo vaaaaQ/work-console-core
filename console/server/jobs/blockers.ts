@@ -16,7 +16,7 @@ const waits = (j: Job) => !T.isClosed(j) && Object.values(j.flow).some((f) => T.
 
 /** a closed job's outcome: the out of its last step that has one, else its close note, else empty */
 export function outcomeOf(x: T.Ctx, b: Job): string {
-  const outs = T.steps(x, b.pb).map((s) => b.flow[s.id]?.out).filter((o): o is string => !!o)
+  const outs = T.stepsOf(x, b).map((s) => b.flow[s.id]?.out).filter((o): o is string => !!o)
   if (outs.length) return outs.at(-1)!
   const e = b.jr.find((e) => e.o === 'Closed the job as done.' || e.o === 'Cancelled the job.')
   return e && e.c !== 'no note.' ? e.c : ''

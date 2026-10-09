@@ -7,8 +7,8 @@ import { LIVE } from '../live/api.ts'
 import { down } from '../live/boot.ts'
 import { actFor, addrs, isAddr } from '../live/adapt.ts'
 import {
-  S, TPL, allSent, applyLocal, byId, chName, chatOf, clearNew, ctxRows, isLive, keyShort, llmText, plainT, postToChat, putJob,
-  restore, rvState, snap, stepOf, steps,
+  S, allSent, applyLocal, byId, chName, chatOf, clearNew, ctxRows, isLive, jsteps, keyShort, llmText, plainT, postToChat, putJob,
+  restore, rvState, snap, stepOf, tplOf,
 } from '../model/world.ts'
 import { openOf } from '../model/blockers.ts'
 import { askText } from '../model/transitions.ts'
@@ -140,7 +140,7 @@ export function askLlm(j: Job, sid: string) {
   const s = stepOf(j, sid)!, id = j.id
   // the same parts, in the same order, as the run's prompt
   const ctx: [string, string][] = [...ctxRows(j),
-    ...steps(j.pb).filter((x) => j.flow[x.id].out).map((x): [string, string] => ['bot', `output of “${x.t}”`]), ['list', 'journal, last 20']]
+    ...jsteps(j).filter((x) => j.flow[x.id].out).map((x): [string, string] => ['bot', `output of “${x.t}”`]), ['list', 'journal, last 20']]
   modal({
     title: `Ask LLM · ${s.t}`, form: 'ask',
     body: <>
@@ -247,7 +247,7 @@ const targetOf = (j: Job, k: string, lbl: string) => k === 'work' ? keyShort(j) 
 export function tplSend(id: string, sid: string, i: number) {
   const j0 = byId(id)
   if (!j0) return
-  const [k, lbl, t0, head] = TPL[sid][i], txt = plainT(j0, t0), unk = [...txt.matchAll(/\{(\w+)\}/g)].map((m) => m[1])
+  const [k, lbl, t0, head] = tplOf(j0, sid)[i], txt = plainT(j0, t0), unk = [...txt.matchAll(/\{(\w+)\}/g)].map((m) => m[1])
   // a mail with To is a new mail: its head is checked and sent with it
   const nm = k === 'mail' && !!lbl
   modal({

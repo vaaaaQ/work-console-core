@@ -3,7 +3,7 @@ import { BK, MODES, NODE } from '../data/core.ts'
 import { G } from '../data/ui.ts'
 import { ago, artIc, tfmt } from '../lib/util.ts'
 import { openOf, holdsOf } from '../model/blockers.ts'
-import { JOBS, PB, S, byId, isClosed, isLive, phState, steps } from '../model/world.ts'
+import { JOBS, PB, S, byId, isClosed, isLive, jsteps, phState, phases } from '../model/world.ts'
 import type { Job, JournalEntry, NodeState, Step } from '../model/types.ts'
 import { LIVE } from '../live/api.ts'
 import { go } from '../actions/nav.tsx'
@@ -45,10 +45,10 @@ function Node({ j, s, prior }: { j: Job; s: Step; prior: boolean }) {
 }
 
 function Board({ j }: { j: Job }) {
-  const all = steps(j.pb), ri = j.rf ? all.findIndex((s) => s.id === j.rf) : 0
+  const all = jsteps(j), ri = j.rf ? all.findIndex((s) => s.id === j.rf) : 0
   const prior = new Set(all.slice(0, Math.max(ri, 0)).map((s) => s.id))
   return (
-    <div className="board">{PB[j.pb].ph.map((p, i) => {
+    <div className="board">{phases(j).map((p, i) => {
       const d = p.s.filter((s) => j.flow[s.id].s === 'done').length
       return (
         <React.Fragment key={i}>
@@ -71,7 +71,7 @@ export function JobView() {
   const j = S.job ? byId(S.job) : undefined
   if (!j) return <div className="empty">Job not found. <button className="lnk" onClick={() => go('jobs')}>Back to jobs</button></div>
   const holds = holdsOf(JOBS, j.id)
-  const pb = PB[j.pb], arts = steps(j.pb).flatMap((s) => j.flow[s.id].arts.map((a) => ({ ...a, s })))
+  const pb = PB[j.pb], arts = jsteps(j).flatMap((s) => j.flow[s.id].arts.map((a) => ({ ...a, s })))
   return <>
     <div className="jh"><button className="back" onClick={() => go('jobs')}><Ic n="arrow-left" sm />Jobs</button>
       <div className="jh-row"><span className="key">{j.key}</span><h1>{j.t}</h1><Pill st={j.st} /><span className="fsp" /><JobActs j={j} /></div>

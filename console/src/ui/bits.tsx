@@ -2,7 +2,7 @@ import * as React from 'react'
 import { MODES, NODE, STATUS } from '../data/core.ts'
 import { artIc } from '../lib/util.ts'
 import { pbToFile } from '../model/playbookFile.ts'
-import { PB, TPL, atOf, isClosed, openBadges, phState, stepOf, steps, tvars } from '../model/world.ts'
+import { TPL, atOf, isClosed, jsteps, openBadges, phState, phases, stepOf, tvars } from '../model/world.ts'
 import type { Job, JobStatus, NodeState, Playbook, Tpl } from '../model/types.ts'
 import { changeNo, useWorld } from '../store.ts'
 import { dismiss } from '../actions/nav.tsx'
@@ -31,7 +31,7 @@ export function Chips({ j }: { j: Job }) {
   const q = openBadges(j), p = openBadges(j, 'p')
   return (
     <div className="chips">
-      {PB[j.pb].ph.map((ph, i) => { const st = phState(j, ph); return <span key={i} className={'chip s-' + st} title={`${ph.n}: ${NODE[st][1]}`}>{ph.c}</span> })}
+      {phases(j).map((ph, i) => { const st = phState(j, ph); return <span key={i} className={'chip s-' + st} title={`${ph.n}: ${NODE[st][1]}`}>{ph.c}</span> })}
       {q ? <span className="flag q" title="Open questions"><Ic n="help" sm />{q}</span> : null}
       {p ? <span className="flag p" title="Open problems"><Ic n="alert" sm />{p}</span> : null}
     </div>
@@ -99,7 +99,7 @@ export const CancelBtn = () => <button type="button" className="btn ghost" onCli
 /** what the job needs next, in one line */
 export function NextCell({ j }: { j: Job }) {
   if (isClosed(j)) return <span className="why">—</span>
-  const all = steps(j.pb)
+  const all = jsteps(j)
   const run = all.find((s) => j.flow[s.id].run)
   if (run) return <span className="nx run"><span className="spin" />LLM on “{run.t}”</span>
   const dr = all.find((s) => j.flow[s.id].dr)

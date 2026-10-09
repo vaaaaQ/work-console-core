@@ -66,7 +66,7 @@ export function detail(x: T.Ctx, j: Job, ws: string, runs: RunRec[] = [], all: J
   return {
     ...brief(x, j, ws), v: j.v, current: at, roundFrom: j.rf ?? null, chat: j.chat, mail: j.mail, description: j.d,
     context: ctxOf(j).map((c) => ({ kind: c.k, item: c.id, count: c.n, name: c.name })),
-    phases: (x.PB[j.pb]?.ph || []).map((p) => ({
+    phases: T.phasesOf(x, j).map((p) => ({
       phase: `${p.c} ${p.n}`,
       steps: p.s.map((s) => {
         const f = j.flow[s.id], talk = thread(runs, j.id, s.id)
@@ -78,7 +78,7 @@ export function detail(x: T.Ctx, j: Job, ws: string, runs: RunRec[] = [], all: J
           blockerAsked: f.bb?.say,
           conversation: talk.some((r) => r.parent) ? talk.map((r) => ({ q: clip(r.q), intent: r.intent, state: r.state, a: r.a ? clip(r.a) : undefined })) : undefined,
           artifacts: f.arts.length ? f.arts.map((a) => a.n + (a.ok ? '' : ' (planned)')) : undefined,
-          plannedMessages: (x.TPL[s.id] || []).length ? (x.TPL[s.id] || []).map((_, i) => (f.sent[i] ? `${i}: sent` : `${i}: not sent`)) : undefined,
+          plannedMessages: T.tplOf(x, j, s.id).length ? T.tplOf(x, j, s.id).map((_, i) => (f.sent[i] ? `${i}: sent` : `${i}: not sent`)) : undefined,
         }
       }),
     })),
@@ -91,7 +91,7 @@ export function detail(x: T.Ctx, j: Job, ws: string, runs: RunRec[] = [], all: J
 /** a step named by id or, failing that, by its title */
 function stepId(x: T.Ctx, j: Job, s: unknown) {
   if (typeof s !== 'string' || j.flow[s]) return s
-  const hit = T.steps(x, j.pb).find((st) => st.t.toLowerCase() === s.trim().toLowerCase())
+  const hit = T.stepsOf(x, j).find((st) => st.t.toLowerCase() === s.trim().toLowerCase())
   return hit ? hit.id : s
 }
 

@@ -6,7 +6,7 @@ import { openOf, reaches, settled, waitsM } from './blockers.ts'
 import { KINDS, ctxDefaults, ctxLabel, ctxOf, ctxUnit, parseWorkId } from './context.ts'
 import type { Kind } from './context.ts'
 import type {
-  BadgeKind, Cmd, CtxItem, CtxKind, Flow, Job, JobStatus, JournalEntry, Lamp, NodeState, Playbook, Round, Step, StepOverride, Tpl, Ws,
+  BadgeKind, Cmd, CtxItem, CtxKind, Flow, Job, JobStatus, JournalEntry, Lamp, NodeState, Phase, Playbook, Round, Step, StepOverride, Tpl, Ws,
 } from './types.ts'
 
 /* The one place for job transitions: the page (demo and live) and the backend run the same code.
@@ -23,19 +23,27 @@ export class CmdError extends Error {
 
 const nowOf = (x: Ctx) => (x.now ? x.now() : new Date())
 const by = (x: Ctx) => x.by || 'you'
+/** a playbook's steps; a job's go through stepsOf */
 export const steps = (x: Ctx, pb: string): Step[] => (x.PB[pb]?.ph || []).flatMap((p) => p.s)
-export const stepOf = (x: Ctx, j: Job, id: string | null) => steps(x, j.pb).find((s) => s.id === id)
+/** a job's phases: its own once it has them, else its playbook's */
+export const phasesOf = (x: Ctx, j: Job): Phase[] => j.ph ?? x.PB[j.pb]?.ph ?? []
+export const stepsOf = (x: Ctx, j: Job): Step[] => phasesOf(x, j).flatMap((p) => p.s)
+export const stepOf = (x: Ctx, j: Job, id: string | null) => stepsOf(x, j).find((s) => s.id === id)
+/** a step's planned messages: a job with its own steps reads its own only */
+export const tplOf = (x: Ctx, j: Job, sid: string): Tpl[] => (j.ph ? j.tpl?.[sid] : x.TPL[sid]) ?? []
+/** the phases a past round ran: its own copy, else the playbook's */
+export const roundPhases = (x: Ctx, j: Job, r: Round): Phase[] => r.ph ?? x.PB[j.pb]?.ph ?? []
 export const isClosed = (j: Job) => j.st === 'done' || j.st === 'cancelled'
 export const isLive = (f: Flow) => f.s !== 'done' && f.s !== 'skip'
 export const flows = (j: Job) => Object.values(j.flow)
-export const atOf = (x: Ctx, j: Job) => { const s = steps(x, j.pb).find((s) => j.flow[s.id] && isLive(j.flow[s.id])); return s ? s.id : null }
+export const atOf = (x: Ctx, j: Job) => { const s = stepsOf(x, j).find((s) => j.flow[s.id] && isLive(j.flow[s.id])); return s ? s.id : null }
 /** a draft to review: one whose step still waits for an open blocker is not yet */
 export const hasDraft = (j: Job) => flows(j).some((f) => f.dr && !openOf(f).length)
 /** the current step still has a planned message you have not sent */
 export const unsentAt = (x: Ctx, j: Job) => {
   if (j.st === 'draft') return false
   const id = atOf(x, j), f = id && j.flow[id]
-  return !!f && ['cur', 'wait', 'bad'].includes(f.s) && (x.TPL[id] || []).some((_, i) => !f.sent[i])
+  return !!f && ['cur', 'wait', 'bad'].includes(f.s) && tplOf(x, j, id).some((_, i) => !f.sent[i])
 }
 /** when a job with a due date starts needing you: midnight of its due day, `lead` days earlier */
 export const dueFrom = (j: Job) => (j.due ? midnight(Date.parse(j.due), j.lead || 0) : null)
@@ -49,13 +57,13 @@ export function nextMonth(iso: string) {
   n.setUTCDate(Math.min(day, new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth() + 1, 0)).getUTCDate()))
   return new Date(fromWall(n.getTime())).toISOString()
 }
-export const allSent = (x: Ctx, j: Job, sid: string) => (x.TPL[sid] || []).every((_, i) => j.flow[sid].sent[i])
+export const allSent = (x: Ctx, j: Job, sid: string) => tplOf(x, j, sid).every((_, i) => j.flow[sid].sent[i])
 
 /** status follows the current step unless you set it (draft, ready, recurring, closed) */
 export function syncStatus(x: Ctx, j: Job) {
   if (isClosed(j) || ['draft', 'ready', 'recurring'].includes(j.st)) return
   const id = atOf(x, j); if (!id) return
-  const f = j.flow[id], s = stepOf(x, j, id)!, unsent = (x.TPL[id] || []).some((_, i) => !f.sent[i])
+  const f = j.flow[id], s = stepOf(x, j, id)!, unsent = tplOf(x, j, id).some((_, i) => !f.sent[i])
   j.st = f.run ? 'active' : f.s === 'wait' && openOf(f).length ? 'waiting-external' : f.dr ? 'waiting-user' : f.s === 'wait' ? (s.rv ? 'review' : 'waiting-external') : (f.s === 'cur' && unsent) ? 'waiting-user' : 'active'
 }
 export function rvState(j: Job, f: Flow) {
@@ -219,8 +227,8 @@ function advance(x: Ctx, j: Job, sid: string, state: NodeState) {
   const nx = atOf(x, j)
   if (nx) { const g = j.flow[nx]; if (g.s === 'fut' || g.s === 'tpl') onto(g) }
   else if (j.st === 'recurring') {
-    steps(x, j.pb).forEach((s) => { const g = j.flow[s.id]; g.s = s.msg ? 'tpl' : 'fut'; g.out = null; g.sent = {}; g.m = ''; delete g.w; delete g.bb; g.arts.forEach((a) => { a.ok = false; delete a.link }) })
-    const first = steps(x, j.pb)[0]; j.flow[first.id].s = 'cur'
+    stepsOf(x, j).forEach((s) => { const g = j.flow[s.id]; g.s = s.msg ? 'tpl' : 'fut'; g.out = null; g.sent = {}; g.m = ''; delete g.w; delete g.bb; g.arts.forEach((a) => { a.ok = false; delete a.link }) })
+    const first = stepsOf(x, j)[0]; j.flow[first.id].s = 'cur'
     if (j.due && j.every === 'month') j.due = nextMonth(j.due)
     jr(x, j, 'Period complete.', `all steps done; the flow starts again${j.due && j.every ? `, due ${tfmt(j.due)}` : ''}.`, `next period: “${first.t}”.`, by(x), 'ok')
     syncStatus(x, j)
@@ -231,8 +239,8 @@ function advance(x: Ctx, j: Job, sid: string, state: NodeState) {
 }
 
 /** the steps a round covers: from its first step to the end */
-export const roundSteps = (x: Ctx, pb: string, from: string | undefined) => {
-  const all = steps(x, pb), i = from ? all.findIndex((s) => s.id === from) : 0
+export const roundSteps = (x: Ctx, j: Job, from: string | undefined) => {
+  const all = stepsOf(x, j), i = from ? all.findIndex((s) => s.id === from) : 0
   return all.slice(Math.max(i, 0))
 }
 /** a step's state as it was before anyone touched it */
@@ -242,14 +250,14 @@ const noNew = (f: Flow): Flow => ({ ...f, nw: 0, run: null, arts: f.arts.map((a)
 /** keeps the current pass as a round and starts a new one at sid: the steps from sid on start blank,
     open notes carry over, a closed job is active again */
 function returnTo(x: Ctx, j: Job, sid: string, why: string) {
-  const all = steps(x, j.pb), ti = all.findIndex((s) => s.id === sid), at = atOf(x, j)
+  const all = stepsOf(x, j), ti = all.findIndex((s) => s.id === sid), at = atOf(x, j)
   if (j.st === 'draft' || j.st === 'ready') throw new CmdError('bad_state', `${j.id} has not started`)
   if (!isClosed(j) && at && ti >= all.findIndex((s) => s.id === at)) throw new CmdError('bad_step', `“${all[ti].t}” has not been passed yet`)
   if (flows(j).some((f) => f.run)) throw new CmdError('bad_state', `${j.id} has an LLM run in flight; cancel it first`)
   const rounds = j.rounds || []
   const kept: Round = {
     n: rounds.length + 1, from: j.rf || all[0].id, at: nowOf(x).toISOString(), by: by(x), why, st: j.st,
-    flow: Object.fromEntries(roundSteps(x, j.pb, j.rf).map((s) => [s.id, noNew(clone(j.flow[s.id]))])),
+    flow: Object.fromEntries(roundSteps(x, j, j.rf).map((s) => [s.id, noNew(clone(j.flow[s.id]))])),
   }
   j.rounds = [...rounds, kept]; j.rf = sid
   const back = all.slice(ti)
@@ -296,7 +304,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
   switch (cmd.op) {
     case 'start': {
       if (j.st !== 'draft' && j.st !== 'ready') throw new CmdError('bad_state', `${j.id} has already started`)
-      const first = atOf(x, j) || steps(x, j.pb)[0].id
+      const first = atOf(x, j) || stepsOf(x, j)[0].id
       j.st = 'active'; onto(j.flow[first]); nx = first
       jr(x, j, 'Started the job.', `“${stepOf(x, j, first)!.t}” in progress.`, nextTxt(x, j, first), by(x), 'cur'); syncStatus(x, j)
       break
@@ -312,7 +320,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     case 'reopen': {
       if (!isClosed(j)) throw new CmdError('bad_state', `${j.id} is not closed`)
       j.st = 'active'
-      steps(x, j.pb).forEach((st) => { const g = j.flow[st.id]; if (g.s === 'skip') g.s = st.msg ? 'tpl' : 'fut' })
+      stepsOf(x, j).forEach((st) => { const g = j.flow[st.id]; if (g.s === 'skip') g.s = st.msg ? 'tpl' : 'fut' })
       const a = atOf(x, j)
       if (a && (j.flow[a].s === 'fut' || j.flow[a].s === 'tpl')) onto(j.flow[a])
       syncStatus(x, j); nx = a
@@ -432,7 +440,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       break
     }
     case 'sent': {
-      if (!(x.TPL[sid] || [])[cmd.i]) throw new CmdError('bad_args', `“${S.t}” has no planned message ${cmd.i}`)
+      if (!tplOf(x, j, sid)[cmd.i]) throw new CmdError('bad_args', `“${S.t}” has no planned message ${cmd.i}`)
       F.sent[cmd.i] = { at: nowOf(x).toISOString(), t: cmd.t }
       jr(x, j, `Sent to ${cmd.to}.`, 'message recorded on the step.', allSent(x, j, sid) ? `mark “${S.t}” done.` : 'send the remaining messages.', by(x), 'ok')
       syncStatus(x, j)

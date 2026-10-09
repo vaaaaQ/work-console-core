@@ -192,7 +192,7 @@ export function checkForm(out: unknown, o: { ws: string; form: BuildForm; PB: Re
   if (form.bl) {
     const b = obj(a.blocker), all = o.jobs ?? [], w = all.find((j) => j.id === form.bl!.j)
     let step = str(b.step).trim() || form.bl.step
-    if (w && !T.steps({ PB, TPL: {} }, w.pb).some((s) => s.id === step)) { why.push(`Step ${step} is not one of ${w.id}'s.`); step = form.bl.step }
+    if (w && !T.stepsOf({ PB, TPL: {} }, w).some((s) => s.id === step)) { why.push(`Step ${step} is not one of ${w.id}'s.`); step = form.bl.step }
     else if (w && w.flow[step] && !T.isLive(w.flow[step])) { why.push(`Step ${step} of ${w.id} is ${w.flow[step].s === 'done' ? 'done' : 'skipped'}.`); step = form.bl.step }
     const lk = obj(b.link), lj = str(lk.job).trim(), t = all.find((j) => j.id === lj)
     let link: BlockerForm['link'] = null
@@ -266,7 +266,7 @@ function blockerLines(x: T.Ctx, w: Job, bl: BlockerForm): string[] {
   return [
     '# Blocker',
     `The new job blocks ${w.id} “${w.t}” (playbook ${x.PB[w.pb]?.n ?? w.pb}): one of its steps waits for the new job to close, then goes on with its outcome.`,
-    `Steps of ${w.id}: ${T.steps(x, w.pb).map((t) => `${t.id} “${t.t}” (${w.flow[t.id]?.s ?? 'fut'})`).join('; ')}`,
+    `Steps of ${w.id}: ${T.stepsOf(x, w).map((t) => `${t.id} “${t.t}” (${w.flow[t.id]?.s ?? 'fut'})`).join('; ')}`,
     `The step it blocks now: ${bl.step}${s ? ` “${s.t}”` : ''}`,
     ...(f?.dr ? ["The step's draft:", '```', clip(f.dr.t, 4000), '```'] : []),
     ...(f?.bb ? [`What the user asked in the reply: ${f.bb.say}`] : []),

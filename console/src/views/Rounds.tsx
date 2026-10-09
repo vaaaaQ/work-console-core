@@ -1,7 +1,8 @@
 import * as React from 'react'
 import { BK, NODE } from '../data/core.ts'
 import { artIc, tfmt } from '../lib/util.ts'
-import { PB, steps } from '../model/world.ts'
+import { CTX } from '../model/world.ts'
+import { roundPhases } from '../model/transitions.ts'
 import type { Job, Round } from '../model/types.ts'
 import { LIVE } from '../live/api.ts'
 import { ArtName } from '../ui/artifact.tsx'
@@ -14,7 +15,7 @@ import { OutText } from '../ui/outText.ts'
 
 function RoundDetail({ j, r }: { j: Job; r: Round }) {
   return (
-    <div className="rd-d">{steps(j.pb).filter((s) => r.flow[s.id]).map((s) => {
+    <div className="rd-d">{roundPhases(CTX, j, r).flatMap((p) => p.s).filter((s) => r.flow[s.id]).map((s) => {
       const f = r.flow[s.id], sent = Object.values(f.sent)
       return (
         <section key={s.id} className="rd-step">
@@ -41,7 +42,7 @@ export function Rounds({ j }: { j: Job }) {
             <Ic n="chevron" sm />Round {r.n}</button>
           <span className="why">ended {tfmt(r.at)} · {r.by} returned it: {r.why}</span>
         </div>
-        <div className="rd-row">{PB[j.pb].ph.map((p, i) => (
+        <div className="rd-row">{roundPhases(CTX, j, r).map((p, i) => (
           <React.Fragment key={i}>
             {i ? <div className="link" /> : null}
             <div className="rd-ph">{p.s.filter((s) => r.flow[s.id]).map((s) => (

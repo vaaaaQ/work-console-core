@@ -73,11 +73,16 @@ export interface JobSeed {
   ev?: string; due?: string; lead?: number; remind?: number; every?: 'month'; ctx?: CtxItem[]; d?: string
 }
 /** a finished pass through the flow, kept read-only: n = its number (1 = the first pass), from = the step it began at,
- *  at = when it ended, by + why = who returned the job and why, st = the job's status then, flow = its steps from `from` on */
-export interface Round { n: number; from: string; at: string; by: string; why: string; st: JobStatus; flow: Record<string, Flow> }
+ *  at = when it ended, by + why = who returned the job and why, st = the job's status then, flow = its steps from `from` on,
+ *  ph = the job's own steps then, when it had them */
+export interface Round { n: number; from: string; at: string; by: string; why: string; st: JobStatus; flow: Record<string, Flow>; ph?: Phase[] }
 /** v = the store's version; a write names the version it replaces; rounds = past passes, oldest first;
- *  rf = the step the current pass began at (absent = the first step) */
-export interface Job extends JobSeed { flow: Record<string, Flow>; ts: number; jr: JournalEntry[]; v?: number; rounds?: Round[]; rf?: string }
+ *  rf = the step the current pass began at (absent = the first step);
+ *  ph + tpl = the job's own steps and their planned messages, copied from its playbook on the first change to them */
+export interface Job extends JobSeed {
+  flow: Record<string, Flow>; ts: number; jr: JournalEntry[]; v?: number; rounds?: Round[]; rf?: string
+  ph?: Phase[]; tpl?: Record<string, Tpl[]>
+}
 
 /** a job change; the backend-only ops come from the LLM runner */
 export type Cmd =

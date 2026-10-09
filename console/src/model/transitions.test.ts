@@ -6,7 +6,7 @@ import { JOBS0, JR, OVR, TPL0 } from '../data/demo.ts'
 import { clone } from '../lib/util.ts'
 import { KINDS } from './context.ts'
 import type { Job } from './types.ts'
-import { CmdError, DESC_MAX, apply, askText, atOf, freshJob, isClosed, isLive, needsYou, nextMonth, seedFlow, steps } from './transitions.ts'
+import { CmdError, DESC_MAX, allSent, apply, askText, atOf, freshJob, isClosed, isLive, needsYou, nextMonth, phasesOf, seedFlow, stepOf, steps, stepsOf, tplOf, unsentAt } from './transitions.ts'
 import type { Ctx, NewJob } from './transitions.ts'
 
 const T0 = new Date('2026-09-30T12:00:00Z')
@@ -604,4 +604,32 @@ test('draftIn: a session hands in a draft for review, signed as the session; ref
   code(() => apply(X, clean, { op: 'draftIn', step: at, t: '  ' }), 'bad_args')
   code(() => apply(X, apply(X, clean, { op: 'stepDone', step: at }).job, { op: 'draftIn', step: at, t: 'x' }), 'bad_state')
   code(() => apply(X, apply(X, clean, { op: 'close', st: 'done' }).job, { op: 'draftIn', step: at, t: 'x' }), 'bad_state')
+})
+
+/* ===== a job's own steps ===== */
+const withTpl = () => find((j) => !isClosed(j) && j.st !== 'draft' && steps(X, j.pb).some((s) => TPL0[s.id]))
+
+test('a job without its own steps reads its playbook steps and messages', () => {
+  const j = withTpl(), s = steps(X, j.pb).find((s) => TPL0[s.id])!
+  assert.deepEqual(phasesOf(X, j), PB0[j.pb].ph)
+  assert.deepEqual(stepsOf(X, j), steps(X, j.pb))
+  assert.equal(stepOf(X, j, s.id), s)
+  assert.deepEqual(tplOf(X, j, s.id), TPL0[s.id])
+  assert.equal(allSent(X, j, s.id), TPL0[s.id].every((_, i) => j.flow[s.id].sent[i]))
+})
+
+test('a job with its own steps reads only them', () => {
+  const j = withTpl(), at = atOf(X, j)!, g = steps(X, j.pb).find((s) => TPL0[s.id])!
+  j.ph = clone(PB0[j.pb].ph)
+  j.ph[0].s.unshift({ id: 'n1', t: 'Extra', m: 'you', x: 'done', msg: 1 })
+  j.tpl = { n1: [['chat', 'team', 'hi']] }
+  j.flow.n1 = { s: 'cur', m: '', arts: [], b: [], rv: null, dr: null, out: null, run: null, sent: {} }
+  assert.ok(stepsOf(X, j).some((s) => s.id === 'n1'))
+  assert.equal(stepOf(X, j, 'n1')?.t, 'Extra')
+  assert.deepEqual(tplOf(X, j, g.id), [])
+  assert.deepEqual(tplOf(X, j, 'n1'), [['chat', 'team', 'hi']])
+  assert.equal(atOf(X, j), 'n1')
+  assert.equal(unsentAt(X, j), true)
+  delete j.flow.n1; j.ph[0].s.shift()
+  assert.equal(atOf(X, j), at)
 })

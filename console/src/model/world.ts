@@ -39,13 +39,17 @@ export const CTX: T.Ctx = { PB, TPL }
 export const byId = (id: string | null | undefined) => JOBS.find((j) => j.id === id)
 export const steps = (pb: string) => T.steps(CTX, pb)
 export const stepOf = (j: Job, id: string | null) => T.stepOf(CTX, j, id)
-export const phaseOf = (j: Job, id: string) => PB[j.pb].ph.find((p) => p.s.some((s) => s.id === id))
+/** a job's own phases, steps and planned messages once it has them, else its playbook's */
+export const phases = (j: Job) => T.phasesOf(CTX, j)
+export const jsteps = (j: Job) => T.stepsOf(CTX, j)
+export const tplOf = (j: Job, sid: string) => T.tplOf(CTX, j, sid)
+export const phaseOf = (j: Job, id: string) => phases(j).find((p) => p.s.some((s) => s.id === id))
 export const { isClosed, isLive, flows, hasDraft } = T
 export const atOf = (j: Job) => T.atOf(CTX, j)
 /** the open job in this workspace whose current step carries a console action */
 export const jobAtAct = (act: string) => wsJobs().find((j) => !isClosed(j) && stepOf(j, atOf(j))?.act === act)
 /** the job an act's view links to: the one at a step with the act, else an open one (recurring too) whose playbook has such a step */
-export const jobForAct = (act: string) => jobAtAct(act) || wsJobs().find((j) => !isClosed(j) && steps(j.pb).some((s) => s.act === act))
+export const jobForAct = (act: string) => jobAtAct(act) || wsJobs().find((j) => !isClosed(j) && jsteps(j).some((s) => s.act === act))
 /** the job the Time view links to: jobForAct('time'), else a recurring one named for timesheets */
 export const timesheetJob = () => jobForAct('time') || wsJobs().find((j) => j.st === 'recurring' && /timesheet/i.test(`${j.t} ${j.key}`))
 export const openBadges = (j: Job, k?: BadgeKind) => flows(j).reduce((a, f) => a + f.b.filter((b) => b.o && (k ? b.k === k : b.k !== 'p')).length, 0)
@@ -166,7 +170,7 @@ export function llmText(j: Job, s: Step) {
 export function tvars(j: Job) {
   const w = PACKS[j.ws], pr = PRI[j.id]
   const v: Record<string, string | null | undefined> = { key: keyShort(j), po: w.people.po, pr: pr && pr.id, reporter: j.vars && j.vars.reporter }
-  steps(j.pb).forEach((s) => { if (s.out) v[s.out] = j.flow[s.id].out })
+  jsteps(j).forEach((s) => { if (s.out) v[s.out] = j.flow[s.id].out })
   return v
 }
 export const plainT = (j: Job, t: string) => { const v = tvars(j); return t.replace(/\{(\w+)\}/g, (m, k) => v[k] || m) }
@@ -181,9 +185,9 @@ export type Approval = { k: 'draft'; j: Job; s: Step; f: Flow } | { k: 'msg'; j:
 export function approvals() {
   const out: Approval[] = []
   wsJobs().filter((j) => !isClosed(j)).forEach((j) => {
-    steps(j.pb).forEach((s) => { const f = j.flow[s.id]; if (f.dr) out.push({ k: 'draft', j, s, f }) })
+    jsteps(j).forEach((s) => { const f = j.flow[s.id]; if (f.dr) out.push({ k: 'draft', j, s, f }) })
     const id = unsentAt(j) ? atOf(j) : null, f = id && j.flow[id]
-    if (id && f && !f.dr && !f.run) TPL[id].forEach((_, i) => { if (!f.sent[i]) out.push({ k: 'msg', j, s: stepOf(j, id)!, f, i }) })
+    if (id && f && !f.dr && !f.run) tplOf(j, id).forEach((_, i) => { if (!f.sent[i]) out.push({ k: 'msg', j, s: stepOf(j, id)!, f, i }) })
   })
   return out.sort((a, b) => b.j.ts - a.j.ts)
 }

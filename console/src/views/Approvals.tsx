@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { tfmt } from '../lib/util.ts'
-import { S, TPL, W, approvals, chName } from '../model/world.ts'
+import { S, W, approvals, chName, tplOf } from '../model/world.ts'
 import type { Approval } from '../model/world.ts'
 import { go } from '../actions/nav.tsx'
 import { acceptDraft, editDraft, rejectDraft, tplSend } from '../actions/flow.tsx'
@@ -34,7 +34,7 @@ function ApCard({ x }: { x: Approval }) {
       </article>
     )
   }
-  const [k, lbl, t] = TPL[s.id][x.i], ic = k === 'work' ? 'file' : 'message'
+  const [k, lbl, t] = tplOf(x.j, s.id)[x.i], ic = k === 'work' ? 'file' : 'message'
   return (
     <article className="dc">
       <div className="dc-h"><span className="st"><Ic n={ic} sm /><b>Message · {s.t}</b></span>{lnk}</div>

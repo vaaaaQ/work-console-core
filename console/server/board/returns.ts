@@ -52,7 +52,7 @@ export class BoardReturns {
     try {
       let cur = j
       if (T.isClosed(cur)) cur = (await this.jobs.cmd(cur.id, { op: 'reopen' }, undefined, 'console')).job
-      const x = this.ctx(), step = T.atOf(x, cur) ?? T.steps(x, cur.pb).at(-1)?.id
+      const x = this.ctx(), step = T.atOf(x, cur) ?? T.stepsOf(x, cur).at(-1)?.id
       if (step) cur = (await this.jobs.cmd(cur.id, { op: 'noteAdd', step, k: 'p', t: `QA returned ${key} to Dev; return the job to a step.` }, undefined, 'console')).job
       await this.push(`${cur.id}: QA returned it to Dev`, cur.t, `/?job=${encodeURIComponent(cur.id)}`)
     } finally { this.busy.delete(j.id) }

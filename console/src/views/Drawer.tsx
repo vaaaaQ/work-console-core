@@ -3,7 +3,7 @@ import { BK, EXEC, MODES } from '../data/core.ts'
 import { PRI } from '../data/demo.ts'
 import { PACKS } from '../data/packs.ts'
 import { hm, initials, tfmt } from '../lib/util.ts'
-import { S, TPL, byId, chName, isClosed, isLive, phaseOf, rvState, stepOf } from '../model/world.ts'
+import { S, byId, chName, isClosed, isLive, phaseOf, rvState, stepOf, tplOf } from '../model/world.ts'
 import { actOf } from '../model/home.ts'
 import type { Flow, Job, Step } from '../model/types.ts'
 import { waitsFor } from '../actions/blockers.tsx'
@@ -67,8 +67,8 @@ function ReviewSec({ j, f }: P) {
 }
 
 function TplSec({ j, s, f }: P) {
-  const T = TPL[s.id]
-  if (!T) return null
+  const T = tplOf(j, s.id)
+  if (!T.length) return null
   const live = !isClosed(j) && isLive(f)
   return (
     <section className="sec"><div className="eyebrow">Messages</div>{T.map(([k, lbl, t], i) => {

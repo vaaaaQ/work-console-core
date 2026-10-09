@@ -40,7 +40,7 @@ function parts(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn) {
     ...own.map((r) => `### ${ctxLabel(j.ws, r)} (note ${r.id}, this job's)${r.status === 'ok' ? '' : ' — unavailable'}\n${r.text}`),
     ...(o.pbNotes ?? []).filter((n) => !mine.has(n.id)).map((n) => `### ${n.title} (note ${n.id}, the playbook's)\n${renderNote(n)}`),
   ]
-  const outs = T.steps(x, j.pb).filter((t) => j.flow[t.id]?.out).map((t) => `### ${t.t}\n${j.flow[t.id].out}`)
+  const outs = T.stepsOf(x, j).filter((t) => j.flow[t.id]?.out).map((t) => `### ${t.t}\n${j.flow[t.id].out}`)
   const jr = j.jr.slice(0, JR_MAX).reverse().map((e) => `- ${e.ts} ${e.a}: ${e.o} → ${e.c} Next: ${e.n}`)
   const job = [
     `## Job ${j.id}: ${j.t}`,
@@ -71,7 +71,7 @@ const join = (bs: string[]) => bs.filter(Boolean).join('\n\n')
 /** the steps whose planned messages carry this step's accepted draft, by title */
 const sentBy = (x: T.Ctx, j: Job, step: string) => {
   const v = T.stepOf(x, j, step)?.out
-  return v ? T.steps(x, j.pb).filter((t) => (x.TPL[t.id] || []).some((m) => m[2].includes(`{${v}}`))).map((t) => `"${t.t}"`) : []
+  return v ? T.stepsOf(x, j).filter((t) => T.tplOf(x, j, t.id).some((m) => m[2].includes(`{${v}}`))).map((t) => `"${t.t}"`) : []
 }
 /** draft = how the session names what it hands in; remarks = where notes to the user go instead */
 const messageAlone = (by: string[], w: string, draft: string, remarks: string) =>

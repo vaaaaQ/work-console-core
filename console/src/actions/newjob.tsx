@@ -11,7 +11,7 @@ import type { BlockerForm, Nj } from '../model/njForm.ts'
 import { freeKey } from '../model/pbFormat.ts'
 import type { PbFile } from '../model/pbFormat.ts'
 import * as T from '../model/transitions.ts'
-import { CHATS, CTX, MAIL, byId, isLive, PB, S, TPL, createJob, pbs, putJob, steps } from '../model/world.ts'
+import { CHATS, CTX, MAIL, byId, isLive, jsteps, PB, S, TPL, createJob, pbs, putJob, steps } from '../model/world.ts'
 import type { CtxItem, CtxKind, Job, Mail, NjDraft } from '../model/types.ts'
 import { commit, useWorld } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
@@ -354,7 +354,7 @@ function CtxList({ f }: { f: Nj }) {
 }
 
 /** the steps a blocker can hold: not done or skipped, and the one picked */
-const blockable = (j: Job | undefined, picked: string) => (j ? steps(j.pb).filter((s) => s.id === picked || (j.flow[s.id] && isLive(j.flow[s.id]))) : [])
+const blockable = (j: Job | undefined, picked: string) => (j ? jsteps(j).filter((s) => s.id === picked || (j.flow[s.id] && isLive(j.flow[s.id]))) : [])
 
 function BlockerBox({ bl }: { bl: BlockerForm }) {
   const setBl = (p: Partial<BlockerForm>) => { if (F) put({ ...F, bl: { ...bl, ...p } }) }
