@@ -24,6 +24,7 @@ import { grantsOf, guardedHttp } from './grants.ts'
 import type { Grants } from './grants.ts'
 import { Blockers } from './jobs/blockers.ts'
 import { Jobs } from './jobs/jobs.ts'
+import { Replies } from './jobs/replies.ts'
 import { notesStore } from './knowledge/notes.ts'
 import type { Notes } from './knowledge/notes.ts'
 import { autoAsk } from './llm/autoAsk.ts'
@@ -230,6 +231,8 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     read: async () => { const r = (await source.read(['board'])).board; return r && READY.has(r.status) && Array.isArray(r.items) ? (r.items as { id: string }[]) : null },
   })
   const blockers = new Blockers({ jobs, ctx, push })
+  // an ask step's answer, found in chat or mail as the source reports changes
+  const replies = new Replies({ jobs, source, bus })
   const agent = grants && o.agent ? new AgentSession({
     ws: id, title: w.page.pack.n || id, records: agentRecords(store, join(o.home, 'agent', `${id}.json`)), sdk, bus, root: o.root, ...o.agent,
   }) : null
@@ -245,6 +248,8 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     await runner.resumeDue()
     // a blocker closed while the console was off is seen here
     await blockers.reconcile()
+    // and an answer that came while it was off
+    await replies.reconcile()
   })
 
   return {
@@ -255,6 +260,6 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     // a QA return or a woken blocker pushes its own message; the generic one would say it again
     onNeedsYou: (f) => jobs.onNeedsYou((j) => { if (!returns.handling(j.id) && !blockers.handling(j.id)) f(j) }),
     // the source going away on close is no reason to interrupt the runs
-    async close() { stopLoading(); offInterrupt(); offAuto(); blockers.stop(); agent?.close(); source.stop(); await fake?.close() },
+    async close() { stopLoading(); offInterrupt(); offAuto(); blockers.stop(); replies.stop(); agent?.close(); source.stop(); await fake?.close() },
   }
 }
