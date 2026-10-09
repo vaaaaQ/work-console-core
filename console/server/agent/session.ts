@@ -21,7 +21,7 @@ import { agentTools, reintegrateTools } from './tools.ts'
    restart until it ends; what the person decides or undoes meanwhile reaches the agent with its next prompt.
    A reintegration is a conversation rooted at a failed core update's worktree; update.mjs runs once its turn ends. */
 
-export type SessionOps = Pick<Ops, 'check' | 'apply' | 'undo' | 'createWorkspace' | 'acceptGrants'>
+export type SessionOps = Pick<Ops, 'check' | 'apply' | 'undo' | 'createWorkspace' | 'acceptGrants' | 'remove'>
 /** how a run of update.mjs ended: updated = the folder is on the new core; failed = the record it left */
 export interface UpdateEnd { code: number; output: string; updated: boolean; failed: FailedUpdate | null }
 /** the console's failed core update, for reintegrate conversations */

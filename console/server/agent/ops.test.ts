@@ -336,6 +336,24 @@ test('createWorkspace refuses a taken name and a console with no database to sha
   assert.equal(readFileSync(join(h.home, 'config.json'), 'utf8'), h.text)
 })
 
+test('remove deletes a file under its areas, which apply then commits; anything else it refuses', async () => {
+  const { r, put, git } = repo(), { o } = ops(r, fakeExec())
+  put('workspaces/w1/old.ts', 'export const O = 1\n'); git('add', '-A'); git('commit', '-qm', 'old')
+  put('workspaces/w1/probe.txt', 'x\n'); put('workspaces/w1/sub/a.ts', '')
+  assert.deepEqual(await o.remove('w1', 'workspaces/w1/probe.txt'), { ok: true, path: 'workspaces/w1/probe.txt' })
+  assert.deepEqual(await o.remove('w1', join(r, 'workspaces', 'w1', 'old.ts')), { ok: true, path: 'workspaces/w1/old.ts' })
+  assert.equal(existsSync(join(r, 'workspaces/w1/probe.txt')) || existsSync(join(r, 'workspaces/w1/old.ts')), false)
+  for (const [p, why] of [
+    ['workspaces/w1/grants.json', /not yours/], ['tools/core-helper.ts', /not yours/], ['workspaces/w2/page.ts', /not yours/],
+    ['server/main.ts', /not yours/], ['workspaces/w1/../w2/page.ts', /not yours/], ['workspaces/w1/none.ts', /no such file/], ['workspaces/w1/sub', /not a file/],
+  ] as const) assert.match((await o.remove('w1', p) as { error: string }).error, why, p)
+  assert.ok(existsSync(join(r, 'workspaces/w1/grants.json')) && existsSync(join(r, 'workspaces/w2/page.ts')) && existsSync(join(r, 'server/main.ts')))
+  const a = await o.apply('w1', 'drop old')
+  assert.ok(a.ok, JSON.stringify(a))
+  assert.deepEqual(a.files, ['workspaces/w1/old.ts', 'workspaces/w1/sub/a.ts'])
+  assert.equal(git('status', '--porcelain'), '')
+})
+
 test('undo commits its own files only: the agent\'s other edits stay uncommitted', async () => {
   const { r, put, git } = repo(), { o } = ops(r, fakeExec())
   put('workspaces/w1/page.ts', 'export const A = 2\n')

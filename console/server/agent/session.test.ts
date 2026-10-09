@@ -43,6 +43,7 @@ function setup(o: { grants?: Partial<Grants>; script?: Script[]; recs?: AgentRec
     apply: async (ws, s) => { calls.push(['apply', ws, s]); restarter.want(); return ok('a'.repeat(40), s) },
     undo: async (ws, sha) => { calls.push(['undo', ws, sha]); restarter.want(); return ok('b'.repeat(40), 'undo — x') },
     createWorkspace: async () => ({ ok: false, error: 'no' }),
+    remove: async (_ws, p) => ({ ok: true, path: p }),
     acceptGrants: async (ws, g, reason) => { calls.push(['grants', ws, g, reason]); restarter.want(); return ok('c'.repeat(40), `grants — ${reason}`, ['workspaces/w1/grants.json']) },
   }
   const sdk: Sdk = {

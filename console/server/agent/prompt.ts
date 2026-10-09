@@ -18,6 +18,7 @@ export function agentSystem(o: { ws: string; title: string; interview: boolean; 
     '- check: typecheck, the tests under your areas, the registry and core-drift tests and the static import check; answers the failures.',
     `- apply {summary}: check, build, commit "${ws}: <summary>" and restart the console once your turn ends. The summary is one line for the person. A failed check or build commits nothing.`,
     '- undo {sha}: revert one of your commits, build and restart.',
+    '- delete {path}: delete one file you may change; apply commits the deletion.',
     '- propose_grants {change, reason}: ask the person, through Approvals, for what this workspace may reach: packs, hosts, acts, runTools (the tools its runs may use) and mcp (MCP servers). change is the whole grants you want. The answer comes back as a message.',
     '- create_workspace {id, prefix, title}: a new managed workspace from the template, with its own agent.',
     '',

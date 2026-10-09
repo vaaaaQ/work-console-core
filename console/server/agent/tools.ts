@@ -6,7 +6,7 @@ import type { Applied, Ops } from './ops.ts'
 
 /* The workspace agent's console tools, in no provider's terms: each runs one op and answers in plain text. */
 
-export type AgentOps = Pick<Ops, 'check' | 'apply' | 'undo' | 'createWorkspace'>
+export type AgentOps = Pick<Ops, 'check' | 'apply' | 'undo' | 'createWorkspace' | 'remove'>
 /** what the tools need from the session: its grants and commits, the registered names, and where results go */
 export interface AgentHooks {
   grants(): Grants
@@ -61,6 +61,15 @@ export function agentTools(o: { ws: string; ops: AgentOps; hooks: AgentHooks }):
         if (!r.ok) return `Not undone: ${failed(r)}`
         record(r, 'undo', c.sha)
         return `Undone ${short(c.sha)} with ${short(r.sha)}. ${RESTART}`
+      },
+    },
+    {
+      name: 'delete',
+      description: `Delete one file under workspaces/${ws}/ or tools/ that you may change; apply then commits the deletion.`,
+      input: { path: z.string().min(1).describe('the file, relative to the console folder') },
+      run: async (a) => {
+        const r = await ops.remove(ws, String(a.path))
+        return r.ok ? `Deleted ${r.path}. Apply commits the deletion.` : `Not deleted: ${r.error}`
       },
     },
     {

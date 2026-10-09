@@ -13,6 +13,7 @@ function setup(o: Partial<AgentOps> = {}, commits: AgentCommit[] = []) {
     apply: async (ws, s) => { calls.push(['apply', ws, s]); return { ok: true, sha: 'a'.repeat(40), files: ['workspaces/w1/page.ts'], summary: s } },
     undo: async (ws, sha) => { calls.push(['undo', ws, sha]); return { ok: true, sha: 'b'.repeat(40), files: ['workspaces/w1/page.ts'], summary: 'undo — x' } },
     createWorkspace: async (ws, n, taken) => { calls.push(['create', ws, n, taken]); return { ok: true, sha: 'c'.repeat(40), files: [], summary: `create workspace ${n.id} — ${n.title}` } },
+    remove: async (ws, p) => { calls.push(['remove', ws, p]); return { ok: true, path: p } },
     ...o,
   }
   const hooks: AgentHooks = {
@@ -23,8 +24,8 @@ function setup(o: Partial<AgentOps> = {}, commits: AgentCommit[] = []) {
   return { tools, calls, done, proposed }
 }
 
-test('the agent has five console tools with neutral names', () => {
-  assert.deepEqual(Object.keys(setup().tools).sort(), ['apply', 'check', 'create_workspace', 'propose_grants', 'undo'])
+test('the agent has six console tools with neutral names', () => {
+  assert.deepEqual(Object.keys(setup().tools).sort(), ['apply', 'check', 'create_workspace', 'delete', 'propose_grants', 'undo'])
 })
 
 test('check says passed, or lists the failures', async () => {
@@ -72,4 +73,12 @@ test('create_workspace passes the registered ids and prefixes and records the co
   assert.match(await s.tools.create_workspace.run({ id: 'crm', prefix: 'CRM', title: 'CRM' }), /^Created workspace crm/)
   assert.deepEqual(s.calls.at(-1), ['create', 'w1', { id: 'crm', prefix: 'CRM', title: 'CRM' }, { ids: ['w1'], prefixes: ['W'] }])
   assert.equal(s.done[0].kind, 'create')
+})
+
+test('delete removes one file of its areas and says apply commits it; a refusal says why', async () => {
+  const s = setup()
+  assert.equal(await s.tools.delete.run({ path: 'workspaces/w1/probe.txt' }), 'Deleted workspaces/w1/probe.txt. Apply commits the deletion.')
+  assert.deepEqual(s.calls.at(-1), ['remove', 'w1', 'workspaces/w1/probe.txt'])
+  const f = setup({ remove: async () => ({ ok: false, error: 'server/main.ts is not yours to delete' }) })
+  assert.equal(await f.tools.delete.run({ path: 'server/main.ts' }), 'Not deleted: server/main.ts is not yours to delete')
 })

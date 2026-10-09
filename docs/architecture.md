@@ -226,7 +226,7 @@ person's approval.*
 |---|---|
 | Session | `server/agent/session.ts`; records of kind `agent` in the workspace's store (a JSON file under `<home>/agent/` when the store keeps none). One turn at a time, 60 minutes at most; Stop ends it idle. A turn left running when the console stopped reads back as failed |
 | Limits | `server/agent/limits.ts`, provider-neutral. cwd = the console's folder; Read, Glob and Grep anywhere; Edit and Write only under `workspaces/<id>/**` and `tools/**`. Denied: its `grants.json`, the two registries, `core.lock.json` and every core file it lists, Bash, PowerShell. A path is matched after its links resolve and case-folded where the disk ignores case. The Claude provider maps them to `dontAsk` rules plus a PreToolUse guard, with `settingSources: ['project']`; the Cursor provider to its CLI's denies, a preToolUse hook and its answers to permission requests (`server/llm/cursor/policy.ts`) |
-| Tools | `check`, `apply {summary}`, `undo {sha}`, `propose_grants {change, reason}`, `create_workspace {id, prefix, title}` (`server/agent/tools.ts`) |
+| Tools | `check`, `apply {summary}`, `undo {sha}`, `delete {path}` (one file it may change, so a provider without a delete of its own can drop one), `propose_grants {change, reason}`, `create_workspace {id, prefix, title}` (`server/agent/tools.ts`) |
 | First conversation | of a workspace whose grants are still empty: the agent interviews the person, one question at a time, then proposes grants and sets up the board and playbooks |
 | Template | `consumer/workspace-template/`, on the local browser. Install renders it as `home` with empty grants; `create_workspace` copies it, adds both registry lines and the workspace's database settings in `config.json`, and commits it with empty grants |
 
@@ -235,7 +235,9 @@ person's approval.*
   under the two areas with the drift test and the registry's start checks (`server/registry.test.ts`), never Edge
   or Docker, since the rest of the core's tests change only with the core and `update.mjs` runs them all; `vite build` into `node_modules/.cache/work-console/dist`; swap that into `dist/`; commit only
   the two areas as `<id>: <summary>`. A failed check or build commits nothing and leaves `dist/` as it was. A
-  file outside the areas that changes during the check fails the apply.
+  file outside the areas that changes during the check fails the apply. `check` refuses those paths the same way,
+  so a passed check is one apply takes. Git's answers are read from its stdout alone: a warning on stderr, such
+  as LF to CRLF under `core.autocrlf`, is never taken for a path.
 - **Undo** reverts one of the agent's own commits the same way, as `<id>: undo — <summary>`; grants commits
   and undos are not undone. An Undo from the page is refused while a turn runs.
 - **Restart.** A commit asks for a restart; the console waits for the agent's turn to end, closes and exits

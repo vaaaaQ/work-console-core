@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import type { Grants } from '../../src/model/agent.ts'
 import { CONSOLE } from '../config.ts'
 import { EMPTY_GRANTS, grantsOf, grantsPath, normGrants, writeGrants } from '../grants.ts'
@@ -13,12 +13,14 @@ import { addRegistry, newWorkspaceIssue, render, TEMPLATE, TEMPLATE_FILES } from
 import type { NewWorkspace } from './template.ts'
 
 /* What the agent's console tools do, over git and an injectable exec: check, apply (check, build, commit, restart),
-   undo one of its commits, write accepted grants and add a workspace. One at a time; a failed step leaves no commit and the served build. */
+   undo one of its commits, delete one of its files, write accepted grants and add a workspace. One at a time; a failed step leaves no commit and the served build. */
 
 /** env = variables set over the server's own; out = all it printed, stdout = its standard output alone, which git's answers are read from */
 export type Exec = (cmd: string, args: string[], o: { cwd: string; timeoutMs?: number; env?: Record<string, string> }) => Promise<{ code: number; out: string; stdout: string }>
 export type Applied = { ok: true; sha: string; files: string[]; summary: string } | { ok: false; error: string; failures?: string[] }
 export interface Checked { ok: boolean; failures: string[] }
+/** path = relative to the console's folder, with forward slashes */
+export type Removed = { ok: true; path: string } | { ok: false; error: string }
 
 const CHECK_MS = 15 * 60_000, BUILD_MS = 10 * 60_000
 /** the core's tests a check runs beside the agent's own: the drift guard and the registry's start checks */
@@ -199,6 +201,20 @@ export class Ops {
       try { done = await this.commit(specs, `${ws}: ${s}`) } catch (e) { await swap.back(); return fail((e as Error).message) }
       swap.done(); this.restart?.()
       return { ok: true, sha: done.sha, files: done.files, summary: s }
+    })
+  }
+
+  /** one file under ws's areas deleted, as the agent may write it; apply commits the deletion */
+  remove(ws: string, path: string): Promise<Removed> {
+    return this.lock(async () => {
+      const l = agentLimits(this.root, ws), rel = relPath(this.root, path, l.fold)
+      if (rel === null || !canWrite(l, path)) return { ok: false, error: `${path} is not yours to delete: only ${l.write.join(', ')}, less ${l.deny.join(', ')}` }
+      const abs = resolve(this.root, path.replace(/[\\/]+/g, sep))
+      let st
+      try { st = lstatSync(abs) } catch { return { ok: false, error: `no such file: ${rel}` } }
+      if (!st.isFile()) return { ok: false, error: `${rel} is not a file` }
+      try { rmSync(abs) } catch (e) { return { ok: false, error: (e as Error).message } }
+      return { ok: true, path: rel }
     })
   }
 
