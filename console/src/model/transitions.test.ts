@@ -5,7 +5,7 @@ import { PB0 } from '../data/playbooks.ts'
 import { JOBS0, JR, OVR, TPL0 } from '../data/demo.ts'
 import { clone } from '../lib/util.ts'
 import { KINDS } from './context.ts'
-import type { Job } from './types.ts'
+import type { Cmd, Job } from './types.ts'
 import { CmdError, DESC_MAX, allSent, apply, askText, atOf, freshJob, hasDraft, isClosed, isLive, needsYou, nextMonth, phasesOf, seedFlow, stepOf, steps, stepsOf, tplOf, unsentAt } from './transitions.ts'
 import type { Ctx, NewJob } from './transitions.ts'
 
@@ -756,4 +756,83 @@ test('checkStep refuses an empty title, start on a you step, ask without a plann
   assert.equal(ok.flow.n1.s, 'tpl')
   assert.equal(stepOf(X, ok, 'n1')!.msg, 1)
   assert.deepEqual(tplOf(X, ok, 'n1'), [['chat', 'team', 'Is it ok?']])
+})
+
+/* ===== proposals ===== */
+const pp = (j: Job, cmds: Cmd[], say = 'from the daily') => apply({ ...X, by: 'console' }, j, { op: 'ppSet', say, cmds, by: 'conv-1' })
+
+test('ppSet dry-runs the cmds and stores the proposal; a refused cmd names its index and stores nothing', () => {
+  const j = roomy(), at = atOf(X, j)!
+  const { job } = pp(j, [{ op: 'stepAdd', after: at, step: llmStep }, { op: 'noteAdd', step: at, k: 'q', t: 'who owns it?' }])
+  assert.equal(job.pp!.say, 'from the daily')
+  assert.equal(job.pp!.by, 'conv-1')
+  assert.equal(job.pp!.cmds.length, 2)
+  assert.equal(job.flow.n1, undefined)
+  assert.equal(job.ph, undefined)
+  assert.equal(job.flow[at].b.length, j.flow[at].b.length)
+  assert.equal(job.jr.length, j.jr.length)
+  assert.throws(() => pp(j, [{ op: 'stepAdd', after: at, step: llmStep }, { op: 'stepDel', step: at }]),
+    (e: unknown) => e instanceof CmdError && e.code === 'bad_step' && /^2\. stepDel: /.test(e.message))
+})
+
+test('ppSet refuses an op outside PP_OPS, an empty say and more than 30 cmds', () => {
+  const j = roomy(), at = atOf(X, j)!, note: Cmd = { op: 'noteAdd', step: at, k: 'q', t: 'x' }
+  code(() => pp(j, [{ op: 'close', st: 'done' }]), 'bad_args')
+  code(() => pp(j, [note], ' '), 'bad_args')
+  code(() => pp(j, []), 'bad_args')
+  code(() => pp(j, Array.from({ length: 31 }, () => note)), 'bad_args')
+})
+
+test('ppAccept applies every cmd, writes one journal line by the person and clears pp', () => {
+  const j = roomy(), at = atOf(X, j)!, nx = later(j)[0]
+  const p = pp(j, [{ op: 'stepAdd', after: at, step: llmStep }, { op: 'stepDel', step: nx.id }]).job
+  const { job } = apply(X, p, { op: 'ppAccept' })
+  assert.equal(job.pp, undefined)
+  assert.equal(stepOf(X, job, nx.id), undefined)
+  assert.equal(stepOf(X, job, 'n1')!.add!.why, 'from the daily')
+  assert.equal(job.jr.length, j.jr.length + 1)
+  assert.equal(job.jr[0].o, 'Accepted the proposal: from the daily')
+  assert.equal(job.jr[0].a, 'you')
+  assert.match(job.jr[0].c, /^Added step “Check the logs” after “[^”]+”\. · Removed step “/)
+})
+
+test('ppAccept after the job moved re-checks: one refused cmd applies nothing and keeps pp with err', () => {
+  const j = roomy(), at = atOf(X, j)!, nx = later(j)[0]
+  const p = pp(j, [{ op: 'noteAdd', step: at, k: 'q', t: 'who owns it?' }, { op: 'stepDel', step: nx.id }]).job
+  const moved = apply(X, p, { op: 'stepDone', step: at }).job
+  const { job } = apply(X, moved, { op: 'ppAccept' })
+  assert.ok(stepOf(X, job, nx.id))
+  assert.equal(job.flow[at].b.length, moved.flow[at].b.length)
+  assert.match(job.pp!.err!, /^2\. stepDel: /)
+  assert.equal(job.jr.length, moved.jr.length)
+})
+
+test('ppEdit sets the start of an added llm step; on a you step or a non-stepAdd it is bad_args', () => {
+  const j = roomy(), at = atOf(X, j)!
+  const p = pp(j, [{ op: 'stepAdd', after: at, step: llmStep }, { op: 'stepAdd', after: at, step: { t: 'Call', m: 'you' } },
+    { op: 'noteAdd', step: at, k: 'q', t: 'x' }]).job
+  const e = apply(X, { ...p, pp: { ...p.pp!, err: 'old' } }, { op: 'ppEdit', i: 0, start: 'auto' }).job
+  assert.equal((e.pp!.cmds[0] as Extract<Cmd, { op: 'stepAdd' }>).step.start, 'auto')
+  assert.equal(e.pp!.err, undefined)
+  code(() => apply(X, p, { op: 'ppEdit', i: 1, start: 'auto' }), 'bad_args')
+  code(() => apply(X, p, { op: 'ppEdit', i: 2, start: 'auto' }), 'bad_args')
+  code(() => apply(X, p, { op: 'ppEdit', i: 0, start: 'never' as never }), 'bad_args')
+})
+
+test('ppReject clears pp and journals the reason', () => {
+  const j = roomy(), at = atOf(X, j)!
+  const p = pp(j, [{ op: 'noteAdd', step: at, k: 'q', t: 'x' }]).job
+  const { job } = apply(X, p, { op: 'ppReject', why: 'not now' })
+  assert.equal(job.pp, undefined)
+  assert.equal(job.jr[0].o, 'Rejected the proposal: from the daily')
+  assert.equal(job.jr[0].c, 'why: not now')
+  assert.equal(job.jr[0].l, 'off')
+  code(() => apply(X, job, { op: 'ppReject' }), 'bad_state')
+  code(() => apply(X, job, { op: 'ppAccept' }), 'bad_state')
+})
+
+test('an open proposal makes the job need you', () => {
+  const j = find((j) => !isClosed(j) && !!atOf(X, j) && !needsYou(X, j))
+  const p = pp(j, [{ op: 'describe', d: 'what the daily said' }]).job
+  assert.equal(needsYou(X, p), true)
 })

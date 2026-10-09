@@ -5,6 +5,7 @@ import { fromWall, midnight, offsetAt } from '../lib/zone.ts'
 import { openOf, reaches, settled, waitsM } from './blockers.ts'
 import { KINDS, ctxDefaults, ctxLabel, ctxOf, ctxUnit, parseWorkId } from './context.ts'
 import type { Kind } from './context.ts'
+import { PP_OPS } from './types.ts'
 import type {
   BadgeKind, Cmd, CtxItem, CtxKind, Flow, Job, JobStatus, JournalEntry, Lamp, NewStep, NodeState, Phase, Playbook, Round, Start, Step, StepOverride, Tpl, Ws,
 } from './types.ts'
@@ -51,7 +52,7 @@ export const unsentAt = (x: Ctx, j: Job) => {
 export const dueFrom = (j: Job) => (j.due ? midnight(Date.parse(j.due), j.lead || 0) : null)
 export const dueNow = (x: Ctx, j: Job) => { const f = dueFrom(j); return f != null && nowOf(x).getTime() >= f }
 export const needsYou = (x: Ctx, j: Job) => !isClosed(j) && (j.st === 'waiting-user' || j.st === 'ready' || hasDraft(j) || unsentAt(x, j)
-  || flows(j).some((f) => f.s === 'bad' || f.b.some((b) => b.o) || !!f.bb) || dueNow(x, j))
+  || flows(j).some((f) => f.s === 'bad' || f.b.some((b) => b.o) || !!f.bb) || dueNow(x, j) || !!j.pp)
 /** the same wall-clock day and time one month on, kept inside a shorter month */
 export function nextMonth(iso: string) {
   const ms = Date.parse(iso), d = new Date(ms + offsetAt(ms)), day = d.getUTCDate()
@@ -406,6 +407,33 @@ function stepMove(x: Ctx, j: Job, S: Step, F: Flow, c: Extract<Cmd, { op: 'stepM
   jr(x, j, `Moved step “${S.t}” ${where} “${anchor.t}”.`, 'moved on this job only.', nextTxt(x, j, atOf(x, j)), by(x), 'ok')
 }
 
+/** applies cmds in order to a copy; a refusal names its cmd: "2. stepDel: …"; nx = the last step one moved on to */
+export function runAll(x: Ctx, job: Job, cmds: Cmd[]): { job: Job; nx: string | null } {
+  let cur = clone(job), nx: string | null = null
+  cmds.forEach((c, i) => {
+    try { const r = apply(x, cur, c); cur = r.job; nx = r.nx ?? nx } catch (e) {
+      if (e instanceof CmdError) throw new CmdError(e.code, `${i + 1}. ${c?.op}: ${e.message}`)
+      throw e
+    }
+  })
+  return { job: cur, nx }
+}
+/** the proposal's cmds applied as the person's: one journal line for all, an added step's reason defaults to what it says */
+function ppAccept(x: Ctx, j: Job): { job: Job; nx: string | null } {
+  const p = j.pp
+  if (!p) throw new CmdError('bad_state', `${j.id} has no proposal`)
+  delete j.pp
+  let r: { job: Job; nx: string | null }
+  try { r = runAll(x, j, p.cmds.map((c) => (c.op === 'stepAdd' && !c.why ? { ...c, why: p.say } : c))) } catch (e) {
+    if (!(e instanceof CmdError)) throw e
+    j.pp = { ...p, err: e.message }
+    return { job: j, nx: null }
+  }
+  const out = r.job, lines = out.jr.splice(0, out.jr.length - j.jr.length).reverse()
+  jr(x, out, `Accepted the proposal: ${line(p.say)}`, line(lines.map((l) => l.o).join(' · '), 600), nextTxt(x, out, atOf(x, out)), by(x), 'ok')
+  return { job: out, nx: r.nx }
+}
+
 const STEP_OPS = new Set(['returnTo', 'stepDone', 'stepSkip', 'stepWait', 'stepResume', 'stepReopen', 'acceptDraft', 'rejectDraft',
   'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'runStart', 'runReply', 'runDraft', 'draftIn', 'runAnswer', 'runEnd', 'artifact',
   'waitAdd', 'waitDel', 'blockerClosed', 'runBlocker', 'blockerDrop', 'stepDel', 'stepEdit', 'stepMove'])
@@ -740,6 +768,36 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     case 'stepMove':
       stepMove(x, j, S, F, cmd)
       break
+    case 'ppSet': {
+      needOpen()
+      const say = text(cmd.say, 2000, 'what the proposal says'), who = text(cmd.by, 200, 'the proposer')
+      if (!Array.isArray(cmd.cmds) || !cmd.cmds.length || cmd.cmds.length > 30) throw new CmdError('bad_args', 'a proposal holds 1–30 commands')
+      cmd.cmds.forEach((c, i) => { if (!(PP_OPS as readonly string[]).includes(c?.op)) throw new CmdError('bad_args', `${i + 1}. ${c?.op} cannot be proposed`) })
+      delete j.pp
+      runAll(x, j, cmd.cmds)
+      j.pp = { at: nowOf(x).toISOString(), by: who, say, cmds: clone(cmd.cmds), ...(job.v != null ? { v: job.v } : {}) }
+      j.ts = nowOf(x).getTime()
+      break
+    }
+    case 'ppEdit': {
+      const p = j.pp, c = p?.cmds[cmd.i]
+      if (!p) throw new CmdError('bad_state', `${j.id} has no proposal`)
+      if (c?.op !== 'stepAdd' || c.step.m !== 'llm') throw new CmdError('bad_args', `proposal command ${cmd.i} does not add an llm step`)
+      if (!STARTS.includes(cmd.start)) throw new CmdError('bad_args', `unknown start ${String(cmd.start)}`)
+      c.step = { ...c.step, start: cmd.start }
+      delete p.err
+      break
+    }
+    case 'ppAccept':
+      return ppAccept(x, j)
+    case 'ppReject': {
+      const p = j.pp
+      if (!p) throw new CmdError('bad_state', `${j.id} has no proposal`)
+      delete j.pp
+      const why = line(cmd.why || '', 300)
+      jr(x, j, `Rejected the proposal: ${line(p.say)}`, why ? `why: ${why}` : 'no reason given.', nextTxt(x, j, atOf(x, j)), by(x), 'off')
+      break
+    }
     default:
       throw new CmdError('bad_args', `unknown command ${(cmd as { op: string }).op}`)
   }

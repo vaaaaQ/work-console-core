@@ -88,11 +88,14 @@ export interface Round { n: number; from: string; at: string; by: string; why: s
 /** v = the store's version; a write names the version it replaces; rounds = past passes, oldest first;
  *  rf = the step the current pass began at (absent = the first step);
  *  ph + tpl = the job's own steps and their planned messages, copied from its playbook on the first change to them;
- *  ns = the highest number an added step n<k> took, so a removed step's id never comes back */
+ *  ns = the highest number an added step n<k> took, so a removed step's id never comes back; pp = the open proposal */
 export interface Job extends JobSeed {
   flow: Record<string, Flow>; ts: number; jr: JournalEntry[]; v?: number; rounds?: Round[]; rf?: string
-  ph?: Phase[]; tpl?: Record<string, Tpl[]>; ns?: number
+  ph?: Phase[]; tpl?: Record<string, Tpl[]>; ns?: number; pp?: Proposal
 }
+/** changes an agent proposes for a job, applied only when accepted: by = its conversation, say = what it says in plain words,
+ *  v = the job's version it was checked on, err = why the last accept failed */
+export interface Proposal { at: string; by: string; say: string; cmds: Cmd[]; v?: number; err?: string }
 
 /** a job change; the backend-only ops come from the LLM runner */
 export type Cmd =
@@ -139,12 +142,18 @@ export type Cmd =
   /** null clears start or ask */
   | { op: 'stepEdit'; step: string; t?: string; x?: string; m?: Mode; start?: Start | null; tpl?: Tpl[]; ask?: 1 | null }
   | { op: 'stepMove'; step: string; before?: string; after?: string }
+  /** a proposal: set by the console after a dry run; edit = the start of the llm step its cmd i adds; accept applies all or nothing */
+  | { op: 'ppSet'; say: string; cmds: Cmd[]; by: string }
+  | { op: 'ppEdit'; i: number; start: Start } | { op: 'ppAccept' } | { op: 'ppReject'; why?: string }
 /** ops the page may send; the rest belong to the LLM runner */
 export const PAGE_OPS = ['start', 'close', 'reopen', 'stepDone', 'stepSkip', 'stepResume', 'stepReopen', 'rejectDraft', 'stepWait',
   'acceptDraft', 'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'nudged', 'replied', 'schedule', 'ctxAdd', 'ctxSet', 'ctxDel', 'describe',
-  'waitAdd', 'waitDel', 'blockerDrop'] as const
-/** ops a Claude Code session may send through the console's MCP: the page's, plus returning to a passed step */
-export const SESSION_OPS = [...PAGE_OPS, 'returnTo'] as const
+  'waitAdd', 'waitDel', 'blockerDrop', 'ppEdit', 'ppAccept', 'ppReject'] as const
+/** ops a Claude Code session may send through the console's MCP: the page's but proposals, plus returning to a passed step */
+export const SESSION_OPS = [...PAGE_OPS.filter((o) => !o.startsWith('pp')), 'returnTo'] as const
+/** ops a proposal may hold */
+export const PP_OPS = ['stepAdd', 'stepDel', 'stepEdit', 'stepMove', 'returnTo', 'waitAdd', 'waitDel', 'stepDone',
+  'describe', 'ctxAdd', 'ctxDel', 'noteAdd'] as const
 
 /** what a reply to a draft asks for: change it, change it and accept it, or only answer */
 export type RunIntent = 'revise' | 'accept' | 'ask'

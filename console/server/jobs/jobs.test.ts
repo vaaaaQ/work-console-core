@@ -161,3 +161,23 @@ test('the console may send blockerClosed; the page may not', async () => {
   const r = await jobs.cmd(a.id, { op: 'blockerClosed', step: 'tr', j: b.id, st: 'done', out: 'yes' }, undefined, 'console')
   assert.equal(r.job.flow.tr.s, 'cur')
 })
+
+test('the console may send ppSet, replyIn and acceptDraft; a session may not send ppAccept', async () => {
+  const { jobs } = setup(), j = await openJob(jobs), at = T.atOf(demoCtx(), j)!
+  const r = await jobs.cmd(j.id, { op: 'ppSet', say: 'from the daily', cmds: [{ op: 'noteAdd', step: at, k: 'q', t: 'who?' }], by: 'c1' }, undefined, 'console')
+  assert.equal(r.job.pp!.say, 'from the daily')
+  for (const op of ['replyIn', 'acceptDraft'])
+    await assert.rejects(jobs.cmd(j.id, { op, step: at } as never, undefined, 'console'), (e: unknown) => e instanceof HttpError && !/cannot send/.test(e.message))
+  await assert.rejects(jobs.cmd(j.id, { op: 'ppAccept' }, undefined, 'session'), code(400, 'bad_args'))
+  await assert.rejects(jobs.cmd(j.id, { op: 'ppSet', say: 'x', cmds: [], by: 'c' }), code(400, 'bad_args'))
+})
+
+test('ppAccept with a waitAdd reads the other jobs for the link', async () => {
+  const { jobs } = setup(), j = await openJob(jobs), at = T.atOf(demoCtx(), j)!
+  const b = (await jobs.all()).find((o) => o.id !== j.id && !T.isClosed(o) && o.st !== 'recurring')!
+  await jobs.cmd(j.id, { op: 'ppSet', say: 'wait for it', cmds: [{ op: 'waitAdd', step: at, j: b.id }], by: 'c1' }, undefined, 'console')
+  const r = await jobs.cmd(j.id, { op: 'ppAccept' })
+  assert.equal(r.job.pp, undefined)
+  assert.equal(r.job.flow[at].w![0].j, b.id)
+  assert.match((await jobs.get(b.id))!.jr[0].o, /^Holds /)
+})
