@@ -35,6 +35,11 @@ export function supervisorOf(home) {
   return s && alive(s.pid) ? s : null
 }
 
+/** something answers on home's loopback port: a console runs there, whoever started it */
+export async function answering(home) {
+  try { await fetch(`http://127.0.0.1:${portOf(home)}/api/state`, { signal: AbortSignal.timeout(2000) }); return true } catch { return false }
+}
+
 export function supervise(o) {
   const { folder, home, cmd = serverCmd(folder), finish = finishCmd(folder), log = () => {}, quickMs = 60000, backoff: wait = backoff } = o
   const running = supervisorOf(home)

@@ -45,9 +45,10 @@ node <dir>/scripts/update.mjs [--give-up]                                      #
   `--no-restart` leaves the restart to the console that runs it. `npm ci` runs only when the npm lock changed:
   under `run.mjs` the update asks the console to restart, which waits for the agents' turns, and `run.mjs` runs
   `npm ci` and the build (`update.mjs --finish`) before it starts the server again, so nothing rewrites
-  `node_modules` under a running server. A finish that fails puts the folder back and writes
-  `update-failed.json` at step `finish`: the banner shows its output and `logs/console.log`, **Apply** tries
-  the update again and **Dismiss** drops the record.
+  `node_modules` under a running server. A console that runs without `run.mjs` (a scheduled task, `node
+  server/main.ts`) gets such an update refused while it answers on its port: stop it, then update. A finish
+  that fails puts the folder back and writes `update-failed.json` at step `finish`: the banner shows its output
+  and `logs/console.log`, **Apply** tries the update again and **Dismiss** drops the record.
 - What to change where, and what never to touch, is in [EXTENDING.md](EXTENDING.md).
 - Starting at logon is up to you: install prints the command and changes nothing on your system.
 

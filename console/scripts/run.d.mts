@@ -8,6 +8,8 @@ export interface RunState { pid: number; server: number | null; folder: string; 
 export function finishFile(home: string): string
 /** <home>/run.json while its supervisor lives, else null */
 export function supervisorOf(home: string): RunState | null
+/** something answers on the loopback port in <home>/config.json: a console runs there, whoever started it */
+export function answering(home: string): Promise<boolean>
 export function supervise(o: {
   folder: string
   home: string

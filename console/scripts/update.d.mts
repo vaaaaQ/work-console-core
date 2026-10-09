@@ -39,5 +39,7 @@ export function update(o: {
   running?: (home: string) => { port: number; finish?: boolean } | null
   /** settles once that supervisor finished the update; false when it has not yet */
   settle?: (home: string, port: number) => Promise<boolean>
+  /** a console answers at home; with no supervisor that finishes, a lock change is refused while it does */
+  up?: (home: string) => Promise<boolean>
   log?: (line: string) => void
 }): Promise<{ status: 'current' | 'updated' | 'reintegrate' | 'refused' | 'failed'; code: number; sha?: string; branch?: string }>

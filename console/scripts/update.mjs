@@ -3,7 +3,7 @@ import { existsSync, realpathSync, rmSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { consoleHome, gitId, npmChecks, readJson, run, tail, writeJson } from './lib.mjs'
-import { finishFile, requestRestart, supervisorOf, waitUp } from './run.mjs'
+import { answering, finishFile, requestRestart, supervisorOf, waitUp } from './run.mjs'
 
 /* Moves the console to the core's newest commit:
      node <dir>/scripts/update.mjs [--no-pull] [--core <core repo>] [--give-up] [--no-restart] [--finish]
@@ -13,7 +13,8 @@ import { finishFile, requestRestart, supervisorOf, waitUp } from './run.mjs'
    runs the update again, which applies it. --give-up drops the branch and the worktree. --no-restart leaves the
    restart to the console that runs this, so it can wait for its agents' turns.
    npm ci runs only when the npm lock changed; under run.mjs it waits for the restart, after the agents' turns, and
-   the supervisor runs --finish (npm ci, the build) before it starts the server again. */
+   the supervisor runs --finish (npm ci, the build) before it starts the server again. A console that runs without
+   run.mjs gets such an update refused: npm ci beside its server fails on the native modules it holds. */
 
 export const EXIT_REINTEGRATE = 3
 const HERE = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -96,7 +97,7 @@ export function giveUp({ home, run: r = run }) {
 }
 
 export async function update(o) {
-  const { home, pull = true, run: r = run, log = console.log, restart = requestRestart, running = supervisorOf, settle = settled } = o
+  const { home, pull = true, run: r = run, log = console.log, restart = requestRestart, running = supervisorOf, settle = settled, up = answering } = o
   const check = o.check ?? ((dir) => npmChecks(dir, { run: r, log: (l) => log(`  ${l}`), build: true }))
   const syncTo = o.sync ?? coreSync(r)
   const build = o.build ?? npmBuild(r)
@@ -155,10 +156,15 @@ export async function update(o) {
   const c = check(dir)
   if (!c.ok) return fail(c.step ?? 'check', c.output ?? '')
 
+  const lockChanged = !tryGit(r, repo, ['diff', '--quiet', pre, branch, '--', join(rel, 'package-lock.json').replaceAll('\\', '/')])
+  const sup = lockChanged ? running(home) : null
+  // only run.mjs runs npm ci while the server is down; beside a running one it fails (EPERM on a held .node)
+  if (lockChanged && !sup?.finish && (sup || await up(home))) {
+    if (!reuse) drop(r, repo, { worktree, branch })
+    return refused(`the npm lock changed and a console runs for ${home} without run.mjs, which runs npm ci while the server is down: stop it, then update again`)
+  }
   const m = r('git', ['-C', repo, 'merge', '-q', '--ff-only', branch])
   if (m.status !== 0) return refused(`${repo} moved since ${branch} was made, so it cannot fast-forward: run update.mjs --give-up, then update again`)
-  const lockChanged = !tryGit(r, repo, ['diff', '--quiet', pre, 'HEAD', '--', join(rel, 'package-lock.json').replaceAll('\\', '/')])
-  const sup = lockChanged ? running(home) : null
   if (sup?.finish) {
     // npm ci rewrites node_modules under a running server, so its supervisor runs it once the server has exited
     writeJson(finishFile(home), { folder, repo, pre, sha })

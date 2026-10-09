@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { alive } from './lib.mjs'
-import { RESTART, backoff, finishFile, requestRestart, stopConsole, supervise, supervisorOf, waitUp } from './run.mjs'
+import { RESTART, answering, backoff, finishFile, requestRestart, stopConsole, supervise, supervisorOf, waitUp } from './run.mjs'
 import { tempDir } from '../server/testdirs.ts'
 
 /* run.mjs with a stand-in server: a script that counts its starts in a file, exits with the codes it is given
@@ -182,4 +182,14 @@ test('waitUp resolves once /api/state answers and names the log when nothing doe
   const port = (srv.address() as { port: number }).port
   try { assert.equal(await waitUp({ port, home: 'H', timeoutMs: 2000 }), `http://127.0.0.1:${port}/`) } finally { srv.close() }
   await assert.rejects(waitUp({ port, home: 'H', timeoutMs: 300 }), /did not answer.*console\.log/)
+})
+
+test('answering: true while anything answers on the port in config.json, with or without run.json; false once nothing does', async () => {
+  const srv = createServer((_req, res) => { res.statusCode = 404; res.end() })
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r))
+  const home = homeDir()
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ loopbackPort: (srv.address() as { port: number }).port }))
+  try { assert.equal(await answering(home), true) } finally { srv.closeAllConnections(); await new Promise((r) => srv.close(r)) }
+  assert.equal(await answering(home), false)
+  assert.equal(await answering(homeDir()), false)
 })

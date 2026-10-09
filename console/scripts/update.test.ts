@@ -73,7 +73,7 @@ function harness() {
   const o = (s: ReturnType<typeof setup>, more: Record<string, unknown> = {}) => ({
     home: s.home, folder: s.to, run: r, check, log: quiet,
     sync: ({ core, to, rev }: { core: string; to: string; rev: string }) => { sync({ core, to, rev, log: quiet }) },
-    restart: async (h: string) => { restarts.push(h); return true }, running: () => null, ...more,
+    restart: async (h: string) => { restarts.push(h); return true }, running: () => null, up: async () => false, ...more,
   })
   return { npm, checked, restarts, o }
 }
@@ -221,15 +221,50 @@ test('a finish whose npm ci fails is recorded the same way, and give up dismisse
   assert.equal(git(s.to, 'rev-parse', 'HEAD'), pre)
 })
 
-test('with no console, or one whose supervisor finishes nothing, npm ci and the build run in place', async () => {
-  for (const running of [() => null, () => ({ pid: 1, server: 2, folder: 'x', port: 1 })]) {
-    const s = setup(), h = harness()
-    advance(s.origin, { 'console/package-lock.json': '{ "v": 2 }\n' })
-    assert.equal((await update(h.o(s, { running }))).status, 'updated')
-    assert.deepEqual(h.npm, [`npm ci @ ${s.to}`, `npm run build @ ${s.to}`])
-    assert.deepEqual(h.restarts, [s.home])
-    assert.equal(existsSync(finishFile(s.home)), false)
+test('with no console running, npm ci and the build run in place', async () => {
+  const s = setup(), h = harness()
+  advance(s.origin, { 'console/package-lock.json': '{ "v": 2 }\n' })
+  assert.equal((await update(h.o(s))).status, 'updated')
+  assert.deepEqual(h.npm, [`npm ci @ ${s.to}`, `npm run build @ ${s.to}`])
+  assert.deepEqual(h.restarts, [s.home])
+  assert.equal(existsSync(finishFile(s.home)), false)
+})
+
+test('a lock change while a console runs that no run.mjs finishes for is refused before the merge; without one it builds beside it', async () => {
+  // one that answers on its port with no run.json (a scheduled task, node server/main.ts), and a supervisor that finishes nothing
+  for (const more of [{ up: async () => true }, { running: () => ({ pid: 1, server: 2, folder: 'x', port: 1 }) }]) {
+    const s = setup(), h = harness(), pre = git(s.to, 'rev-parse', 'HEAD'), lines: string[] = []
+    const sha = advance(s.origin, { 'console/package-lock.json': '{ "v": 2 }\n' })
+    const r = await update(h.o(s, { ...more, log: (l: string) => lines.push(l) }))
+    assert.deepEqual([r.status, r.code], ['refused', 1])
+    assert.match(lines.at(-1)!, /npm lock changed.*without run\.mjs/)
+    assert.equal(git(s.to, 'rev-parse', 'HEAD'), pre)
+    assert.deepEqual([h.npm, h.restarts], [[], []], 'nothing runs in the folder while the server holds it')
+    assert.deepEqual(branches(s.to), ['main'])
+    assert.equal(existsSync(join(updatesDir(s.home), sha.slice(0, 7))), false)
+    assert.equal(failedUpdate(s.home), null)
   }
+  const s = setup(), h = harness()
+  advance(s.origin, { 'console/server/a.ts': 'export const a = 2\n' })
+  assert.equal((await update(h.o(s, { up: async () => true }))).status, 'updated')
+  assert.deepEqual(h.npm, [`npm run build @ ${s.to}`])
+})
+
+test('a reintegrated update with a lock change is refused while such a console runs, and keeps its fix for the next run', async () => {
+  const s = setup(), h = harness()
+  const sha = advance(s.origin, { 'console/server/broken.ts': 'broken\n', 'console/package-lock.json': '{ "v": 2 }\n' })
+  assert.equal((await update(h.o(s))).status, 'reintegrate')
+  const f = failedUpdate(s.home)!
+  put(f.worktree, 'workspaces/home/fix.ts', 'export {}\n')
+  git(f.worktree, 'add', '-A')
+  git(f.worktree, 'commit', '-q', '-m', 'home: follow the core')
+  assert.equal((await update(h.o(s, { pull: false, up: async () => true }))).status, 'refused')
+  assert.deepEqual(failedUpdate(s.home), f)
+  assert.equal(existsSync(join(f.worktree, 'workspaces', 'home', 'fix.ts')), true)
+  assert.deepEqual(h.npm, [])
+  const r = await update(h.o(s, { pull: false }))
+  assert.deepEqual([r.status, r.sha], ['updated', sha])
+  assert.deepEqual(h.npm, [`npm ci @ ${s.to}`, `npm run build @ ${s.to}`])
 })
 
 test('fail: the result sits on update/<sha7>, the folder stays on its commit, update-failed.json has the output, exit 3', async () => {
