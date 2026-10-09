@@ -30,7 +30,8 @@ try {
         $stopped = $true
         npm ci
         if ($LASTEXITCODE) { throw 'npm ci failed' }
-        Set-Content -Encoding ascii -NoNewline $stamp $lock
+        # named: in Windows PowerShell 5.1, -NoNewline before positional arguments swaps Path and Value
+        Set-Content -Path $stamp -Value $lock -Encoding ascii -NoNewline
     }
     npm run build
     if ($LASTEXITCODE) { throw 'the build failed' }
