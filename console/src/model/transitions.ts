@@ -6,7 +6,7 @@ import { openOf, reaches, settled, waitsM } from './blockers.ts'
 import { KINDS, ctxDefaults, ctxLabel, ctxOf, ctxUnit, parseWorkId } from './context.ts'
 import type { Kind } from './context.ts'
 import type {
-  BadgeKind, Cmd, CtxItem, CtxKind, Flow, Job, JobStatus, JournalEntry, Lamp, NodeState, Phase, Playbook, Round, Step, StepOverride, Tpl, Ws,
+  BadgeKind, Cmd, CtxItem, CtxKind, Flow, Job, JobStatus, JournalEntry, Lamp, NewStep, NodeState, Phase, Playbook, Round, Start, Step, StepOverride, Tpl, Ws,
 } from './types.ts'
 
 /* The one place for job transitions: the page (demo and live) and the backend run the same code.
@@ -37,8 +37,10 @@ export const isClosed = (j: Job) => j.st === 'done' || j.st === 'cancelled'
 export const isLive = (f: Flow) => f.s !== 'done' && f.s !== 'skip'
 export const flows = (j: Job) => Object.values(j.flow)
 export const atOf = (x: Ctx, j: Job) => { const s = stepsOf(x, j).find((s) => j.flow[s.id] && isLive(j.flow[s.id])); return s ? s.id : null }
-/** a draft to review: one whose step still waits for an open blocker is not yet */
-export const hasDraft = (j: Job) => flows(j).some((f) => f.dr && !openOf(f).length)
+/** a step not reached yet: its draft, if any, waits until the flow comes back to it */
+export const ahead = (f: Flow) => f.s === 'fut' || f.s === 'tpl'
+/** a draft to review: one whose step still waits for an open blocker, or is not reached yet, is not yet */
+export const hasDraft = (j: Job) => flows(j).some((f) => f.dr && !ahead(f) && !openOf(f).length)
 /** the current step still has a planned message you have not sent */
 export const unsentAt = (x: Ctx, j: Job) => {
   if (j.st === 'draft') return false
@@ -272,9 +274,141 @@ function returnTo(x: Ctx, j: Job, sid: string, why: string) {
     `work on “${all[ti].t}”.`, by(x), 'cur')
 }
 
+/* ===== the job's own steps ===== */
+const STARTS: readonly Start[] = ['hand', 'self', 'auto']
+/** the first change to a job's steps copies its playbook's steps and their planned messages into it */
+function own(x: Ctx, j: Job) {
+  if (j.ph) return
+  j.ph = clone(x.PB[j.pb]?.ph ?? [])
+  j.tpl = {}
+  for (const s of stepsOf(x, j)) if (x.TPL[s.id]) j.tpl[s.id] = clone(x.TPL[s.id])
+}
+/** the next n<k> no step of the job, now or in a past round, ever had */
+function newId(j: Job) {
+  const ids = [...(j.ph ?? []).flatMap((p) => p.s.map((s) => s.id)), ...Object.keys(j.flow), ...(j.rounds ?? []).flatMap((r) => Object.keys(r.flow))]
+  const k = Math.max(j.ns ?? 0, ...ids.map((id) => Number(/^n(\d+)$/.exec(id)?.[1] ?? 0))) + 1
+  j.ns = k
+  return `n${k}`
+}
+const text = (v: unknown, max: number, what: string) => {
+  const t = typeof v === 'string' ? v.trim() : ''
+  if (!t || t.length > max) throw new CmdError('bad_args', `${what} is empty or longer than ${max} characters`)
+  return t
+}
+function checkTpl(tpl: unknown): Tpl[] {
+  if (!Array.isArray(tpl) || tpl.length > 10) throw new CmdError('bad_args', 'planned messages are a list of at most 10')
+  return tpl.map((m) => {
+    const ok = Array.isArray(m) && (m.length === 3 || m.length === 4) && typeof m[0] === 'string' && !!m[0].trim() && typeof m[1] === 'string'
+      && typeof m[2] === 'string' && !!m[2].trim() && (m[3] === undefined || (typeof m[3] === 'object' && m[3] !== null && !Array.isArray(m[3])))
+    if (!ok) throw new CmdError('bad_args', 'a planned message is [source, channel, text, head?]')
+    return clone(m) as Tpl
+  })
+}
+/** a new or changed step as the job keeps it, checked; throws bad_args naming what is wrong */
+function checkStep(n: Partial<NewStep>, tpl: Tpl[]): Omit<Step, 'id'> {
+  const t = text(n.t, 200, 'the title')
+  if (n.m !== 'you' && n.m !== 'llm') throw new CmdError('bad_args', `unknown mode ${String(n.m)}`)
+  if (n.start !== undefined && !STARTS.includes(n.start)) throw new CmdError('bad_args', `unknown start ${String(n.start)}`)
+  if (n.start !== undefined && n.m === 'you') throw new CmdError('bad_args', 'only an llm step has a start')
+  if (n.ask !== undefined && n.ask !== 1) throw new CmdError('bad_args', 'ask is 1 or nothing')
+  if (n.ask && !['chat', 'mail'].includes(tpl[0]?.[0])) throw new CmdError('bad_args', 'an ask step needs a planned chat or mail message')
+  if (n.a !== undefined && (!Array.isArray(n.a) || n.a.some((a) => typeof a !== 'string' || !a.trim()))) throw new CmdError('bad_args', 'artifacts are a list of names')
+  if (n.out !== undefined && (typeof n.out !== 'string' || !/^\w+$/.test(n.out))) throw new CmdError('bad_args', 'out is a variable name')
+  const x = n.x === undefined ? t : text(n.x, 1000, 'the exit criterion')
+  return {
+    t, m: n.m, x, ...(n.a?.length ? { a: n.a.map((a) => a.trim()) } : {}), ...(tpl.length ? { msg: tpl.length } : {}),
+    ...(n.out ? { out: n.out } : {}), ...(n.start ? { start: n.start } : {}), ...(n.ask ? { ask: 1 as const } : {}),
+  }
+}
+/** where a step goes: the anchor's phase and the index there, and its index among all the job's steps */
+function anchorAt(x: Ctx, j: Job, c: { before?: string; after?: string }) {
+  const id = c.before ?? c.after, after = c.after !== undefined
+  if (!id || (c.before !== undefined && after)) throw new CmdError('bad_step', 'name one step to go before or after')
+  const all = stepsOf(x, j), i = all.findIndex((s) => s.id === id)
+  if (i < 0) throw new CmdError('bad_step', `${j.id} has no step ${id}`)
+  const p = j.ph!.find((p) => p.s.some((s) => s.id === id))!
+  return { anchor: all[i], p, k: p.s.findIndex((s) => s.id === id) + (after ? 1 : 0), at: i + (after ? 1 : 0), where: after ? 'after' : 'before' }
+}
+const started = (j: Job) => j.st !== 'draft' && j.st !== 'ready'
+/** the current step's index: the steps before it are passed; a job that has not started has passed none */
+const curIndex = (x: Ctx, j: Job) => {
+  if (!started(j)) return 0
+  const at = atOf(x, j)
+  return at ? stepsOf(x, j).findIndex((s) => s.id === at) : stepsOf(x, j).length
+}
+const unlink = (j: Job, id: string) => {
+  const p = j.ph!.find((p) => p.s.some((s) => s.id === id))!
+  p.s = p.s.filter((s) => s.id !== id)
+  if (!p.s.length) j.ph = j.ph!.filter((q) => q !== p)
+}
+
+function stepAdd(x: Ctx, j: Job, c: Extract<Cmd, { op: 'stepAdd' }>): string | null {
+  const tpl = c.tpl === undefined ? [] : checkTpl(c.tpl), body = checkStep(c.step ?? {}, tpl)
+  own(x, j)
+  const { anchor, p, k, at: ni, where } = anchorAt(x, j, c), ai = curIndex(x, j), cur = atOf(x, j)
+  if (ni < ai) throw new CmdError('bad_step', `“${anchor.t}” is already passed`)
+  const takes = started(j) && ni === ai
+  if (takes && cur && j.flow[cur].run) throw new CmdError('bad_state', `“${stepOf(x, j, cur)!.t}” has an LLM run; wait for it or cancel it`)
+  const why = (c.why ?? '').trim()
+  const s: Step = { id: newId(j), ...body, add: { at: nowOf(x).toISOString(), by: by(x), why } }
+  p.s.splice(k, 0, s)
+  if (tpl.length) j.tpl![s.id] = tpl
+  j.flow[s.id] = { ...blank(s), nw: 1 }
+  // the step it goes before was current: it waits, its draft kept, until the flow reaches it again
+  if (takes) {
+    if (cur) { const o = j.flow[cur]; o.s = stepOf(x, j, cur)!.msg ? 'tpl' : 'fut'; o.m = ''; o.nw = 1 }
+    onto(j.flow[s.id])
+  }
+  syncStatus(x, j)
+  jr(x, j, `Added step “${s.t}” ${where} “${anchor.t}”.`, why ? `why: ${line(why)}` : 'added to this job only.', nextTxt(x, j, atOf(x, j)), by(x), takes ? 'cur' : 'ok')
+  return takes ? s.id : null
+}
+function stepDel(x: Ctx, j: Job, S: Step, F: Flow) {
+  if (!ahead(F)) throw new CmdError('bad_step', `“${S.t}” is reached or passed; only a step not reached yet can be removed`)
+  if (stepsOf(x, j).length === 1) throw new CmdError('bad_step', `“${S.t}” is the job's only step`)
+  own(x, j)
+  unlink(j, S.id)
+  delete j.flow[S.id]; delete j.tpl![S.id]
+  jr(x, j, `Removed step “${S.t}”.`, 'removed from this job only.', nextTxt(x, j, atOf(x, j)), by(x), 'off')
+}
+const EDITS = { t: 'title', x: 'exit criterion', m: 'mode', start: 'start', ask: 'ask', msg: 'planned messages' } as const
+function stepEdit(x: Ctx, j: Job, S: Step, F: Flow, c: Extract<Cmd, { op: 'stepEdit' }>) {
+  if (!isLive(F)) throw new CmdError('bad_step', `“${S.t}” is ${F.s === 'done' ? 'done' : 'skipped'}`)
+  if (F.run) throw new CmdError('bad_state', `“${S.t}” has an LLM run; wait for it or cancel it`)
+  own(x, j)
+  const tpl = c.tpl === undefined ? tplOf(x, j, S.id) : checkTpl(c.tpl), m = c.m ?? S.m
+  const start = c.start === null ? undefined : c.start ?? (m === 'you' ? undefined : S.start)
+  const ask = c.ask === null ? undefined : c.ask ?? S.ask
+  const body = checkStep({ t: c.t ?? S.t, x: c.x ?? S.x, m, a: S.a, out: S.out, start, ask }, tpl)
+  const was = { t: S.t, x: S.x, m: S.m, start: S.start, ask: S.ask, msg: JSON.stringify(tplOf(x, j, S.id)) }
+  const now = { t: body.t, x: body.x, m: body.m, start: body.start, ask: body.ask, msg: JSON.stringify(tpl) }
+  const changed = (Object.keys(EDITS) as (keyof typeof EDITS)[]).filter((k) => was[k] !== now[k])
+  if (!changed.length) throw new CmdError('bad_args', `nothing changes on “${S.t}”`)
+  const s = stepOf(x, j, S.id)!
+  delete s.msg; delete s.start; delete s.ask
+  Object.assign(s, body)
+  if (tpl.length) j.tpl![s.id] = tpl; else delete j.tpl![s.id]
+  if (ahead(F)) F.s = s.msg ? 'tpl' : 'fut'
+  F.nw = 1
+  syncStatus(x, j)
+  jr(x, j, `Changed step “${s.t}”: ${changed.map((k) => EDITS[k]).join(', ')}.`, 'changed on this job only.', nextTxt(x, j, atOf(x, j)), by(x), 'ok')
+}
+function stepMove(x: Ctx, j: Job, S: Step, F: Flow, c: Extract<Cmd, { op: 'stepMove' }>) {
+  if (!ahead(F)) throw new CmdError('bad_step', `“${S.t}” is reached or passed; only a step not reached yet can move`)
+  if ((c.before ?? c.after) === S.id) throw new CmdError('bad_step', 'a step cannot go next to itself')
+  own(x, j)
+  const s = stepOf(x, j, S.id)!
+  unlink(j, S.id)
+  const { anchor, p, k, at: ni, where } = anchorAt(x, j, c), ai = curIndex(x, j)
+  if (started(j) && ni <= ai) throw new CmdError('bad_step', `“${S.t}” can only go after the current step`)
+  p.s.splice(k, 0, s)
+  F.nw = 1
+  jr(x, j, `Moved step “${S.t}” ${where} “${anchor.t}”.`, 'moved on this job only.', nextTxt(x, j, atOf(x, j)), by(x), 'ok')
+}
+
 const STEP_OPS = new Set(['returnTo', 'stepDone', 'stepSkip', 'stepWait', 'stepResume', 'stepReopen', 'acceptDraft', 'rejectDraft',
   'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'runStart', 'runReply', 'runDraft', 'draftIn', 'runAnswer', 'runEnd', 'artifact',
-  'waitAdd', 'waitDel', 'blockerClosed', 'runBlocker', 'blockerDrop'])
+  'waitAdd', 'waitDel', 'blockerClosed', 'runBlocker', 'blockerDrop', 'stepDel', 'stepEdit', 'stepMove'])
 
 /** runs one command on a copy of the job; nx is the step to show next, when the command moved on */
 export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null } {
@@ -404,7 +538,9 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       jr(x, j, `Resumed “${S.t}”.`, 'step back in progress.', `finish “${S.t}”.`, by(x), 'cur'); syncStatus(x, j)
       break
     case 'acceptDraft': {
-      needDraft(); noRun(); noBlockers(cmd.force)
+      needDraft(); noRun()
+      if (ahead(F)) throw new CmdError('bad_state', `“${S.t}” is not reached yet; its draft waits until it is`)
+      noBlockers(cmd.force)
       const dr = F.dr!, edited = cmd.text != null && cmd.text !== dr.t
       F.out = edited ? cmd.text! : dr.t; F.m = edited ? 'accepted with your edits' : 'draft accepted'
       nx = advance(x, j, sid, 'done')
@@ -414,7 +550,8 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     case 'rejectDraft': {
       needDraft(); noRun()
       const w = line(cmd.why || '', 300)
-      F.dr = null; F.s = 'cur'; F.m = 'draft rejected'; settle(F)
+      F.dr = null
+      if (!ahead(F)) { F.s = 'cur'; F.m = 'draft rejected'; settle(F) }
       jr(x, j, sentence(`Rejected the LLM draft for “${S.t}”${w ? `: ${w}` : ''}`), 'step back in progress.',
         w ? 'review the new draft when it is ready.' : 'do it yourself, or ask again with a sharper instruction.', by(x), 'bad'); syncStatus(x, j)
       break
@@ -589,6 +726,19 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       break
     case 'journal':
       jr(x, j, cmd.o, cmd.c, cmd.n, cmd.a || 'LLM', 'cur')
+      break
+    case 'stepAdd':
+      needOpen()
+      nx = stepAdd(x, j, cmd)
+      break
+    case 'stepDel':
+      stepDel(x, j, S, F)
+      break
+    case 'stepEdit':
+      stepEdit(x, j, S, F, cmd)
+      break
+    case 'stepMove':
+      stepMove(x, j, S, F, cmd)
       break
     default:
       throw new CmdError('bad_args', `unknown command ${(cmd as { op: string }).op}`)

@@ -6,7 +6,7 @@ import { JOBS0, JR, OVR, TPL0 } from '../data/demo.ts'
 import { clone } from '../lib/util.ts'
 import { KINDS } from './context.ts'
 import type { Job } from './types.ts'
-import { CmdError, DESC_MAX, allSent, apply, askText, atOf, freshJob, isClosed, isLive, needsYou, nextMonth, phasesOf, seedFlow, stepOf, steps, stepsOf, tplOf, unsentAt } from './transitions.ts'
+import { CmdError, DESC_MAX, allSent, apply, askText, atOf, freshJob, hasDraft, isClosed, isLive, needsYou, nextMonth, phasesOf, seedFlow, stepOf, steps, stepsOf, tplOf, unsentAt } from './transitions.ts'
 import type { Ctx, NewJob } from './transitions.ts'
 
 const T0 = new Date('2026-09-30T12:00:00Z')
@@ -632,4 +632,128 @@ test('a job with its own steps reads only them', () => {
   assert.equal(unsentAt(X, j), true)
   delete j.flow.n1; j.ph[0].s.shift()
   assert.equal(atOf(X, j), at)
+})
+
+/* ===== step ops ===== */
+const llmStep = { t: 'Check the logs', m: 'llm' as const, x: 'Logs read' }
+const later = (j: Job) => { const all = stepsOf(X, j), ai = all.findIndex((s) => s.id === atOf(X, j)); return all.slice(ai + 1) }
+/** J-0412 resumed at its review step: current without a run or drafts, two future steps on, a last phase not reached yet */
+const roomy = () => { const j = find((j) => j.id === 'J-0412'); return apply(X, j, { op: 'stepResume', step: atOf(X, j)! }).job }
+const withDone = () => find((j) => !isClosed(j) && !!atOf(X, j) && !j.flow[atOf(X, j)!].run && stepsOf(X, j).some((s) => j.flow[s.id].s === 'done'))
+
+test('the first step op copies the playbook steps and messages into the job, later ops reuse the copy', () => {
+  const j = roomy(), at = atOf(X, j)!
+  const { job } = apply(X, j, { op: 'stepAdd', after: at, step: llmStep })
+  assert.deepEqual(stepsOf(X, job).filter((s) => s.id !== 'n1').map((s) => s.id), steps(X, j.pb).map((s) => s.id))
+  for (const s of steps(X, j.pb).filter((s) => TPL0[s.id])) assert.deepEqual(job.tpl![s.id], TPL0[s.id])
+  const X2: Ctx = { ...X, PB: { ...X.PB, [j.pb]: { ...X.PB[j.pb], ph: [] } } }
+  const two = apply(X2, job, { op: 'stepAdd', after: 'n1', step: { ...llmStep, t: 'Second' } }).job
+  assert.deepEqual(stepsOf(X2, two).map((s) => s.id).slice(0, 3), stepsOf(X, job).map((s) => s.id).slice(0, 3))
+  assert.ok(stepOf(X2, two, 'n2'))
+})
+
+test('stepAdd after the current step adds a future step n1 with add stamped; ids never repeat after a delete', () => {
+  const j = roomy(), at = atOf(X, j)!
+  let job = apply({ ...X, by: 'agent' }, j, { op: 'stepAdd', after: at, step: llmStep, why: 'the daily asked' }).job
+  const all = stepsOf(X, job), i = all.findIndex((s) => s.id === at)
+  assert.equal(all[i + 1].id, 'n1')
+  assert.deepEqual(all[i + 1].add, { at: T0.toISOString(), by: 'agent', why: 'the daily asked' })
+  assert.equal(job.flow.n1.s, 'fut')
+  assert.equal(atOf(X, job), at)
+  assert.match(job.jr[0].o, /^Added step “Check the logs” after “/)
+  job = apply(X, job, { op: 'stepDel', step: 'n1' }).job
+  assert.equal(job.flow.n1, undefined)
+  job = apply(X, job, { op: 'stepAdd', after: at, step: llmStep }).job
+  assert.ok(job.flow.n2)
+  assert.equal(job.flow.n1, undefined)
+})
+
+test('stepAdd before the current step makes the new step current and the old one future with its draft kept', () => {
+  const j = roomy(), at = atOf(X, j)!, d = apply(X, j, { op: 'draftIn', step: at, t: 'old draft' }).job
+  const { job, nx } = apply(X, d, { op: 'stepAdd', before: at, step: { t: 'Call the PO', m: 'you', x: 'Called' } })
+  assert.equal(nx, 'n1')
+  assert.equal(atOf(X, job), 'n1')
+  assert.equal(job.flow.n1.s, 'cur')
+  assert.ok(['fut', 'tpl'].includes(job.flow[at].s))
+  assert.equal(job.flow[at].dr?.t, 'old draft')
+})
+
+test('a future step draft is neither hasDraft nor acceptable', () => {
+  const j = roomy(), at = atOf(X, j)!, d = apply(X, j, { op: 'draftIn', step: at, t: 'old draft' }).job
+  assert.equal(hasDraft(d), true)
+  const job = apply(X, d, { op: 'stepAdd', before: at, step: { t: 'Call the PO', m: 'you', x: 'Called' } }).job
+  assert.equal(hasDraft(job), false)
+  code(() => apply(X, job, { op: 'acceptDraft', step: at }), 'bad_state')
+})
+
+test('stepAdd before the current step refuses while that step has a run', () => {
+  const j = roomy(), at = atOf(X, j)!, r = apply(X, j, { op: 'runStart', step: at, q: 'go', id: 'r1' }).job
+  code(() => apply(X, r, { op: 'stepAdd', before: at, step: llmStep }), 'bad_state')
+  assert.ok(apply(X, r, { op: 'stepAdd', after: at, step: llmStep }).job.flow.n1)
+})
+
+test('stepAdd anchored on a done step, or before a step of an earlier round, is bad_step', () => {
+  const j = withDone(), done = stepsOf(X, j).find((s) => j.flow[s.id].s === 'done')!
+  code(() => apply(X, j, { op: 'stepAdd', before: done.id, step: llmStep }), 'bad_step')
+  code(() => apply(X, j, { op: 'stepAdd', step: llmStep } as never), 'bad_step')
+  code(() => apply(X, j, { op: 'stepAdd', before: 'nope', step: llmStep }), 'bad_step')
+  const r = roomy(), at = atOf(X, r)!, nx = later(r)[0].id
+  const back = apply(X, apply(X, r, { op: 'stepDone', step: at }).job, { op: 'returnTo', step: at, why: 'again' }).job
+  assert.equal(atOf(X, back), at)
+  code(() => apply(X, apply(X, back, { op: 'stepDone', step: at }).job, { op: 'stepAdd', before: at, step: llmStep }), 'bad_step')
+  assert.ok(apply(X, back, { op: 'stepAdd', before: nx, step: llmStep }).job.flow.n1)
+})
+
+test('stepDel removes only a future step; a current or done one is bad_step; an emptied phase goes', () => {
+  const j = roomy(), at = atOf(X, j)!
+  code(() => apply(X, j, { op: 'stepDel', step: at }), 'bad_step')
+  const d = withDone(), done = stepsOf(X, d).find((s) => d.flow[s.id].s === 'done')!
+  code(() => apply(X, d, { op: 'stepDel', step: done.id }), 'bad_step')
+  const last = phasesOf(X, j).at(-1)!
+  let job = j
+  for (const s of last.s) job = apply(X, job, { op: 'stepDel', step: s.id }).job
+  assert.equal(phasesOf(X, job).length, phasesOf(X, j).length - 1)
+  assert.equal(job.flow[last.s[0].id], undefined)
+  assert.match(job.jr[0].o, /^Removed step “/)
+})
+
+test('stepEdit changes a future step or a current one without a run; a run refuses; m you drops start', () => {
+  const j = roomy(), at = atOf(X, j)!, nx = later(j)[0]
+  let job = apply(X, j, { op: 'stepEdit', step: nx.id, t: 'Renamed', m: 'llm', start: 'auto' }).job
+  assert.equal(stepOf(X, job, nx.id)!.t, 'Renamed')
+  assert.equal(stepOf(X, job, nx.id)!.start, 'auto')
+  assert.match(job.jr[0].o, /^Changed step “Renamed”: /)
+  job = apply(X, job, { op: 'stepEdit', step: nx.id, m: 'you' }).job
+  assert.equal(stepOf(X, job, nx.id)!.start, undefined)
+  job = apply(X, job, { op: 'stepEdit', step: at, x: 'New exit' }).job
+  assert.equal(stepOf(X, job, at)!.x, 'New exit')
+  const r = apply(X, job, { op: 'runStart', step: at, q: 'go', id: 'r1' }).job
+  code(() => apply(X, r, { op: 'stepEdit', step: at, x: 'again' }), 'bad_state')
+  const d = withDone(), done = stepsOf(X, d).find((s) => d.flow[s.id].s === 'done')!
+  code(() => apply(X, d, { op: 'stepEdit', step: done.id, t: 'x' }), 'bad_step')
+})
+
+test('stepMove moves a future step after the current one; before or at the current one is bad_step', () => {
+  const j = roomy(), at = atOf(X, j)!, [a, b] = later(j)
+  const job = apply(X, j, { op: 'stepMove', step: b.id, after: at }).job
+  const ids = stepsOf(X, job).map((s) => s.id), i = ids.indexOf(at)
+  assert.deepEqual(ids.slice(i, i + 3), [at, b.id, a.id])
+  assert.equal(atOf(X, job), at)
+  code(() => apply(X, j, { op: 'stepMove', step: b.id, before: at }), 'bad_step')
+  code(() => apply(X, j, { op: 'stepMove', step: at, after: b.id }), 'bad_step')
+})
+
+test('checkStep refuses an empty title, start on a you step, ask without a planned message, and a malformed message', () => {
+  const j = roomy(), at = atOf(X, j)!
+  const add = (step: object, tpl?: unknown) => apply(X, j, { op: 'stepAdd', after: at, step, ...(tpl ? { tpl } : {}) } as never)
+  code(() => add({ t: ' ', m: 'llm' }), 'bad_args')
+  code(() => add({ t: 'x', m: 'robot' }), 'bad_args')
+  code(() => add({ t: 'x', m: 'you', start: 'auto' }), 'bad_args')
+  code(() => add({ t: 'x', m: 'llm', start: 'sometimes' }), 'bad_args')
+  code(() => add({ t: 'x', m: 'you', ask: 1 }), 'bad_args')
+  code(() => add({ t: 'x', m: 'you' }, [['chat']]), 'bad_args')
+  const ok = add({ t: 'Ask the PO', m: 'you', ask: 1 }, [['chat', 'team', 'Is it ok?']]).job
+  assert.equal(ok.flow.n1.s, 'tpl')
+  assert.equal(stepOf(X, ok, 'n1')!.msg, 1)
+  assert.deepEqual(tplOf(X, ok, 'n1'), [['chat', 'team', 'Is it ok?']])
 })

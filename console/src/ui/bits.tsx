@@ -2,7 +2,7 @@ import * as React from 'react'
 import { MODES, NODE, STATUS } from '../data/core.ts'
 import { artIc } from '../lib/util.ts'
 import { pbToFile } from '../model/playbookFile.ts'
-import { TPL, atOf, isClosed, jsteps, openBadges, phState, phases, stepOf, tvars } from '../model/world.ts'
+import { TPL, ahead, atOf, isClosed, jsteps, openBadges, phState, phases, stepOf, tvars } from '../model/world.ts'
 import type { Job, JobStatus, NodeState, Playbook, Tpl } from '../model/types.ts'
 import { changeNo, useWorld } from '../store.ts'
 import { dismiss } from '../actions/nav.tsx'
@@ -102,7 +102,7 @@ export function NextCell({ j }: { j: Job }) {
   const all = jsteps(j)
   const run = all.find((s) => j.flow[s.id].run)
   if (run) return <span className="nx run"><span className="spin" />LLM on “{run.t}”</span>
-  const dr = all.find((s) => j.flow[s.id].dr)
+  const dr = all.find((s) => j.flow[s.id].dr && !ahead(j.flow[s.id]))
   if (dr) return <span className="nx dr"><Ic n="bot" sm />Review draft: {dr.t}</span>
   if (j.st === 'draft') return <span className="nx"><Ic n="pen" sm />Start when ready</span>
   const id = atOf(j)

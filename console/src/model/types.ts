@@ -16,8 +16,17 @@ type New = { nw?: 0 | 1 }
 
 /** m = who does it by default, x = exit criterion, a = artifacts, msg = messages,
  *  rv = review, out = variable its accepted draft fills; fid = id inside an added playbook's file;
- *  act = the console action its inspector offers: 'time' opens the Time view, a workspace adds its own */
-export interface Step { id: string; fid?: string; t: string; m: Mode; x: string; a?: string[]; msg?: number; rv?: 1; out?: string; act?: string }
+ *  act = the console action its inspector offers: 'time' opens the Time view, a workspace adds its own;
+ *  start = how an llm step begins (absent = the workspace's default); add = a step the job added: when, by whom, why;
+ *  ask = it waits for a reply once its first message is sent */
+export interface Step {
+  id: string; fid?: string; t: string; m: Mode; x: string; a?: string[]; msg?: number; rv?: 1; out?: string; act?: string
+  start?: Start; add?: { at: string; by: string; why: string }; ask?: 1
+}
+/** how an llm step begins when it becomes current: by hand, by itself, or by itself with its draft accepted */
+export type Start = 'hand' | 'self' | 'auto'
+/** a step a job adds to its own steps */
+export interface NewStep { t: string; x?: string; m: Mode; a?: string[]; start?: Start; ask?: 1; out?: string }
 export interface Phase { c: string; n: string; s: Step[] }
 /** ws = owning pack; none = core, offered in every workspace; needs = in plain words, the context its jobs need;
  *  once = one job's own steps, which no playbook list, catalog or list_playbooks shows */
@@ -78,10 +87,11 @@ export interface JobSeed {
 export interface Round { n: number; from: string; at: string; by: string; why: string; st: JobStatus; flow: Record<string, Flow>; ph?: Phase[] }
 /** v = the store's version; a write names the version it replaces; rounds = past passes, oldest first;
  *  rf = the step the current pass began at (absent = the first step);
- *  ph + tpl = the job's own steps and their planned messages, copied from its playbook on the first change to them */
+ *  ph + tpl = the job's own steps and their planned messages, copied from its playbook on the first change to them;
+ *  ns = the highest number an added step n<k> took, so a removed step's id never comes back */
 export interface Job extends JobSeed {
   flow: Record<string, Flow>; ts: number; jr: JournalEntry[]; v?: number; rounds?: Round[]; rf?: string
-  ph?: Phase[]; tpl?: Record<string, Tpl[]>
+  ph?: Phase[]; tpl?: Record<string, Tpl[]>; ns?: number
 }
 
 /** a job change; the backend-only ops come from the LLM runner */
@@ -123,6 +133,12 @@ export type Cmd =
   | { op: 'blockerClosed'; step: string; j: string; st: 'done' | 'cancelled'; out?: string }
   /** a reply run asked for a blocker: the run ends, the draft stays, say waits for the builder */
   | { op: 'runBlocker'; step: string; say: string } | { op: 'blockerDrop'; step: string }
+  /** the job's own steps: one of before/after names the step it goes next to */
+  | { op: 'stepAdd'; before?: string; after?: string; step: NewStep; tpl?: Tpl[]; why?: string }
+  | { op: 'stepDel'; step: string }
+  /** null clears start or ask */
+  | { op: 'stepEdit'; step: string; t?: string; x?: string; m?: Mode; start?: Start | null; tpl?: Tpl[]; ask?: 1 | null }
+  | { op: 'stepMove'; step: string; before?: string; after?: string }
 /** ops the page may send; the rest belong to the LLM runner */
 export const PAGE_OPS = ['start', 'close', 'reopen', 'stepDone', 'stepSkip', 'stepResume', 'stepReopen', 'rejectDraft', 'stepWait',
   'acceptDraft', 'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'nudged', 'replied', 'schedule', 'ctxAdd', 'ctxSet', 'ctxDel', 'describe',

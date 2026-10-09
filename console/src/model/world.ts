@@ -44,7 +44,7 @@ export const phases = (j: Job) => T.phasesOf(CTX, j)
 export const jsteps = (j: Job) => T.stepsOf(CTX, j)
 export const tplOf = (j: Job, sid: string) => T.tplOf(CTX, j, sid)
 export const phaseOf = (j: Job, id: string) => phases(j).find((p) => p.s.some((s) => s.id === id))
-export const { isClosed, isLive, flows, hasDraft } = T
+export const { isClosed, isLive, flows, hasDraft, ahead } = T
 export const atOf = (j: Job) => T.atOf(CTX, j)
 /** the open job in this workspace whose current step carries a console action */
 export const jobAtAct = (act: string) => wsJobs().find((j) => !isClosed(j) && stepOf(j, atOf(j))?.act === act)
@@ -185,7 +185,7 @@ export type Approval = { k: 'draft'; j: Job; s: Step; f: Flow } | { k: 'msg'; j:
 export function approvals() {
   const out: Approval[] = []
   wsJobs().filter((j) => !isClosed(j)).forEach((j) => {
-    jsteps(j).forEach((s) => { const f = j.flow[s.id]; if (f.dr) out.push({ k: 'draft', j, s, f }) })
+    jsteps(j).forEach((s) => { const f = j.flow[s.id]; if (f.dr && !ahead(f)) out.push({ k: 'draft', j, s, f }) })
     const id = unsentAt(j) ? atOf(j) : null, f = id && j.flow[id]
     if (id && f && !f.dr && !f.run) tplOf(j, id).forEach((_, i) => { if (!f.sent[i]) out.push({ k: 'msg', j, s: stepOf(j, id)!, f, i }) })
   })
