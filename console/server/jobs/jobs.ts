@@ -14,6 +14,8 @@ import type { Store } from '../store/port.ts'
 export type Who = 'page' | 'runner' | 'session' | 'console' | 'run'
 /** a saved command: who sent it, the job before it and the job as saved */
 export type CmdEv = { who: Who; cmd: Cmd; prev: Job; job: Job }
+/** a command whose transition passed but whose write failed: the job before it and the error */
+export type FailEv = { who: Who; cmd: Cmd; id: string; prev: Job; error: Error & { status?: number } }
 const ALLOWED: Partial<Record<Who, Set<string>>> = { page: new Set(PAGE_OPS), session: new Set([...SESSION_OPS, 'draftIn']), console: new Set(['noteAdd', 'reopen', 'stepDone', 'artifact', 'journal', 'blockerClosed', 'ppSet', 'replyIn', 'acceptDraft']), run: new Set(['start']) }
 const BY: Partial<Record<Who, string>> = { session: 'Claude Code', console: 'console', run: 'LLM' }
 
@@ -21,6 +23,7 @@ export class Jobs {
   private store: Store; private bus: Bus; private ctx: () => T.Ctx; private gate: () => boolean; private via?: Via
   private nyf: ((j: Job) => void)[] = []
   private cmdf: ((e: CmdEv) => void)[] = []
+  private failf: ((e: FailEv) => void)[] = []
 
   /** via = what the gate stands for, named when it is closed */
   constructor(o: { store: Store; bus: Bus; ctx: () => T.Ctx; gate: () => boolean; via?: Via }) {
@@ -33,6 +36,12 @@ export class Jobs {
   onCmd(f: (e: CmdEv) => void) {
     this.cmdf.push(f)
     return () => { this.cmdf = this.cmdf.filter((g) => g !== f) }
+  }
+  /** fires when a command passed its transition but its write failed (409 retries exhausted, 413, the store down);
+      returns the unsubscribe */
+  onFail(f: (e: FailEv) => void) {
+    this.failf.push(f)
+    return () => { this.failf = this.failf.filter((g) => g !== f) }
   }
 
   private open() { if (!this.gate()) throw downError(this.via, 'nothing was changed') }
@@ -81,6 +90,7 @@ export class Jobs {
         return { job, prev: cur, nx: r.nx }
       } catch (e) {
         if ((who === 'runner' || who === 'console') && e instanceof HttpError && e.status === 409 && n < 5) continue
+        for (const f of this.failf) { try { f({ who, cmd: c, id, prev: cur, error: e as FailEv['error'] }) } catch (g) { console.error(`a listener of a failed ${c.op} on ${id} failed:`, (g as Error).message) } }
         throw e
       }
     }

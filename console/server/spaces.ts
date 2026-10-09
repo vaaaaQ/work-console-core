@@ -4,6 +4,7 @@ import * as T from '../src/model/transitions.ts'
 import type { Job, Playbook, Tpl } from '../src/model/types.ts'
 import type { WorkspacePage } from '../src/workspace.ts'
 import { Proposer } from './agent/proposer.ts'
+import { agentReactor } from './agent/reactor.ts'
 import { agentRecords } from './agent/records.ts'
 import { AgentSession } from './agent/session.ts'
 import type { Reintegration, SessionOps } from './agent/session.ts'
@@ -242,6 +243,8 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     managed: grants !== null, max: cfg.maxSessions,
     job: { jobs, runs: () => runner.all(), ctx, notes, source: rb.bridge === false ? null : source, me: w.page.me, key: (i) => w.page.board.key(i), proposer },
   }) : null
+  // a reply on a step and what became of a proposal reach the agent with no LLM watching
+  const offReactor = agent ? agentReactor({ jobs, agent, ctx }) : () => {}
 
   let recovered = false
   const stopLoading = onBridgeBack(bus, async () => {
@@ -266,6 +269,6 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     // a QA return, a woken blocker or a proposal pushes its own message; the generic one would say it again
     onNeedsYou: (f) => jobs.onNeedsYou((j) => { if (!returns.handling(j.id) && !blockers.handling(j.id) && !proposer.handling(j.id)) f(j) }),
     // the source going away on close is no reason to interrupt the runs
-    async close() { stopLoading(); offInterrupt(); offAuto(); blockers.stop(); replies.stop(); agent?.close(); source.stop(); await fake?.close() },
+    async close() { stopLoading(); offInterrupt(); offAuto(); offReactor(); blockers.stop(); replies.stop(); agent?.close(); source.stop(); await fake?.close() },
   }
 }

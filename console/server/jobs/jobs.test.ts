@@ -122,6 +122,22 @@ test('onCmd hears each saved command once with who, the command, prev and the sa
   assert.deepEqual(heard, [{ who: 'page', op: 'stepDone', pv: j.v, v: j.v! + 1 }, { who: 'runner', op: 'journal', pv: j.v! + 1, v: j.v! + 2 }])
 })
 
+test('onFail hears a write that fails after the transition passed, not a refused transition', async (t) => {
+  t.mock.method(console, 'error', () => {})
+  const st = fileStore(join(tempDir('jobs'), 's.json'), demoSeed), down = { v: false }
+  const jobs = new Jobs({ store: { ...st, putJob: (j, v) => (down.v ? Promise.reject(new HttpError(413, 'too_large', 'a document is capped at 256 KB')) : st.putJob(j, v)) }, bus: new Bus(), ctx: demoCtx, gate: () => true })
+  const j = await openJob(jobs), at = T.atOf(demoCtx(), j)!
+  const heard: [string, string, number | undefined, number | undefined][] = []
+  jobs.onFail(() => { throw new Error('a listener that throws') })
+  const off = jobs.onFail((e) => heard.push([e.who, e.cmd.op, e.prev.v, e.error.status]))
+  await assert.rejects(jobs.cmd(j.id, { op: 'stepDone', step: 'nope' }, j.v), code(400))
+  down.v = true
+  await assert.rejects(jobs.cmd(j.id, { op: 'noteAdd', step: at, k: 'q', t: 'x' }, j.v), code(413))
+  off()
+  await assert.rejects(jobs.cmd(j.id, { op: 'noteAdd', step: at, k: 'q', t: 'x' }, j.v), code(413))
+  assert.deepEqual(heard, [['page', 'noteAdd', j.v, 413]])
+})
+
 test('a run may create a job, signed LLM, and start one; nothing else', async () => {
   const { jobs } = setup()
   const j = await jobs.create({ t: 'Found along the way', key: '', pb: 'action', prj: 'p', ws: 'acme', src: 'J-0001' }, 'run')
