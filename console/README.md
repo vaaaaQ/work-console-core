@@ -52,7 +52,9 @@ node <dir>/scripts/update.mjs [--give-up]                                      #
 - Starting at logon is up to you: install prints the command and changes nothing on your system.
 
 The `.ps1` scripts are the older setup and still work: `scripts/install.ps1` once, `scripts/update.ps1`
-after pulling, `scripts/pair.ps1` to pair a phone.
+after pulling, `scripts/pair.ps1` to pair a phone. `update.ps1` runs `npm ci` only when `package-lock.json`
+changed since its last one, and then stops the console first, since Windows will not let npm delete a native
+module the running server holds; otherwise it builds beside the running console and restarts it.
 
 ## Adding a workspace
 
