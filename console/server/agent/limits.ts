@@ -28,6 +28,9 @@ export function agentLimits(root: string, ws: string, locked: string[] = lockedF
   }
 }
 
+/** a conversation that changes no file: a job's, or any in a workspace without grants */
+export const readOnly = (root: string): Limits => ({ cwd: root, write: [], deny: [], fold: caseInsensitive(root) })
+
 const probed = new Map<string, boolean>()
 /** whether the file system at dir ignores case: a probe file made and looked up in another case; unwritable = the platform's default */
 export function caseInsensitive(dir: string): boolean {

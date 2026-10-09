@@ -224,8 +224,19 @@ export function createApp(d: Deps) {
     return { jobs, runs, marks, parts: { jobs: js, runs: rs, marks: ms }, playbooks: s.ctx().PB, templates: s.ctx().TPL, bridge: bridgeOf(s), plugins, managed: s.grants !== null, agent }
   }
   const agentOf = (s: Space) => {
-    if (!s.agent) throw new HttpError(404, 'not_managed', `workspace ${s.id} has no agent: it has no grants.json`)
+    if (!s.agent) throw new HttpError(404, 'no_agent', `workspace ${s.id} has no agent`)
     return s.agent
+  }
+  /** the agent's code side: a managed workspace's only */
+  const codeAgentOf = (s: Space) => {
+    if (s.grants === null) throw new HttpError(404, 'not_managed', `workspace ${s.id} has no grants.json: its agent changes no code`)
+    return agentOf(s)
+  }
+  /** job and conv from the query or the body; a job must be one of this workspace's */
+  const targetOf = async (s: Space, o: { job?: unknown; conv?: unknown }) => {
+    const job = typeof o.job === 'string' && o.job ? o.job : undefined, conv = typeof o.conv === 'string' && o.conv ? o.conv : undefined
+    if (job && !(await s.jobs.get(job))) throw new HttpError(404, 'not_found', `no job ${job} in ${s.id}`)
+    return { ...(job ? { job } : {}), ...(conv ? { conv } : {}) }
   }
   async function state(r: Req) {
     const list = d.spaces.list, blocks = await Promise.all(list.map(block)), set = d.settings.read()
@@ -505,17 +516,23 @@ export function createApp(d: Deps) {
       await s.notes.remove(r.p[0], v)
       return { ok: true }
     }],
-    // the workspace agent: its conversation, a message, Stop, a new conversation, an undo and the grants answer
-    ['GET', /^\/agent$/, async (_r, s) => ({ agent: await agentOf(s).current() })],
-    ['POST', /^\/agent$/, async (r, s) => ({ agent: (await agentOf(s).send(str((await r.body()).text, 'text'))).rec })],
-    ['POST', /^\/agent\/stop$/, (_r, s) => { agentOf(s).stop(); return { ok: true } }],
-    ['POST', /^\/agent\/new$/, async (_r, s) => ({ agent: await agentOf(s).fresh() })],
-    ['POST', /^\/agent\/reintegrate$/, async (_r, s) => ({ agent: (await agentOf(s).reintegrate()).rec })],
-    ['POST', /^\/agent\/undo$/, async (r, s) => ({ agent: await agentOf(s).undo(str((await r.body()).sha, 'sha')) })],
-    ['POST', /^\/agent\/grants$/, async (r, s) => {
+    // the workspace agent: a job's conversation or a general one, a message, Stop, Retry, a new conversation; in a
+    // managed workspace also an undo, the grants answer and a reintegration
+    ['GET', /^\/agent$/, async (r, s) => ({ agent: await agentOf(s).get(await targetOf(s, { job: r.q.get('job'), conv: r.q.get('conv') })) })],
+    ['GET', /^\/agent\/convs$/, async (_r, s) => ({ convs: await agentOf(s).convs() })],
+    ['POST', /^\/agent$/, async (r, s) => {
       const b = await r.body()
+      return { agent: (await agentOf(s).send(str(b.text, 'text'), await targetOf(s, b))).rec }
+    }],
+    ['POST', /^\/agent\/stop$/, async (r, s) => { const c = (await r.body()).conv; agentOf(s).stop(typeof c === 'string' && c ? c : undefined); return { ok: true } }],
+    ['POST', /^\/agent\/retry$/, async (r, s) => ({ agent: (await agentOf(s).retry(str((await r.body()).conv, 'conv'))).rec })],
+    ['POST', /^\/agent\/new$/, async (_r, s) => ({ agent: await agentOf(s).fresh() })],
+    ['POST', /^\/agent\/reintegrate$/, async (_r, s) => ({ agent: (await codeAgentOf(s).reintegrate()).rec })],
+    ['POST', /^\/agent\/undo$/, async (r, s) => ({ agent: await codeAgentOf(s).undo(str((await r.body()).sha, 'sha')) })],
+    ['POST', /^\/agent\/grants$/, async (r, s) => {
+      const a = codeAgentOf(s), b = await r.body()
       if (typeof b.accept !== 'boolean') throw new HttpError(400, 'bad_args', 'accept is true or false')
-      return { agent: await agentOf(s).decide(b.accept, typeof b.reason === 'string' ? b.reason : '') }
+      return { agent: await a.decide(b.accept, typeof b.reason === 'string' ? b.reason : '') }
     }],
     ['GET', /^\/knowledge\/proposals$/, async (_r, s) => ({ proposals: await s.notes.proposals() })],
     ['POST', /^\/knowledge\/proposals\/([^/]+)\/decide$/, async (r, s) => {

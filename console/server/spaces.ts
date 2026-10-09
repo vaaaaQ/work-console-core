@@ -233,8 +233,10 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   const blockers = new Blockers({ jobs, ctx, push })
   // an ask step's answer, found in chat or mail as the source reports changes
   const replies = new Replies({ jobs, source, bus })
-  const agent = grants && o.agent ? new AgentSession({
+  // every workspace has an agent; only a managed one's general conversations change code
+  const agent = o.agent ? new AgentSession({
     ws: id, title: w.page.pack.n || id, records: agentRecords(store, join(o.home, 'agent', `${id}.json`)), sdk, bus, root: o.root, ...o.agent,
+    managed: grants !== null, max: cfg.maxSessions,
   }) : null
 
   let recovered = false

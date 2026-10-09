@@ -23,5 +23,9 @@ export interface AgentRec {
   reintegrate?: AgentReintegrate
   /** what the agent hears before the person's next message: decisions and undos made while it was not asked */
   inbox?: string[]
+  /** the job this conversation belongs to; none = a general conversation */
+  job?: string
   created: string; updated: string
 }
+/** a conversation as the panel lists it */
+export interface AgentConv { id: string; job?: string; title: string; status: AgentRec['status']; updated: string }

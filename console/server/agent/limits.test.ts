@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { agentLimits, canWrite, caseInsensitive, linksUnder, lockedFiles } from './limits.ts'
+import { agentLimits, canWrite, caseInsensitive, linksUnder, lockedFiles, readOnly } from './limits.ts'
 import { tempDir } from '../testdirs.ts'
 
 const root = join(tmpdir(), 'consumer')
@@ -69,4 +69,10 @@ test('a dangling link is refused: writing it would create its target wherever th
   try { symlinkSync(join(r, 'server', 'gone'), join(r, 'workspaces', 'w1', 'dangle'), 'junction') } catch (e) { t.skip(`no junctions here: ${(e as Error).message}`); return }
   assert.equal(canWrite(l, 'workspaces/w1/dangle/x.ts'), false)
   assert.equal(canWrite(l, 'workspaces/w1/dangle'), false)
+})
+
+test('readOnly allows no write anywhere', () => {
+  const r = consumer(), l = readOnly(r)
+  assert.deepEqual([l.cwd, l.write, l.deny], [r, [], []])
+  for (const p of ['workspaces/w1/page.ts', 'tools/t.ts', 'server/main.ts', 'x.txt']) assert.ok(!canWrite(l, p), `${p} may not be written`)
 })

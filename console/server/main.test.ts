@@ -15,9 +15,9 @@ import type { Sdk } from './llm/sdk.ts'
 import type { WorkspaceServer } from './workspace.ts'
 import { tempDir } from './testdirs.ts'
 
-async function until(f: () => boolean, ms = 2000) {
+async function until(f: () => boolean | Promise<boolean>, ms = 2000) {
   const t0 = Date.now()
-  while (!f()) { if (Date.now() - t0 > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 2)) }
+  while (!(await f())) { if (Date.now() - t0 > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 2)) }
 }
 
 const job = (id: string, key: string, st = 'active') => ({ id, key, st }) as unknown as Job
@@ -194,7 +194,7 @@ test('a workspace key at the top of config.json goes to the one workspace with a
   await assert.rejects(main({ cfg, sdk: unused, workspaces: [acmeServer, beta2] }), /runTools.*workspaces\.<id>/)
 })
 
-test("a managed workspace has an agent behind /api/ws/<id>/agent and in /api/state; an unmanaged one has none", async () => {
+test("a managed workspace has an agent behind /api/ws/<id>/agent and in /api/state", async () => {
   const home = tempDir('main'), root = tempDir('root')
   mkdirSync(join(root, 'workspaces', 'beta2'), { recursive: true })
   writeFileSync(join(root, 'workspaces', 'beta2', 'grants.json'), JSON.stringify({ packs: ['p'] }))
@@ -214,7 +214,6 @@ test("a managed workspace has an agent behind /api/ws/<id>/agent and in /api/sta
     }
     const st = (await call('/api/state')).json.ws
     assert.deepEqual([st.acme.managed, st.acme.agent, st.beta2.managed, st.beta2.agent], [false, null, true, null])
-    assert.equal((await call('/api/ws/acme/agent', { text: 'hi' })).json.error.code, 'not_managed')
     const sent = await call('/api/ws/beta2/agent', { text: 'hi' })
     assert.equal(sent.status, 200)
     assert.equal(sent.json.agent.interview, undefined, 'its grants are not empty: no interview')
@@ -227,6 +226,41 @@ test("a managed workspace has an agent behind /api/ws/<id>/agent and in /api/sta
     assert.equal((await call('/api/ws/beta2/agent/stop', {})).json.error.code, 'idle')
     assert.equal(restarts, 0)
     assert.equal((await call('/api/state')).json.ws.beta2.agent.id, rec.id)
+  } finally { await m.close() }
+})
+
+test('the agent routes take job and conv; grants and undo are not_managed in an unmanaged workspace', async () => {
+  const home = tempDir('main'), root = tempDir('root')
+  const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
+  const prompts: string[] = []
+  const sdk: Sdk = { ...unused, async *agent(o) { prompts.push(o.prompt); yield { k: 'session', id: 's1' }; yield { k: 'text', t: 'Seen.' }; yield { k: 'result', ok: true } } }
+  const m = await main({ cfg, sdk, workspaces: [acmeServer], root, restart: () => {} })
+  try {
+    const base = `http://127.0.0.1:${m.loopbackPort}`
+    const call = async (path: string, body?: unknown) => {
+      const r = await fetch(`${base}${path}`, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      return { status: r.status, json: (await r.json()) as Record<string, any> }
+    }
+    await until(() => m.spaces.get('acme').source.available(), 5000)
+    const j = await m.spaces.get('acme').jobs.create({ t: 'Look', key: 'K-1', pb: 'action', prj: 'p', ws: 'acme' })
+    assert.equal((await call(`/api/ws/acme/agent?job=${j.id}`)).json.agent, null)
+    assert.equal((await call('/api/ws/acme/agent', { text: 'hi', job: 'A-999' })).json.error.code, 'not_found')
+    const sent = await call('/api/ws/acme/agent', { text: 'what is left?', job: j.id })
+    assert.equal(sent.status, 200, JSON.stringify(sent.json))
+    assert.equal(sent.json.agent.job, j.id)
+    const id = sent.json.agent.id
+    await until(async () => (await call(`/api/ws/acme/agent?conv=${id}`)).json.agent.status !== 'running')
+    assert.equal((await call(`/api/ws/acme/agent?job=${j.id}`)).json.agent.turns.at(-1).t, 'Seen.')
+    assert.deepEqual((await call('/api/ws/acme/agent/convs')).json.convs.map((c: Record<string, string>) => [c.id, c.job, c.title]), [[id, j.id, 'what is left?']])
+    assert.equal((await call('/api/ws/acme/agent')).json.agent, null, 'no general conversation yet')
+    assert.equal((await call('/api/state')).json.ws.acme.agent, null)
+    assert.equal((await call('/api/ws/acme/agent/stop', { conv: id })).json.error.code, 'idle')
+    assert.equal((await call('/api/ws/acme/agent/retry', { conv: id })).json.error.code, 'not_failed')
+    assert.equal((await call('/api/ws/acme/agent', { text: 'x', conv: 'nope' })).json.error.code, 'not_found')
+    for (const p of ['grants', 'undo', 'reintegrate']) assert.equal((await call(`/api/ws/acme/agent/${p}`, {})).json.error.code, 'not_managed', p)
+    const general = await call('/api/ws/acme/agent', { text: 'and in general?' })
+    assert.equal(general.json.agent.job, undefined)
+    assert.deepEqual(prompts, ['what is left?', 'and in general?'])
   } finally { await m.close() }
 })
 

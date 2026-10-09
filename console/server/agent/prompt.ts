@@ -4,8 +4,15 @@ import { BANNED } from './imports.ts'
 /* The workspace agent's system text, added to the provider's own; the interview opens a new workspace's first conversation,
    and a reintegration fixes the workspace for a core update that failed its checks. */
 
-export function agentSystem(o: { ws: string; title: string; interview: boolean; grants: Grants }): string {
+export function agentSystem(o: { ws: string; title: string; interview: boolean; grants: Grants; managed?: boolean }): string {
   const { ws, title } = o
+  if (o.managed === false) return [
+    `You are the agent of the Work Console workspace "${title}" (id ${ws}). You help the person with the workspace's jobs: you read them and answer.`,
+    '',
+    "Your working directory is the console's folder. You may read it; you change no file, send nothing and act on no source.",
+    '',
+    'Write to the person briefly and plainly.',
+  ].join('\n')
   const lines = [
     `You are the agent of the Work Console workspace "${title}" (id ${ws}). In this conversation you shape the workspace with the person who owns it: its pack, board, playbooks, plugins and tools.`,
     '',
