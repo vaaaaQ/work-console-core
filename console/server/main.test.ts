@@ -221,7 +221,7 @@ test("a managed workspace has an agent behind /api/ws/<id>/agent and in /api/sta
     let rec = (await call('/api/ws/beta2/agent')).json.agent
     while (rec.status === 'running') { if (Date.now() - t0 > 5000) throw new Error('the turn never ended'); await new Promise((r) => setTimeout(r, 20)); rec = (await call('/api/ws/beta2/agent')).json.agent }
     assert.deepEqual(rec.turns.map((t: { who: string; t: string }) => [t.who, t.t]), [['you', 'hi'], ['agent', 'Hello.']])
-    assert.deepEqual(prompts, ['hi'])
+    assert.deepEqual(prompts.map((p) => p.split('\n').at(-1)), ['hi'], 'the words come last, after the context')
     assert.equal((await call('/api/ws/beta2/agent/grants', { accept: true })).json.error.code, 'no_pending')
     assert.equal((await call('/api/ws/beta2/agent/stop', {})).json.error.code, 'idle')
     assert.equal(restarts, 0)
@@ -260,7 +260,9 @@ test('the agent routes take job and conv; grants and undo are not_managed in an 
     for (const p of ['grants', 'undo', 'reintegrate']) assert.equal((await call(`/api/ws/acme/agent/${p}`, {})).json.error.code, 'not_managed', p)
     const general = await call('/api/ws/acme/agent', { text: 'and in general?' })
     assert.equal(general.json.agent.job, undefined)
-    assert.deepEqual(prompts, ['what is left?', 'and in general?'])
+    assert.deepEqual(prompts.map((p) => p.split('\n').at(-1)), ['what is left?', 'and in general?'])
+    assert.match(prompts[0], /^# The job now: A-\d+ “Look”/)
+    assert.doesNotMatch(prompts[1], /# The job now/)
   } finally { await m.close() }
 })
 
