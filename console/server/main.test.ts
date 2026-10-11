@@ -263,6 +263,8 @@ test('the agent routes take job and conv; grants and undo are not_managed in an 
     for (const p of ['grants', 'undo', 'reintegrate']) assert.equal((await call(`/api/ws/acme/agent/${p}`, {})).json.error.code, 'not_managed', p)
     const general = await call('/api/ws/acme/agent', { text: 'and in general?' })
     assert.equal(general.json.agent.job, undefined)
+    // the turn starts after the answer, once it has read the jobs
+    await until(() => prompts.length === 2)
     assert.deepEqual(prompts.map((p) => p.split('\n').at(-1)), ['what is left?', 'and in general?'])
     assert.match(prompts[0], /^# The job now: A-\d+ “Look”/)
     assert.doesNotMatch(prompts[1], /# The job now/)
