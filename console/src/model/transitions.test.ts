@@ -5,8 +5,8 @@ import { PB0 } from '../data/playbooks.ts'
 import { JOBS0, JR, OVR, TPL0 } from '../data/demo.ts'
 import { clone } from '../lib/util.ts'
 import { KINDS } from './context.ts'
-import type { Cmd, Job } from './types.ts'
-import { CmdError, DESC_MAX, allSent, apply, askText, atOf, freshJob, hasDraft, isClosed, isLive, needsYou, nextMonth, phasesOf, seedFlow, stepOf, steps, stepsOf, tplOf, unsentAt } from './transitions.ts'
+import type { Cmd, Job, Step } from './types.ts'
+import { CmdError, DESC_MAX, allSent, apply, askText, atOf, fitFlow, freshJob, hasDraft, isClosed, isLive, needsYou, nextMonth, phasesOf, seedFlow, stepOf, steps, stepsOf, tplOf, unsentAt } from './transitions.ts'
 import type { Ctx, NewJob } from './transitions.ts'
 
 const T0 = new Date('2026-09-30T12:00:00Z')
@@ -901,4 +901,37 @@ test('returnTo on a job with its own steps keeps ph in the round, and the restar
   assert.deepEqual(back.rounds!.at(-1)!.flow.n1.rw, j.flow.n1.rw)
   assert.equal(back.flow.n1.rw, undefined)
   assert.equal(back.flow.n1.rp, undefined)
+})
+
+/* ===== a playbook that gained steps after its jobs were made ===== */
+const g1: Step = { id: 'g1', t: 'Gained first', m: 'you', x: 'done' }, g2: Step = { id: 'g2', t: 'Gained last', m: 'you', x: 'done', msg: 1 }
+/** X with a step put first and one put last in pb */
+function gained(pb: string): Ctx {
+  const PB = clone(PB0), ph = PB[pb].ph
+  ph[0].s.unshift(clone(g1)); ph[ph.length - 1].s.push(clone(g2))
+  return { ...X, PB }
+}
+
+test('a step its playbook gained later: skipped behind an open job, blank ahead of it, the rest untouched', () => {
+  const j = find((j) => !isClosed(j) && j.st !== 'draft' && !!atOf(X, j)), G = gained(j.pb), before = clone(j.flow), at = atOf(X, j)
+  assert.equal(fitFlow(G, j), j)
+  assert.equal(j.flow.g1.s, 'skip')
+  assert.equal(j.flow.g2.s, 'tpl')
+  for (const [id, f] of Object.entries(before)) assert.deepEqual(j.flow[id], f, id)
+  assert.equal(atOf(G, j), at)
+  assert.deepEqual(stepsOf(G, j).map((s) => s.id).filter((id) => !j.flow[id]), [])
+})
+
+test('a step its playbook gained later is skipped on a closed job', () => {
+  const j = find(isClosed), G = gained(j.pb)
+  fitFlow(G, j)
+  assert.deepEqual([j.flow.g1.s, j.flow.g2.s], ['skip', 'skip'])
+})
+
+test('a job with its own steps does not take its playbook\'s new ones', () => {
+  const j = withTpl(), G = gained(j.pb)
+  j.ph = clone(PB0[j.pb].ph)
+  fitFlow(G, j)
+  assert.equal(j.flow.g1, undefined)
+  assert.equal(j.flow.g2, undefined)
 })

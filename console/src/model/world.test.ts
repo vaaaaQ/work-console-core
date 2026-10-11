@@ -1,7 +1,7 @@
 import '../testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { CHATS, JOBS, LOG, PB, S, applyLocal, atOf, byId, chatOf, createJob, initFlow, isClosed, jobAtAct, jobForAct, keySrc, nextJobId, pbs, putJob, restore, setJobs, snap, timesheetJob } from './world.ts'
+import { CHATS, JOBS, LOG, PB, S, applyLocal, atOf, byId, chatOf, createJob, initFlow, isClosed, jobAtAct, jobForAct, keySrc, nextJobId, pbs, phState, phases, putJob, restore, setJobs, snap, timesheetJob } from './world.ts'
 
 JOBS.forEach(initFlow)
 
@@ -149,4 +149,18 @@ test('a planned chat message goes to the chat its label names, else to the job\'
   assert.deepEqual(chatOf(job({ ctx: [{ k: 'chat', id: 'x1', n: 10, name: 'Sam' }] }), 'reply in the thread'), { id: 'x1', name: 'Sam' }, 'the one chat in its context')
   assert.equal(chatOf(job({ ctx: [{ k: 'chat', id: 'x1', n: 10 }, { k: 'chat', id: 'x2', n: 10 }] }), 'reply in the thread'), undefined, 'two chats: no guess')
   assert.equal(chatOf(job({}), 'reply in the thread'), undefined)
+})
+
+test('a job whose playbook gained a step since it was stored still renders its phases', () => {
+  const x = snap(), j = structuredClone(JOBS.find(isClosed)!), raw = structuredClone(j), ph = PB[j.pb].ph, s0 = ph[ph.length - 1].s.length
+  ph[ph.length - 1].s.push({ id: 'g9', t: 'Gained', m: 'you', x: 'done' })
+  try {
+    setJobs([j])
+    const k = byId(j.id)!
+    assert.equal(k.flow.g9.s, 'skip')
+    assert.doesNotThrow(() => phases(k).map((p) => phState(k, p)))
+    const again = structuredClone(raw); again.v = (raw.v || 0) + 1
+    putJob(again)
+    assert.equal(byId(j.id)!.flow.g9.s, 'skip')
+  } finally { ph[ph.length - 1].s.length = s0; restore(x) }
 })

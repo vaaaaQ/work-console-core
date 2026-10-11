@@ -250,6 +250,16 @@ export const roundSteps = (x: Ctx, j: Job, from: string | undefined) => {
 }
 /** a step's state as it was before anyone touched it */
 const blank = (s: Step): Flow => ({ s: s.msg ? 'tpl' : 'fut', m: '', arts: (s.a || []).map((n) => ({ n, ok: false })), b: [], rv: null, dr: null, out: null, run: null, sent: {} })
+/** a step its playbook gained after the job was made has no state yet: a closed job, or one already
+    past it, skips it; otherwise it waits blank. A job with its own steps is left as it is */
+export function fitFlow(x: Ctx, j: Job) {
+  const all = stepsOf(x, j), started = (s: Step) => { const f = j.flow[s.id]; return !!f && f.s !== 'fut' && f.s !== 'tpl' }
+  all.forEach((s, i) => {
+    if (j.flow[s.id]) return
+    j.flow[s.id] = isClosed(j) || all.slice(i + 1).some(started) ? { ...blank(s), s: 'skip' } : blank(s)
+  })
+  return j
+}
 const noNew = (f: Flow): Flow => ({ ...f, nw: 0, run: null, arts: f.arts.map((a) => ({ ...a, nw: 0 })), b: f.b.map((b) => ({ ...b, nw: 0 })), dr: f.dr ? { ...f.dr, nw: 0 } : null })
 
 /** keeps the current pass as a round and starts a new one at sid: the steps from sid on start blank,

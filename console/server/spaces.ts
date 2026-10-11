@@ -262,7 +262,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   let recovered = false
   const stopLoading = onBridgeBack(bus, async () => {
     await loadPbs()
-    const all = await store.jobs()
+    const all = await jobs.all()
     for (const j of all) known.set(j.id, j)
     for (const j of all) if (T.isClosed(j)) clean(j)
     await runner.recover(recovered ? `${downName(source.via)} went away` : 'the console restarted')

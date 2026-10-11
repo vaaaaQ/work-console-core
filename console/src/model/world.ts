@@ -109,8 +109,8 @@ export function chatOf(j: Job, lbl: string): { id: string; name: string } | unde
   return it && { id: it.id, name: ctxName(j, it) }
 }
 export const chName = (j: Job, k: string, lbl: string) => `${PACKS[j.ws].src[k as SrcKey]?.n || k} · ${(k === 'chat' && chatOf(j, lbl)?.name) || lbl}`
-/** a job from a workspace that no longer exists lands in the default one */
-const known = (j: Job) => { if (!Object.hasOwn(PACKS, j.ws)) j.ws = DEFAULT_WS; return j }
+/** a job from a workspace that no longer exists lands in the default one; a step its playbook gained since gets a state */
+const known = (j: Job) => { if (!Object.hasOwn(PACKS, j.ws)) j.ws = DEFAULT_WS; return T.fitFlow(CTX, j) }
 /** puts a changed job in place and adds its new journal entries to the workspace log */
 export function putJob(j: Job) {
   known(j)

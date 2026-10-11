@@ -227,3 +227,17 @@ test('the console\'s acceptDraft on a step that is not auto is refused', async (
   const r = await jobs.cmd(j.id, { op: 'acceptDraft', step: 'tr', auto: true }, undefined, 'console')
   assert.equal(r.job.flow.tr.s, 'done')
 })
+
+test('a step the playbook gained after a job was stored reads as part of that job, and its commands work', async () => {
+  const x = demoCtx(), store = fileStore(join(tempDir('jobs'), 's.json'), demoSeed)
+  const j0 = (await store.jobs()).find((j) => !T.isClosed(j) && j.st !== 'recurring' && j.st !== 'draft' && !!T.atOf(x, j))!
+  const done = (await store.jobs()).find((j) => j.st === 'done' && j.pb === j0.pb)
+  const ph = x.PB[j0.pb].ph
+  ph[ph.length - 1].s.push({ id: 'g9', t: 'Gained', m: 'you', x: 'done' })
+  const jobs = new Jobs({ store, bus: new Bus(), ctx: () => x, gate: () => true })
+  assert.equal((await jobs.get(j0.id))!.flow.g9.s, 'fut')
+  assert.equal((await jobs.all()).find((j) => j.id === j0.id)!.flow.g9.s, 'fut')
+  if (done) assert.equal((await jobs.get(done.id))!.flow.g9.s, 'skip')
+  const r = await jobs.cmd(j0.id, { op: 'stepDone', step: T.atOf(x, j0)! }, j0.v)
+  assert.equal(r.job.flow.g9.s, 'fut')
+})

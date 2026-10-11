@@ -67,14 +67,14 @@ export class Jobs {
       this.open()
     }
     for (let n = 0; ; n++) {
-      const cur = await this.store.job(id)
+      const cur = await this.get(id)
       if (!cur) throw new HttpError(404, 'not_found', `no job ${id}`)
       if (who !== 'runner' && expectV != null && cur.v !== expectV) throw new HttpError(409, 'conflict', 'the job changed elsewhere')
       if (who === 'console' && c.op === 'acceptDraft' && T.stepOf(this.ctx(), cur, c.step)?.start !== 'auto')
         throw new HttpError(400, 'bad_state', `the console accepts a draft only on a step that starts auto`)
       // a link checks its blocker and walks the links for a cycle, so it reads the other jobs as they are now
       const links = c.op === 'ppSet' ? c.cmds : c.op === 'ppAccept' ? cur.pp?.cmds ?? [] : [c]
-      const others = links.some((l) => l?.op === 'waitAdd') ? new Map((await this.store.jobs()).map((j) => [j.id, j])) : null
+      const others = links.some((l) => l?.op === 'waitAdd') ? new Map((await this.all()).map((j) => [j.id, j])) : null
       let r: { job: Job; nx: string | null; same?: true }
       try { r = T.apply({ ...this.ctx(), by: name || BY[as ?? who], ...(others ? { jobOf: (i: string) => others.get(i) } : {}) }, cur, c) } catch (e) {
         if (e instanceof T.CmdError) throw new HttpError(400, e.code, e.message)
@@ -120,7 +120,7 @@ export class Jobs {
   async undo(id: string, v: number, prev: Job): Promise<Job> {
     this.open()
     if (!prev || prev.id !== id) throw new HttpError(400, 'bad_args', 'prev is not this job')
-    const cur = await this.store.job(id)
+    const cur = await this.get(id)
     if (!cur) throw new HttpError(404, 'not_found', `no job ${id}`)
     if (cur.v !== v) throw new HttpError(409, 'conflict', 'the job changed since; nothing undone')
     // a run the page cannot see from prev must not vanish: the runner owns run state
@@ -130,6 +130,7 @@ export class Jobs {
     return this.put(cur, back, v)
   }
 
-  all() { return this.store.jobs() }
-  get(id: string) { return this.store.job(id) }
+  /** the stored jobs with a state for every step their playbook has now */
+  async all() { const x = this.ctx(); return (await this.store.jobs()).map((j) => T.fitFlow(x, j)) }
+  async get(id: string) { const j = await this.store.job(id); return j && T.fitFlow(this.ctx(), j) }
 }
