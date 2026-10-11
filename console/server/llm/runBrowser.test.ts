@@ -121,6 +121,8 @@ test('the runs’ browser starts headless on its own profile behind the proxy, l
   const proxy = r.args.find((x) => x.startsWith('--proxy-server='))
   assert.match(proxy ?? '', /^--proxy-server=http:\/\/127\.0\.0\.1:\d+$/)
   assert.ok(r.args.includes('--proxy-bypass-list=<-loopback>'), 'loopback goes through the proxy too, so the console page is refused')
+  // Edge signs a fresh profile in to the PC's account by itself and syncs its passwords, history and extensions into it
+  for (const a of ['--disable-sync', '--disable-extensions', '--disable-features=msImplicitSignin,msEdgeAutoSignin']) assert.ok(r.args.includes(a), a)
   assert.equal(c.args[2], b.endpoint())
   // a second run shares the browser
   await b.mcp('/w2/.browser')

@@ -177,6 +177,10 @@ export function runBrowserPlugin(b: RunBrowser | null): Plugin[] {
   }]
 }
 
+/** a profile of the runs' own: left alone, Edge signs a fresh profile in to the PC's Microsoft account and syncs that account's
+    passwords, history, tabs and extensions (a password manager among them) into it, and the runs' history back out */
+const ALONE = ['--disable-sync', '--disable-extensions', '--disable-features=msImplicitSignin,msEdgeAutoSignin']
+
 /** how the live browser was launched, beside its profile: a console that restarts relaunches one that does not match */
 type Launch = { proxy: number; headless: boolean }
 
@@ -198,7 +202,7 @@ export function runBrowser(o: RunBrowserOpts): RunBrowser {
     if (!b && (!was || was.proxy !== want.proxy || was.headless !== headless || url)) await closeProfile(o.dir).catch(() => {})
     mkdirSync(dirname(o.dir), { recursive: true })
     writeFileSync(rec, JSON.stringify(want))
-    const args = [...(o.args ?? []), `--proxy-server=${p.url}`, '--proxy-bypass-list=<-loopback>', ...(url ? [url] : [])]
+    const args = [...(o.args ?? []), `--proxy-server=${p.url}`, '--proxy-bypass-list=<-loopback>', ...ALONE, ...(url ? [url] : [])]
     b = edgeBrowser({ ...o, ...(o.findExe ? { exe: o.findExe() } : {}), args, headless })
     await b.start()
     const s = b.status()
