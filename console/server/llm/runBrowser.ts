@@ -5,6 +5,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { connect, isIP } from 'node:net'
 import type { AddressInfo, Socket } from 'node:net'
 import { lookup } from 'node:dns/promises'
+import { networkInterfaces } from 'node:os'
 import { dirname, join } from 'node:path'
 import { closeProfile } from '../../scripts/edge.mjs'
 import { edgeBrowser, findEdge } from '../browser/launcher.ts'
@@ -18,7 +19,15 @@ import type { Plugin } from '../workspace.ts'
    explicit list of its tools: pages, clicks, typing, snapshots, evaluate; never cookies, storage, the PC's files or
    raw Playwright code. Every request goes through the console's own proxy: in open mode it lets any site through, in
    allowlist mode only the listed hosts; in both it refuses the console's own ports on this PC, since the console's
-   page trusts loopback and could accept a run's own grants. The window shows only while the person signs in. */
+   page trusts loopback and could accept a run's own grants. "This PC" is decided by structure (selfAddress): loopback in
+   any spelling, mapped and compatible IPv6 included, and every address on its own interfaces, where the LAN port listens.
+   The window shows only while the person signs in.
+   Accepted on purpose (decision of 2026-10-11, AD-0004):
+   - evaluate stays in both modes. It runs any JavaScript in the page, so it can read localStorage, sessionStorage and the
+     non-HttpOnly cookies of a signed-in site; in open mode a hostile page may steer a run to read them and send them out.
+     A narrower evaluate is no boundary, since JavaScript cannot be fenced by its text.
+   - only the console's two ports are refused. Its other local ports (the browser and Cursor bridges, fake gateways, this
+     browser's own CDP port, which can drive the whole profile) stay reachable on loopback. */
 
 /** allow null = open mode: any site */
 export type RunBrowserCfg = { allow: string[] | null }
@@ -67,25 +76,68 @@ export function playwrightCli(): string {
   }
 }
 
-const loopback = (ip: string) => ip.startsWith('127.') || ip === '::1' || ip === '0.0.0.0' || ip === '::' || ip.startsWith('::ffff:127.')
+/** an address in one spelling: IPv4 dotted, IPv6 as 8 full groups; a mapped or compatible IPv6 becomes its IPv4; null = not an ip */
+function canon(ip: string): string | null {
+  const a = ip.replace(/^\[|\]$/g, '').replace(/%.*$/, '').toLowerCase()
+  const v = isIP(a)
+  if (v === 4) return a.split('.').map(Number).join('.')
+  if (v !== 6) return null
+  const groups = (s: string): number[] => {
+    if (!s) return []
+    const p = s.split(':'), out: number[] = []
+    for (const x of p) {
+      if (x.includes('.')) { const [b0, b1, b2, b3] = x.split('.').map(Number); out.push((b0 << 8) | b1, (b2 << 8) | b3) } else out.push(parseInt(x, 16))
+    }
+    return out
+  }
+  const [l, r] = a.includes('::') ? a.split('::') : [a, undefined]
+  const head = groups(l), tail = r === undefined ? [] : groups(r)
+  const g = [...head, ...Array(8 - head.length - tail.length).fill(0), ...tail]
+  const v4 = (hi: number, lo: number) => [hi >> 8, hi & 255, lo >> 8, lo & 255].join('.')
+  const zero = (n: number) => g.slice(0, n).every((x) => x === 0)
+  if (zero(5) && g[5] === 0xffff) return v4(g[6], g[7])                                  // ::ffff:a.b.c.d
+  if (zero(6) && (g[6] !== 0 || g[7] > 1)) return v4(g[6], g[7])                         // ::a.b.c.d, but not :: or ::1
+  return g.map((x) => x.toString(16)).join(':')
+}
 
-/** null and the address to connect to when the host may be reached, else why not */
-async function gate(o: { allow: string[] | null; deny: number[] }, host: string, port: number): Promise<{ addr: string } | { no: string }> {
+/** the addresses on this PC's own interfaces, read anew each time so a new lease counts */
+const ownAddresses = (): string[] => Object.values(networkInterfaces()).flatMap((l) => (l ?? []).map((i) => i.address))
+
+/** true when ip is this PC: loopback (127/8, ::1), the unspecified 0/8 and ::, or an address on one of its interfaces,
+    whatever the spelling: mapped, compatible, expanded, with a zone */
+export function selfAddress(ip: string, own: string[] = ownAddresses()): boolean {
+  const c = canon(ip)
+  if (!c) return false
+  if (c.includes('.')) { const b0 = Number(c.split('.')[0]); if (b0 === 127 || b0 === 0) return true }
+  else if (c === '0:0:0:0:0:0:0:1' || c === '0:0:0:0:0:0:0:0') return true
+  return own.some((o) => canon(o) === c)
+}
+
+type Gate = { allow: string[] | null; deny: number[]; own?: () => string[] }
+
+/** the address to connect to when the host may be reached, else why not; a name is resolved once, here, and every address it
+    resolves to is checked, so the connection goes to an address that was checked */
+async function gate(o: Gate, host: string, port: number): Promise<{ addr: string } | { no: string }> {
   const h = host.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.$/, '')
   if (o.allow && !hostAllowed(o.allow, h)) return { no: `host_not_allowed: ${h}` }
-  let addr = h
-  if (!isIP(h)) {
-    try { addr = (await lookup(h)).address } catch { return { no: `no such host: ${h}` } }
+  let addrs = [h]
+  if (!isIP(h.replace(/%.*$/, ''))) {
+    try { addrs = (await lookup(h, { all: true })).map((x) => x.address) } catch { return { no: `no such host: ${h}` } }
+    if (!addrs.length) return { no: `no such host: ${h}` }
   }
-  // the console's page trusts loopback: a run there could act, or accept its own grants
-  if (o.deny.includes(port) && (loopback(addr) || h === 'localhost')) return { no: `console_port: ${h}:${port}` }
-  return { addr }
+  // the console's page trusts loopback, and its LAN port answers on this PC's own addresses: a run there could act, or accept its own grants
+  if (o.deny.includes(port)) {
+    const own = (o.own ?? ownAddresses)()
+    if (h === 'localhost' || addrs.some((a) => selfAddress(a, own))) return { no: `console_port: ${h}:${port}` }
+  }
+  return { addr: addrs[0] }
 }
 
 export type Proxy = { url: string; port: number; close(): Promise<void> }
 
 /** an http proxy on loopback that lets through what gate allows; port = try this one first (a relaunch keeps the browser's) */
-export async function startProxy(o: { allow: string[] | null; deny: number[]; port?: number }): Promise<Proxy> {
+/** own = this PC's addresses, for a test; default: its interfaces */
+export async function startProxy(o: Gate & { port?: number }): Promise<Proxy> {
   const refuse = (res: ServerResponse, why: string) => { res.writeHead(403, { 'content-type': 'text/plain' }); res.end(why) }
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     let u: URL

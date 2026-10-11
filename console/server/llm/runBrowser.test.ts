@@ -6,7 +6,7 @@ import type { Server } from 'node:http'
 import { connect } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
-import { BROWSER, BROWSER_TOOLS, WITHHELD, browserMcp, normRunBrowser, runBrowser, startProxy } from './runBrowser.ts'
+import { BROWSER, BROWSER_TOOLS, WITHHELD, browserMcp, normRunBrowser, runBrowser, selfAddress, startProxy } from './runBrowser.ts'
 import type { RunBrowser } from './runBrowser.ts'
 import { tempDir } from '../testdirs.ts'
 
@@ -88,6 +88,39 @@ test('open mode: the proxy lets any site through, but never the console’s own 
   assert.equal(no.status, 403)
   assert.match(no.body, /console_port: localhost:\d+/)
   assert.equal(await tunnel(p.port, `127.0.0.1:${con.port}`), 'HTTP/1.1 403 Forbidden')
+})
+
+test('selfAddress knows this PC by structure, not by spelling: loopback in every form, the unspecified address, its own interfaces', () => {
+  const own = ['192.168.100.141', 'fe80::1c2b:3d4e:5f60:7182', '172.23.192.1']
+  for (const ip of ['127.0.0.1', '127.1.2.3', '0.0.0.0', '0.1.2.3', '::1', '::', '0:0:0:0:0:0:0:1', '0000:0000:0000:0000:0000:0000:0000:0001',
+    '::ffff:127.0.0.1', '::ffff:7f00:1', '::FFFF:7F00:1', '::7f00:1', '::127.0.0.1', '0:0:0:0:0:ffff:7f00:1', '::1%lo0',
+    '192.168.100.141', '::ffff:192.168.100.141', '::ffff:c0a8:648d', 'fe80::1c2b:3d4e:5f60:7182', 'fe80::1c2b:3d4e:5f60:7182%12', '172.23.192.1'])
+    assert.equal(selfAddress(ip, own), true, ip)
+  for (const ip of ['8.8.8.8', '::ffff:808:808', '2001:4860:4860::8888', '192.168.100.142', '10.0.0.1', 'fe80::1', 'localhost', 'not an ip', ''])
+    assert.equal(selfAddress(ip, own), false, ip)
+})
+
+test('the console’s ports stay refused in mapped, expanded and compatible forms and on the PC’s own LAN addresses, by GET and CONNECT', async () => {
+  const a = await site(), con = await site()
+  const p = await startProxy({ allow: null, deny: [con.port], own: () => ['10.9.8.7', 'fd00::7'] })
+  closers.push(() => p.close())
+  for (const h of ['[::ffff:127.0.0.1]', '[::ffff:7f00:1]', '[0:0:0:0:0:0:0:1]', '[::7f00:1]', '[::1]', '127.0.0.2', '0.0.0.0', '10.9.8.7', '[fd00::7]', '[::ffff:a09:807]']) {
+    const no = await viaProxy(p.port, `http://${h}:${con.port}/api/act`)
+    assert.equal(no.status, 403, `GET ${h}`)
+    assert.match(no.body, /console_port/, `GET ${h}`)
+    assert.equal(await tunnel(p.port, `${h}:${con.port}`), 'HTTP/1.1 403 Forbidden', `CONNECT ${h}`)
+  }
+  // a port that is not the console's, on loopback, still passes
+  assert.deepEqual(await viaProxy(p.port, `http://[::ffff:127.0.0.1]:${a.port}/y`), { status: 200, body: 'site /y' })
+  assert.equal(await tunnel(p.port, `[::ffff:7f00:1]:${a.port}`), 'HTTP/1.1 200 Connection Established')
+})
+
+test('evaluate stays a run’s tool in both modes, by the decision of 2026-10-11; storage, cookies and raw code stay withheld', () => {
+  // a change to either list is the cue to review that decision (AD-0004 spec §3)
+  assert.ok(BROWSER_TOOLS.includes('mcp__browser__browser_evaluate'))
+  for (const t of ['browser_run_code_unsafe', 'browser_cookie_get', 'browser_cookie_list', 'browser_storage_state',
+    'browser_localstorage_get', 'browser_localstorage_list', 'browser_sessionstorage_get', 'browser_sessionstorage_list'])
+    assert.ok(WITHHELD.includes(t), t)
 })
 
 test('allowlist mode: only listed hosts open, every other host is refused', async () => {
