@@ -100,7 +100,10 @@ export async function startProxy(o: { allow: string[] | null; deny: number[]; po
     up.on('error', (e) => { if (!res.headersSent) { res.writeHead(502, { 'content-type': 'text/plain' }); res.end(e.message) } else res.destroy() })
     req.pipe(up)
   })
+  // a CONNECT socket leaves the server's own list, so closeAllConnections misses it and close waits on it
+  const tunnels = new Set<Socket>()
   server.on('connect', async (req: IncomingMessage, sock: Socket, head: Buffer) => {
+    tunnels.add(sock); sock.on('close', () => tunnels.delete(sock))
     sock.on('error', () => {})
     const m = /^(\[[^\]]+\]|[^:]+):(\d+)$/.exec(req.url ?? '')
     if (!m) return sock.end('HTTP/1.1 400 Bad Request\r\n\r\n')
@@ -121,7 +124,7 @@ export async function startProxy(o: { allow: string[] | null; deny: number[]; po
   })
   if (!(o.port && await listen(o.port)) && !await listen(0)) throw new Error('the runs’ browser proxy found no port')
   const port = (server.address() as AddressInfo).port
-  return { url: `http://127.0.0.1:${port}`, port, close: () => new Promise((ok) => { server.closeAllConnections(); server.close(() => ok()) }) }
+  return { url: `http://127.0.0.1:${port}`, port, close: () => new Promise((ok) => { server.closeAllConnections(); for (const s of tunnels) s.destroy(); server.close(() => ok()) }) }
 }
 
 export interface RunBrowser {

@@ -101,6 +101,19 @@ test('allowlist mode: only listed hosts open, every other host is refused', asyn
   assert.equal(await tunnel(p.port, `example.com:443`), 'HTTP/1.1 403 Forbidden')
 })
 
+test('close ends the open tunnels too: a browser kept for the next console holds them, and close must not wait on them', async () => {
+  const a = await site()
+  const p = await startProxy({ allow: null, deny: [] })
+  const s = connect(p.port, '127.0.0.1', () => s.write(`CONNECT 127.0.0.1:${a.port} HTTP/1.1\r\nHost: 127.0.0.1:${a.port}\r\n\r\n`))
+  s.on('error', () => {})
+  closers.push(async () => s.destroy())
+  assert.match(await new Promise<string>((ok) => s.once('data', (d) => ok(String(d)))), /^HTTP\/1.1 200 Connection Established/)
+  const ended = new Promise<void>((ok) => s.once('close', () => ok()))
+  const closed = await Promise.race([p.close().then(() => true), new Promise<boolean>((ok) => setTimeout(() => ok(false), 2000))])
+  assert.equal(closed, true, 'close still waits on the open tunnel')
+  await ended
+})
+
 const runs = (dir: string): { pid: number; args: string[] }[] => {
   const f = join(dir, 'fake-edge-runs.jsonl')
   return existsSync(f) ? readFileSync(f, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []
