@@ -75,12 +75,14 @@ export function agentTools(o: { ws: string; ops: AgentOps; hooks: AgentHooks }):
     {
       name: 'propose_grants',
       description: 'Ask the person, through Approvals, for what this workspace may reach. change is the whole grants you want: '
-        + 'packs, hosts (exact or *.domain), acts, runTools (the tools its runs may use) and mcp (MCP servers by name). '
+        + 'packs, hosts (exact or *.domain), acts, runTools (the tools its runs may use), mcp (MCP servers by name) and browser '
+        + '(the runs\' signed-in browser: true for any site, {allow: hosts} for only those, absent for none). '
         + 'Their answer comes back as a message; do not wait for it.',
       input: {
         change: z.object({
           packs: z.array(z.string()).optional(), hosts: z.array(z.string()).optional(), acts: z.array(z.string()).optional(),
           runTools: z.array(z.string()).optional(), mcp: z.record(z.string(), z.unknown()).optional(),
+          browser: z.union([z.boolean(), z.object({ allow: z.array(z.string()).optional() })]).optional(),
         }).passthrough(),
         reason: z.string().describe('why, in one line for the person'),
       },

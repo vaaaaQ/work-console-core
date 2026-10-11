@@ -18,7 +18,8 @@ export type Open = { kind: 'link' | 'command'; value: string }
 /** home = the console's home, where a Cursor session runs and is kept */
 export type AgentOpts = Parameters<typeof agentSdk>[0] & { home?: string; cursorPath?: () => string | undefined }
 export interface Provider { id: ProviderId; label: string; auto?: (o: AgentOpts) => Sdk; open(s: OpenIn): Open }
-export interface ProviderSettings { auto: ProviderId; manual: ProviderId; claudePath?: string; cursorPath?: string }
+/** runBrowser = what the runs' browser launches; unset = Edge */
+export interface ProviderSettings { auto: ProviderId; manual: ProviderId; claudePath?: string; cursorPath?: string; runBrowser?: 'edge' | 'chrome' }
 
 /** Claude Code's q and the whole Cursor URL, as their docs set them */
 const CLAUDE_Q = 5000, CURSOR_URL = 8000

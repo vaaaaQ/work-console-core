@@ -7,6 +7,10 @@ Guidance for an agent working in this repo.
 - **An LLM drafts; a person sends.** No LLM run and no Claude Code session ever posts, mails, votes,
   comments or changes state in a tool. Runs get read tools only (`server/llm/sdk.ts` `ALLOW`/`DENY`; Cursor's through `server/llm/cursor/policy.ts`).
   Acts go through `/api/act`, and only from the page after a person confirms.
+  One exception: in a workspace whose `grants.json` (or `llm.browser`) turns on the runs' browser, a run may act
+  in that browser (open pages, click, type, send) through the Playwright MCP tools `server/llm/runBrowser.ts` lists.
+  The person turned it on for that workspace, and the allowlist mode limits the hosts. Packs, `/api/act` and the bridge do not change,
+  and the runs' browser never reaches the console's own ports or reads cookies, storage or the PC's files.
 - **The core names no workplace.** Code under `console/` and `schemas/` must not mention a real
   company, product, person or host. A workplace lives in its workspace, `console/workspaces/<id>/`
   (pack, playbooks, board rule, demo data), and in a bridge pack under `packs/<name>/`. The demo

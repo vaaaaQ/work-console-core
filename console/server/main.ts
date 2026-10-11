@@ -86,7 +86,7 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
   }
   const list: Space[] = []
   try {
-    for (const w of workspaces) list.push(await makeSpace(w, { cfg: cfgs[w.page.id], home: cfg.home, artifactsDir, sdk: o.sdk, fake: cfg.fakeGateway, push, root, agent }))
+    for (const w of workspaces) list.push(await makeSpace(w, { cfg: cfgs[w.page.id], home: cfg.home, artifactsDir, sdk: o.sdk, fake: cfg.fakeGateway, push, root, agent, ports: [cfg.loopbackPort, cfg.lanPort] }))
   } catch (e) { for (const s of list) await s.close(); throw e }
   const spaces = new Spaces(list), unhub = hub(list, bus)
   const allKnown = function* () { for (const s of list) yield* s.known.values() }

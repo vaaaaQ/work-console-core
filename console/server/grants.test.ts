@@ -19,6 +19,23 @@ test('normGrants fills what is missing and refuses unknown keys and wrong types'
   assert.throws(() => normGrants(null), /grants must be an object/)
 })
 
+test("normGrants: browser is off by default, true is open mode, allow lists the hosts; mcp may not take the browser's name", () => {
+  assert.ok(!('browser' in EMPTY_GRANTS) && !('browser' in normGrants({})), 'off is absent, so an old grants.json reads as before')
+  assert.deepEqual(normGrants({ browser: true }).browser, { allow: null })
+  assert.deepEqual(normGrants({ browser: { allow: ['web.telegram.example'] } }).browser, { allow: ['web.telegram.example'] })
+  assert.ok(!('browser' in normGrants({ browser: false })))
+  assert.throws(() => normGrants({ browser: { allow: [] } }), /allow must list at least one host/)
+  assert.throws(() => normGrants({ mcp: { browser: {} } }), /mcp may not name browser/)
+})
+
+test('grantsDiff says when the browser turns on, off, or changes mode', () => {
+  const off = EMPTY_GRANTS, open = { ...EMPTY_GRANTS, browser: { allow: null } as { allow: string[] | null } }, only = { ...EMPTY_GRANTS, browser: { allow: ['a.example', 'b.example'] } }
+  assert.deepEqual(grantsDiff(off, open), ['+ browser open: any site'])
+  assert.deepEqual(grantsDiff(open, only), ['~ browser allowlist: a.example, b.example'])
+  assert.deepEqual(grantsDiff(only, off), ['- browser'])
+  assert.deepEqual(grantsDiff(only, only), [])
+})
+
 test('grantsOf: no file = unmanaged, a file = its grants, a bad file throws naming it', () => {
   const r = root()
   assert.equal(grantsOf('w1', r), null)

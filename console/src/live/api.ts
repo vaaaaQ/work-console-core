@@ -153,6 +153,10 @@ async function call<T>(method: string, path: string, body?: unknown, timeout = 1
 export const wsCall = <T>(ws: string, method: string, path: string, body?: unknown, timeout?: number, signal?: AbortSignal) =>
   call<T>(method, `/api/ws/${enc(ws)}${path}`, body, timeout, signal)
 
+/** the workspace's runs' browser opens a window on url for the person to sign in; done closes it, headless again */
+export const runBrowserSignIn = (ws: string, url: string) => wsCall<unknown>(ws, 'POST', '/run-browser/signin', { url }, 60_000)
+export const runBrowserDone = (ws: string) => wsCall<unknown>(ws, 'POST', '/run-browser/done', {}, 30_000)
+
 /** null = no backend (demo); 'unpaired' = this device has no pairing yet */
 export async function detect(): Promise<State | null | 'unpaired'> {
   try {

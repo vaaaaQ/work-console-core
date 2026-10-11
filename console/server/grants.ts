@@ -2,11 +2,13 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Grants } from '../src/model/agent.ts'
 import { CONSOLE } from './config.ts'
+import { BROWSER, normRunBrowser } from './llm/runBrowser.ts'
 
 /* A workspace with workspaces/<id>/grants.json is managed: its agent edits it, and its runs' tools and MCP servers
    come only from that file, which only an accepted Approvals item writes. Without the file a workspace is as before. */
 
 export type { Grants }
+/** browser is absent while off, so a grants.json without it reads and writes as before */
 export const EMPTY_GRANTS: Grants = { packs: [], hosts: [], acts: [], runTools: [], mcp: {} }
 const LISTS = ['packs', 'hosts', 'acts', 'runTools'] as const
 
@@ -16,7 +18,7 @@ export const grantsPath = (id: string, root = CONSOLE) => join(root, 'workspaces
 export function normGrants(x: unknown): Grants {
   if (!x || typeof x !== 'object' || Array.isArray(x)) throw new Error('grants must be an object')
   const o = x as Record<string, unknown>
-  for (const k of Object.keys(o)) if (![...LISTS, 'mcp'].includes(k)) throw new Error(`unknown key ${k}`)
+  for (const k of Object.keys(o)) if (![...LISTS, 'mcp', 'browser'].includes(k)) throw new Error(`unknown key ${k}`)
   const out: Grants = structuredClone(EMPTY_GRANTS)
   for (const k of LISTS) {
     const v = o[k] ?? []
@@ -25,8 +27,10 @@ export function normGrants(x: unknown): Grants {
   }
   const mcp = o.mcp ?? {}
   if (!mcp || typeof mcp !== 'object' || Array.isArray(mcp)) throw new Error('mcp must be an object of servers')
-  for (const name of ['bridge', 'run', 'agent']) if (Object.hasOwn(mcp, name)) throw new Error(`mcp may not name ${name}`)
+  for (const name of ['bridge', 'run', 'agent', BROWSER]) if (Object.hasOwn(mcp, name)) throw new Error(`mcp may not name ${name}`)
   out.mcp = structuredClone(mcp as Record<string, unknown>)
+  const browser = normRunBrowser(o.browser)
+  if (browser) out.browser = browser
   return out
 }
 
@@ -54,6 +58,11 @@ export function grantsDiff(a: Grants, b: Grants): string[] {
     else if (JSON.stringify(a.mcp[n]) !== JSON.stringify(b.mcp[n])) out.push(`~ mcp ${n}`)
   }
   for (const n of Object.keys(a.mcp)) if (!Object.hasOwn(b.mcp, n)) out.push(`- mcp ${n}`)
+  const ba = a.browser ?? null, bb = b.browser ?? null
+  const mode = (x: { allow: string[] | null }) => (x.allow ? `allowlist: ${x.allow.join(', ')}` : 'open: any site')
+  if (!ba && bb) out.push(`+ browser ${mode(bb)}`)
+  else if (ba && !bb) out.push('- browser')
+  else if (ba && bb && mode(ba) !== mode(bb)) out.push(`~ browser ${mode(bb)}`)
   return out
 }
 

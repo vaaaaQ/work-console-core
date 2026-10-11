@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { HttpError } from './events.ts'
 import { isProvider, PROVIDER_IDS, PROVIDERS } from './llm/providers.ts'
 import type { ProviderSettings } from './llm/providers.ts'
+import { BROWSER_KINDS } from './llm/runBrowser.ts'
+import type { BrowserKind } from './llm/runBrowser.ts'
 
 /* The console's provider choice, one file for the person and the machine: <home>/providers.json.
    Read on every use, so a change applies from the next run without a restart. A key the file lacks
@@ -12,6 +14,7 @@ const DEFAULTS: ProviderSettings = { auto: 'claude', manual: 'claude' }
 const PATHS = ['claudePath', 'cursorPath'] as const
 
 const isFile = (p: string) => { try { return statSync(p).isFile() } catch { return false } }
+const isKind = (x: unknown): x is BrowserKind => typeof x === 'string' && (BROWSER_KINDS as readonly string[]).includes(x)
 
 export class Settings {
   private file: string
@@ -25,6 +28,7 @@ export class Settings {
       manual: isProvider(raw.manual) ? raw.manual : DEFAULTS.manual,
     }
     for (const k of PATHS) if (typeof raw[k] === 'string' && raw[k]) out[k] = raw[k] as string
+    if (isKind(raw.runBrowser)) out.runBrowser = raw.runBrowser
     return out
   }
 
@@ -45,6 +49,10 @@ export class Settings {
       if (!p) { delete next[k]; continue }
       if (!isFile(p)) throw new HttpError(400, 'bad_args', `${k}: ${p} is not an existing file`)
       next[k] = p
+    }
+    if (b.runBrowser !== undefined) {
+      if (!isKind(b.runBrowser)) throw new HttpError(400, 'bad_args', `runBrowser is one of ${BROWSER_KINDS.join(', ')}`)
+      next.runBrowser = b.runBrowser
     }
     writeFileSync(this.file, JSON.stringify(next, null, 2) + '\n')
     return this.read()

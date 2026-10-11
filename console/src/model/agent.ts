@@ -1,8 +1,9 @@
 /* The workspace agent as the page and the server both see it: what a workspace is granted, and one
    conversation with its record of turns and commits. */
 
-/** a managed workspace's grants.json: the packs and hosts it may reach, the acts it may run, its runs' tools and MCP servers */
-export interface Grants { packs: string[]; hosts: string[]; acts: string[]; runTools: string[]; mcp: Record<string, unknown> }
+/** a managed workspace's grants.json: the packs and hosts it may reach, the acts it may run, its runs' tools and MCP servers,
+    and its runs' browser: null = none, allow null = any site, else only the listed hosts */
+export interface Grants { packs: string[]; hosts: string[]; acts: string[]; runTools: string[]; mcp: Record<string, unknown>; browser?: { allow: string[] | null } | null }
 
 export type AgentWho = 'you' | 'agent' | 'tool' | 'note'
 export interface AgentTurn { at: string; who: AgentWho; t: string }

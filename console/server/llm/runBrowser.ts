@@ -5,11 +5,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { connect, isIP } from 'node:net'
 import type { AddressInfo, Socket } from 'node:net'
 import { lookup } from 'node:dns/promises'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { closeProfile } from '../../scripts/edge.mjs'
-import { edgeBrowser } from '../browser/launcher.ts'
+import { edgeBrowser, findEdge } from '../browser/launcher.ts'
 import type { Browser, EdgeOptions } from '../browser/launcher.ts'
+import { HttpError } from '../events.ts'
 import { hostAllowed } from '../grants.ts'
+import type { Plugin } from '../workspace.ts'
 
 /* The runs' browser: one per workspace that turns it on, with its own persistent profile, so a person signs in to a
    site once and every run of the workspace works in that session. Runs reach it only through Playwright MCP, with an
@@ -139,6 +141,40 @@ export type RunBrowserOpts = Omit<EdgeOptions, 'headless'> & RunBrowserCfg & {
   deny: number[]
   /** Playwright MCP's cli.js; default: the installed one */
   cli?: string
+  /** the browser to launch, asked at each launch so a changed setting applies; wins over exe */
+  findExe?: () => string | null
+}
+
+export type BrowserKind = 'edge' | 'chrome'
+export const BROWSER_KINDS: readonly BrowserKind[] = ['edge', 'chrome']
+/** the configured path, else an installed browser of the kind the settings name (Edge by default); null = none */
+export function findRunBrowser(kind: BrowserKind = 'edge', path?: string | null): string | null {
+  if (path) return path
+  if (kind === 'edge') return findEdge()
+  const env = process.env
+  const paths = process.platform === 'win32'
+    ? [env.ProgramFiles ?? 'C:\\Program Files', env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', ...(env.LOCALAPPDATA ? [env.LOCALAPPDATA] : [])].map((p) => join(p, 'Google', 'Chrome', 'Application', 'chrome.exe'))
+    : process.platform === 'darwin' ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'] : ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium']
+  return paths.find((p) => existsSync(p)) ?? null
+}
+
+/** the routes the Sign in button uses: the browser's status, a window on a page to sign in at, and done */
+export function runBrowserPlugin(b: RunBrowser | null): Plugin[] {
+  if (!b) return []
+  return [{
+    name: 'run-browser',
+    routes: [
+      ['GET', /^\/run-browser\/status$/, async () => b.status()],
+      ['POST', /^\/run-browser\/signin$/, async (r) => {
+        const { url } = await r.body()
+        if (typeof url !== 'string' || !url) throw new HttpError(400, 'bad_args', 'sign-in needs a url to sign in at')
+        try { await b.signIn(url) } catch (e) { throw new HttpError(409, 'browser_unavailable', (e as Error).message) }
+        return b.status()
+      }],
+      ['POST', /^\/run-browser\/done$/, async () => { await b.signedIn(); return b.status() }],
+    ],
+    state: () => b.status(),
+  }]
 }
 
 /** how the live browser was launched, beside its profile: a console that restarts relaunches one that does not match */
@@ -163,7 +199,7 @@ export function runBrowser(o: RunBrowserOpts): RunBrowser {
     mkdirSync(dirname(o.dir), { recursive: true })
     writeFileSync(rec, JSON.stringify(want))
     const args = [...(o.args ?? []), `--proxy-server=${p.url}`, '--proxy-bypass-list=<-loopback>', ...(url ? [url] : [])]
-    b = edgeBrowser({ ...o, args, headless })
+    b = edgeBrowser({ ...o, ...(o.findExe ? { exe: o.findExe() } : {}), args, headless })
     await b.start()
     const s = b.status()
     if (s.state !== 'up') { const why = s.reason ?? s.state; await b.stop(); b = null; throw new Error(`the runs’ browser did not start: ${why}`) }

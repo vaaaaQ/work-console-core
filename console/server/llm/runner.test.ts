@@ -586,6 +586,29 @@ test('screenshot keeps a png of a page as the step\'s artifact; a file outside t
   assert.equal(plain.sessions[0].tools.screenshot, undefined)
 })
 
+test('signin_needed ends the run on a draft that asks the user to sign in, and the run record keeps the site and page; no tool without the browser', async () => {
+  const s = setup(), [t] = await targets(s.jobs, 1)
+  const runner = new Runner({ store: s.store, jobs: s.jobs, bus: s.bus, sdk: fakeSdk(s.sessions).sdk, cwd: s.dir, gate: () => true, artifactsDir: join(s.dir, 'arts'), ctx: demoCtx, browser: true })
+  const r = await runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  const tools = s.sessions[0].tools
+  await assert.rejects(tools.signinNeeded!({ site: 'Telegram', url: 'javascript:alert(1)' }), /only http and https/)
+  await tools.signinNeeded!({ site: 'Telegram', url: 'https://web.telegram.example/' })
+  await assert.rejects(tools.signinNeeded!({ site: 'Telegram', url: 'https://web.telegram.example/' }), /draft was already submitted/)
+  s.sessions[0].end()
+  await until(async () => (await runner.get(r.id))?.ended != null)
+  const rec = (await runner.get(r.id))!
+  assert.equal(rec.state, 'draft')
+  assert.deepEqual(rec.signin, { site: 'Telegram', url: 'https://web.telegram.example/' })
+  const dr = (await s.jobs.get(t.job))!.flow[t.step].dr!
+  assert.match(dr.t, /^Sign in to Telegram again/)
+  assert.match(dr.t, /Sign in/); assert.match(dr.t, /reply/)
+  const plain = setup(), [p] = await targets(plain.jobs, 1)
+  await plain.runner.ask(p.job, p.step, 'q')
+  await until(() => plain.sessions.length === 1)
+  assert.equal(plain.sessions[0].tools.signinNeeded, undefined)
+})
+
 test('job tools create jobs in the run\'s workspace and start them; at most 5 a run, other prefixes refused, none without the option', async () => {
   const s = setup(), [t] = await targets(s.jobs, 1)
   const runner = new Runner({ store: s.store, jobs: s.jobs, bus: s.bus, sdk: fakeSdk(s.sessions).sdk, cwd: s.dir, gate: () => true, artifactsDir: join(s.dir, 'arts'), ctx: demoCtx,

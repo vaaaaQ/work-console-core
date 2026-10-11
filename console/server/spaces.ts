@@ -19,6 +19,8 @@ import type { FakeGateway } from './bridge/fake.ts'
 import { READY } from './bridge/wire.ts'
 import { readToken } from './config.ts'
 import { shoot } from './llm/shot.ts'
+import { findRunBrowser, normRunBrowser, runBrowser, runBrowserPlugin } from './llm/runBrowser.ts'
+import type { RunBrowser, RunBrowserOpts } from './llm/runBrowser.ts'
 import { builder } from './llm/builder.ts'
 import type { Build } from './llm/builder.ts'
 import { Bus, HttpError, downName } from './events.ts'
@@ -134,6 +136,10 @@ export function onBridgeBack(bus: Bus, load: () => Promise<void>, backoff = [200
     packsDir = where a managed workspace's granted packs are read */
 export type SpaceOpts = {
   cfg: WsConfig; home: string; artifactsDir: string; sdk?: Sdk; fake: boolean; push: Push; askDelay?: number; root?: string; packsDir?: string
+  /** the console's own ports, which the runs' browser never opens on this PC; default 7410 and 7411 */
+  ports?: number[]
+  /** makes the runs' browser of a workspace that has one; tests give one that launches nothing */
+  runBrowser?: (o: RunBrowserOpts) => RunBrowser
   agent?: { ops: SessionOps; hold(): () => void; taken(): { ids: string[]; prefixes: string[] }; reintegration?: Reintegration }
 }
 
@@ -186,10 +192,17 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   const jobs = new Jobs({ store, bus, ctx, gate, via: source.via })
   // a new run takes the auto provider the settings name now; a resume or a reply the one its run recorded
   const settings = new Settings(o.home), rb = runBridge(w, source, cfg)
+  // the runs' browser: a managed workspace's grants say, else its server.ts; Edge or Chrome as the settings name at each launch
+  const browserCfg = grants ? grants.browser ?? null : normRunBrowser(w.llm?.browser)
+  const runBr = browserCfg ? (o.runBrowser ?? runBrowser)({
+    dir: join(o.home, 'run-browser', id), allow: browserCfg.allow, deny: o.ports ?? [7410, 7411],
+    findExe: () => findRunBrowser(settings.read().runBrowser, cfg.browserPath),
+  }) : null
   const sdk = o.sdk ?? providerPick(() => settings.read(), (p) => p.auto!({
     // a getter: a provider reads it as each session starts
     get gatewayUrl() { return rb.url() },
     llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools, mcp, bridge: rb.bridge,
+    ...(runBr ? { browser: (out: string) => runBr.mcp(out) } : {}),
     claudePath: () => settings.read().claudePath, cursorPath: () => settings.read().cursorPath, home: o.home,
   }))
   // fake mode touches no real repo
@@ -199,7 +212,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     context: (j) => resolveContext(source, j, w.page.me, notes), me: w.page.me, bridge: rb.bridge, workDir,
     screenshot: w.llm?.screenshot ? (s) => shoot({ ...s, browserPath: cfg.browserPath }) : undefined,
     jobTools: w.llm?.jobTools ? { ws: id, pb: w.page.board.start, prj: w.page.pack.prj, prefix: w.jobPrefix } : undefined, notes,
-    autoResume: cfg.autoAsk === true,
+    autoResume: cfg.autoAsk === true, browser: !!runBr,
   })
   const offAuto = autoAsk({ jobs, runner, ctx, on: cfg.autoAsk === true, delay: o.askDelay })
   // a workspace without a gateway gives the builder no sources to read
@@ -265,10 +278,14 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     id, page: w.page, prefix: w.jobPrefix, cfg, grants, agent, acts, bus, source, store, jobs, runner, notes, ctx, known, fake, build,
     putPlaybook: async (pid, pb, tpl) => { await store.putPlaybook(pid, pb, tpl); await loadPbs() },
     start: startItem({ jobs, ctx, bridge: source, page: w.page }),
-    plugins: [...browserPlugin(source), ...w.plugins?.({ id, cfg, home: o.home, jobs, source, artifactsDir: o.artifactsDir, http: guardedHttp(grants?.hosts ?? null) }) ?? []],
+    plugins: [...browserPlugin(source), ...runBrowserPlugin(runBr), ...w.plugins?.({ id, cfg, home: o.home, jobs, source, artifactsDir: o.artifactsDir, http: guardedHttp(grants?.hosts ?? null) }) ?? []],
     // a QA return, a woken blocker or a proposal pushes its own message; the generic one would say it again
     onNeedsYou: (f) => jobs.onNeedsYou((j) => { if (!returns.handling(j.id) && !blockers.handling(j.id) && !proposer.handling(j.id)) f(j) }),
     // the source going away on close is no reason to interrupt the runs
-    async close() { stopLoading(); offInterrupt(); offAuto(); offReactor(); blockers.stop(); replies.stop(); agent?.close(); source.stop(); await fake?.close() },
+    async close() {
+      stopLoading(); offInterrupt(); offAuto(); offReactor(); blockers.stop(); replies.stop(); agent?.close(); source.stop()
+      await runBr?.stop().catch((e) => console.error(`stopping the runs' browser of ${id}:`, (e as Error).message))
+      await fake?.close()
+    },
   }
 }

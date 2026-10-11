@@ -12,7 +12,7 @@ the workspace agent and for a person editing by hand; both keep to the same line
 | UI: act handlers, panels, dialogs | `workspaces/<id>/ui.tsx` | checks pass, the build |
 | a workspace's own logic and its tests | `workspaces/<id>/*.ts`, `*.test.ts` | checks pass |
 | a helper several workspaces share | `tools/**` | every workspace's checks pass |
-| packs, hosts, acts, run tools, MCP servers | `workspaces/<id>/grants.json` | the person's Accept |
+| packs, hosts, acts, run tools, MCP servers, the runs' browser | `workspaces/<id>/grants.json` | the person's Accept |
 | addresses, database, ports | `config.json` in the console's home | the person, by hand |
 
 *The workspace agent changes `workspaces/<id>/**` and `tools/**` only; anything that widens what a

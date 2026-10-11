@@ -24,6 +24,7 @@ import type { Browser } from './browser/launcher.ts'
 import type { StateDocs } from './browser/state.ts'
 import type { PgSource } from './store/pg.ts'
 import { tempDir } from './testdirs.ts'
+import type { RunBrowser, RunBrowserOpts } from './llm/runBrowser.ts'
 
 /** Acme under another id and prefix; its playbooks stay Acme's, so it brings none of its own */
 const beta2: WorkspaceServer = { ...acmeServer, page: { ...acme, id: 'beta2', playbooks: {}, me: 'Alex' }, jobPrefix: 'B' }
@@ -394,6 +395,72 @@ test("a managed workspace's runs get exactly its grants' runTools, and its plugi
     assert.equal(plain.grants, null)
     assert.equal(plain.acts, GATEWAY_ACTIONS)
   } finally { await plain.close() }
+})
+
+/** a runs' browser that launches nothing: what it was made with, and what it was asked */
+function fakeRunBrowser() {
+  const made: RunBrowserOpts[] = [], calls: string[] = []
+  const make = (o: RunBrowserOpts): RunBrowser => {
+    made.push(o)
+    let signingIn = false
+    return {
+      mcp: async (out) => { calls.push(`mcp ${out}`); return { type: 'stdio', command: 'node', args: [] } },
+      signIn: async (u) => { calls.push(`signIn ${u}`); signingIn = true },
+      signedIn: async () => { calls.push('signedIn'); signingIn = false },
+      endpoint: () => null,
+      status: () => ({ state: 'off', signingIn, allow: o.allow }),
+      stop: async () => { calls.push('stop') },
+    }
+  }
+  return { made, calls, make }
+}
+const route = (s: Space, plugin: string, method: string, path: string, body: Record<string, unknown> = {}) => {
+  const r = s.plugins.find((p) => p.name === plugin)!.routes.find(([m, p]) => m === method && p.test(path))!
+  return r[2]({ q: new URLSearchParams(), p: [], body: async () => body })
+}
+
+test("a managed workspace's grants turn on the runs' browser: its own profile, its mode, the console's ports refused, sign-in routes and signin_needed", async () => {
+  install([{ page: acme }])
+  const dir = tempDir('spaces'), root = join(dir, 'console'), rb = fakeRunBrowser()
+  mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })
+  writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ browser: { allow: ['web.telegram.example'] } }))
+  const f = fakeSdk()
+  const s = await makeSpace(acmeServer, { cfg: wsCfg(dir), home: dir, artifactsDir: join(dir, 'arts'), sdk: f.sdk, fake: true, push: async () => {}, root, ports: [7410, 7411], runBrowser: rb.make })
+  try {
+    assert.equal(rb.made.length, 1)
+    assert.equal(rb.made[0].dir, join(dir, 'run-browser', 'acme'))
+    assert.deepEqual(rb.made[0].allow, ['web.telegram.example'])
+    assert.deepEqual(rb.made[0].deny, [7410, 7411])
+    assert.ok(s.plugins.some((p) => p.name === 'run-browser'))
+    assert.deepEqual(s.plugins.find((p) => p.name === 'run-browser')!.state!(), { state: 'off', signingIn: false, allow: ['web.telegram.example'] })
+    await route(s, 'run-browser', 'POST', '/run-browser/signin', { url: 'https://web.telegram.example/' })
+    await route(s, 'run-browser', 'POST', '/run-browser/done')
+    await assert.rejects(Promise.resolve(route(s, 'run-browser', 'POST', '/run-browser/signin', {})), /a url to sign in at/)
+    assert.deepEqual(rb.calls, ['signIn https://web.telegram.example/', 'signedIn'])
+    s.source.start()
+    await until(() => s.source.available())
+    const j = await s.jobs.create({ t: 'x', key: 'ACME-77', pb: 'action', prj: acme.pack.prj[0], ws: 'acme' })
+    await s.jobs.cmd(j.id, { op: 'start' })
+    const step = T.atOf(s.ctx(), (await s.jobs.get(j.id))!)!
+    await s.runner.ask(j.id, step, 'go')
+    await until(() => f.sessions.length === 1)
+    assert.ok(f.sessions[0].tools.signinNeeded, 'runs get signin_needed')
+    f.sessions[0].end()
+  } finally { await s.close() }
+  assert.equal(rb.calls.at(-1), 'stop', 'closing the space stops its browser')
+})
+
+test("an unmanaged workspace's llm.browser true is open mode; without it there is no runs' browser at all", async () => {
+  install([{ page: acme }])
+  const dir = tempDir('spaces'), rb = fakeRunBrowser()
+  const o = { cfg: wsCfg(dir), home: dir, artifactsDir: join(dir, 'arts'), sdk: fakeSdk().sdk, fake: true, push: async () => {}, root: join(dir, 'none'), runBrowser: rb.make }
+  const open = await makeSpace({ ...acmeServer, llm: { browser: true } }, o)
+  try { assert.equal(rb.made[0].allow, null) } finally { await open.close() }
+  const off = await makeSpace(acmeServer, o)
+  try {
+    assert.equal(rb.made.length, 1)
+    assert.ok(!off.plugins.some((p) => p.name === 'run-browser'))
+  } finally { await off.close() }
 })
 
 test('a workspace on its own database names the database when it is down, not the bridge', async () => {

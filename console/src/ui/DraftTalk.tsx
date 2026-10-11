@@ -25,6 +25,8 @@ export function DraftTalk({ job, step, last }: { job: Job; step: string; last?: 
   if (!LIVE.on || !f?.dr) return null
   const all = thread(Object.values(LIVE.runs), job.id, step), turns = all.filter((r) => r.parent), head = all.at(-1)
   const shown = last && !more ? turns.slice(-last) : turns
+  // the draft now on the step asks the user to sign in to a site in the runs' browser
+  const signin = all.findLast((r) => r.state === 'draft')?.signin
   const send = async () => {
     if (!head) return
     setSending(true)
@@ -38,6 +40,7 @@ export function DraftTalk({ job, step, last }: { job: Job; step: string; last?: 
     <div className="talk">
       {shown.length < turns.length && <button type="button" className="lnk talk-more" onClick={() => setMore(true)}>{turns.length - shown.length} more</button>}
       {shown.map((r) => <Turn key={r.id} r={r} />)}
+      {signin && !f.run && <SignIn ws={job.ws} site={signin.site} url={signin.url} />}
       {all.some((r) => r.session)
         ? !f.run && <div className="talk-box">
             <VoiceField value={t} onChange={setT} target="llm" ctx={f.dr.t} intent={intent} onIntent={setIntent} rows={3} placeholder="Reply to the draft: what to change, or a question" />
@@ -46,6 +49,23 @@ export function DraftTalk({ job, step, last }: { job: Job; step: string; last?: 
                 onClick={() => { const say = t.trim(); newBlocker({ job: job.id, step, ...(say ? { say } : {}) }) }}><Ic n="hourglass" sm />Blocker</button></div>
           </div>
         : <div className="hint">This draft has no LLM session to continue; Reject with a reason starts a new one.</div>}
+    </div>
+  )
+}
+
+/** Sign in opens the runs' browser with a window on the page; Done closes it, and a reply lets the run go on */
+function SignIn({ ws, site, url }: { ws: string; site: string; url: string }) {
+  const [open, setOpen] = React.useState(false), [busy, setBusy] = React.useState(false)
+  const go = async (f: () => Promise<unknown>, next: boolean) => {
+    setBusy(true)
+    try { await f(); setOpen(next) } catch (e) { toast(failText(e)) } finally { setBusy(false) }
+  }
+  return (
+    <div className="talk-box">
+      <div className="hint">{open ? `Sign in to ${site} in the window that opened, then press Done and reply here.` : `The runs' browser is signed out of ${site}.`}</div>
+      <div className="row">{open
+        ? <button type="button" className="btn sm pri" disabled={busy} onClick={() => void go(() => api.runBrowserDone(ws), false)}><Ic n="check" sm />Done</button>
+        : <button type="button" className="btn sm pri" disabled={busy} title={url} onClick={() => void go(() => api.runBrowserSignIn(ws, url), true)}><Ic n="send" sm />Sign in</button>}</div>
     </div>
   )
 }

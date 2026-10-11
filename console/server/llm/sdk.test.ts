@@ -5,6 +5,7 @@ import { join, sep } from 'node:path'
 import { ALLOW, DENY, agentOptions, askOptions, exeOption, mcpServers, permissions, runToolDefs, sessionEvents, userMessage } from './sdk.ts'
 import { agentLimits } from '../agent/limits.ts'
 import type { RunTools } from './sdk.ts'
+import { BROWSER_TOOLS, WITHHELD } from './runBrowser.ts'
 
 test("a session loads no user or local settings, and may use only its own tools, A's reads and runTools", () => {
   const p = permissions(['mcp__my-tools', 'Bash(npm test)'])
@@ -15,6 +16,33 @@ test("a session loads no user or local settings, and may use only its own tools,
   for (const k of ['mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose']) assert.ok(p.allowedTools.includes(k), k)
   assert.ok(!p.allowedTools.some((t) => t.startsWith('mcp__bridge__knowledge')), 'knowledge is the console\'s, not the bridge\'s')
   for (const d of ['mcp__bridge__bridge_act', 'Read(~/.bridge/**)', 'Read(~/.work-console/**)']) assert.ok(p.disallowedTools.includes(d), d)
+})
+
+test('with the browser on, a session gets the browser tools by name, and still never the whole server', () => {
+  const p = permissions(['Read'], true, true)
+  assert.deepEqual(p.allowedTools, [...ALLOW, ...BROWSER_TOOLS, 'Read'])
+  assert.ok(p.allowedTools.includes('mcp__run__signin_needed'))
+  assert.ok(!permissions(['Read']).allowedTools.some((t) => t.startsWith('mcp__browser__')))
+  for (const t of WITHHELD) assert.ok(p.disallowedTools.includes(`mcp__browser__${t}`), t)
+})
+
+test("a session's browser server comes before the workspace's own, which may not replace it", () => {
+  const run = { type: 'sdk' } as never, browser = { type: 'stdio' as const, command: 'node', args: ['cli.js'] }
+  const s = mcpServers({ gatewayUrl: 'http://g', llmToken: () => '', mcp: { tracker: { type: 'http', url: 'http://t' } }, bridge: false }, run, browser)
+  assert.deepEqual(Object.keys(s), ['run', 'browser', 'tracker'])
+  assert.equal(s.browser, browser)
+})
+
+test('signin_needed only when the run carries it; it says to stop', async () => {
+  const none = async () => {}
+  const base: RunTools = { submitDraft: none, addArtifact: none, addArtifactFile: none, journal: none }
+  assert.ok(!runToolDefs(base).some((d) => d.name === 'signin_needed'))
+  let got: unknown
+  const d = runToolDefs({ ...base, signinNeeded: async (o) => { got = o } }).find((d) => d.name === 'signin_needed')!
+  assert.ok(ALLOW.includes(`mcp__run__${d.name}`))
+  const r = await (d.handler as (a: unknown, x: unknown) => Promise<{ content: { text: string }[] }>)({ site: 'Telegram', url: 'https://web.telegram.example/' }, {})
+  assert.deepEqual(got, { site: 'Telegram', url: 'https://web.telegram.example/' })
+  assert.match(r.content[0].text, /stop here/)
 })
 
 test("a session never reads the user's own CLAUDE.md, which a work dir under the home folder would reach as a parent's", () => {

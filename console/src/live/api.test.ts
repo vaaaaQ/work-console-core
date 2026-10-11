@@ -67,6 +67,17 @@ async function paths(port: number, f: () => Promise<unknown>) {
   return seen
 }
 
+test("Sign in and Done go to the workspace's runs' browser routes; a workspace without the browser has none", async () => {
+  const m = await backend()
+  try {
+    const seen = await paths(m.loopbackPort, async () => {
+      await assert.rejects(api.runBrowserSignIn('beta', 'https://web.telegram.example/'), (e: api.ApiError) => e.status === 404)
+      await assert.rejects(api.runBrowserDone('beta'), (e: api.ApiError) => e.status === 404)
+    })
+    assert.deepEqual(seen, ['/api/ws/beta/run-browser/signin', '/api/ws/beta/run-browser/done'])
+  } finally { await m.close() }
+})
+
 test('only a part B did not give while the bridge is up counts as missing, per workspace', () => {
   const was = { ws: api.LIVE.ws }, sel = S.ws
   try {

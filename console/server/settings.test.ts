@@ -55,6 +55,16 @@ test('a hand-edited auto without auto is kept as written, so its runs fail as pr
   } finally { PROVIDERS.cursor.auto = auto }
 })
 
+test("the runs' browser is Edge unless the settings name Chrome; anything else is refused", () => {
+  const h = home(), s = new Settings(h)
+  assert.equal(s.read().runBrowser, undefined, 'unset means Edge')
+  assert.equal(s.write({ runBrowser: 'chrome' }).runBrowser, 'chrome')
+  assert.throws(() => s.write({ runBrowser: 'firefox' }), bad)
+  assert.equal(s.write({ runBrowser: 'edge' }).runBrowser, 'edge')
+  writeFileSync(join(h, 'providers.json'), JSON.stringify({ runBrowser: 'safari' }))
+  assert.equal(new Settings(h).read().runBrowser, undefined)
+})
+
 test('the list says which provider can run by itself', () => {
   assert.deepEqual(new Settings(home()).list(), [{ id: 'claude', label: 'Claude Code', auto: true }, { id: 'cursor', label: 'Cursor', auto: true }])
 })

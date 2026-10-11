@@ -186,6 +186,21 @@ A workspace may have no gateway: its jobs live in PostgreSQL and its runs work i
 | `llm.bridge: false` | no bridge MCP server, no bridge tools, no LLM token read |
 | `llm.screenshot` | the run tool `screenshot`: a png of an http, https or file url, kept as the step's artifact. The file url, and every file the page loads, must be under the run's dir. It reaches any http url, so it is only for workspaces whose runs read no untrusted text. `browserPath` in `config.json` picks the browser; unset, an installed Edge or Chrome |
 | `llm.jobTools` | the run tools `create_job` and `start_job`, in the run's workspace only. Defaults: playbook `board.start`, the pack's first project. At most 5 creates a run; the new job is signed `LLM` and its journal names the job it came from |
+| `llm.browser` | the runs' browser, below. `true` = open mode, `{allow: [hosts]}` = allowlist mode. A managed workspace sets it as `browser` in `grants.json` instead |
+
+### Runs' browser
+
+A workspace may give its runs a signed-in browser (`server/llm/runBrowser.ts`). It is not the packs' Edge: it has its own
+persistent profile, `<home>/run-browser/<id>`, so a person signs in to a site once and every run of the workspace
+works in that session while the site keeps it. It runs headless; a window shows only while the person signs in.
+
+| Piece | What |
+|---|---|
+| Tools | Playwright MCP (`@playwright/mcp`, pinned in `package.json`) as the run's MCP server `browser`, attached to the browser over CDP. A run gets its tools by name (`BROWSER_TOOLS`): navigate, snapshot, find, click, hover, drag, type, fill_form, press_key, select_option, handle_dialog, evaluate, take_screenshot, tabs, wait_for, resize, close, console_messages, network_requests, emulate_media. Denied by name (`WITHHELD`): run_code_unsafe (raw Playwright in the server's process), file_upload and drop (the PC's files), network_request (a request's headers carry its cookies and tokens) and every cookie and storage tool; the server is started without `--caps`. Only the Claude provider runs it so far |
+| Modes | every request goes through the console's own proxy on loopback, loopback included (`--proxy-bypass-list=<-loopback>`). Open mode lets any site through; allowlist mode only the listed hosts (exact or `*.domain`), every hop of a redirect included, since each is a new request. In both modes it refuses the console's own ports on this PC (`ports` of `makeSpace`: the loopback and LAN ports), because the console's page trusts loopback and a run there could act or accept its own grants |
+| Sign-in | a run that finds a site signed out calls `signin_needed {site, url}`: the run ends on a draft that says so, and its record keeps `signin`. The step shows **Sign in**, which calls `POST /api/ws/<id>/run-browser/signin {url}`: the browser opens again on the same profile with a window on that page. **Done** (`POST /run-browser/done`) closes it; the user replies on the step and the run goes on in its session |
+| Browser | Edge unless the settings name Chrome (`runBrowser` in `<home>/providers.json`); `browserPath` in the workspace config wins over both. A restart leaves the browser running for the next console to reattach, with the proxy on the same port; one launched otherwise (another proxy port, a window) is closed and launched again |
+| Not there | a browser that will not start leaves the run without the `browser` server, and its feed says why |
 
 ### Local browser
 
@@ -248,9 +263,10 @@ person's approval.*
   refuses such an update while the console answers on its port. A finish that fails puts the folder
   back on its commit and writes `update-failed.json` at step `finish`, with the log's path and no branch, so the
   banner shows it with Apply and Dismiss and nothing to reintegrate. The page compares the build id in `/api/state` with the one it loaded and says *Updated — press Ctrl+F5*.
-- **Grants.** `grants.json` = `{packs, hosts, acts, runTools, mcp}` (`server/grants.ts`, `grantsOf(id)`). A
-  managed workspace's runs get exactly its `runTools` and `mcp`; startup refuses one whose `server.ts` also
-  declares `llm.runTools` or `llm.mcp`. A plugin's `ctx.http` reaches only `hosts` (exact or `*.domain`).
+- **Grants.** `grants.json` = `{packs, hosts, acts, runTools, mcp, browser}` (`server/grants.ts`, `grantsOf(id)`). A
+  managed workspace's runs get exactly its `runTools`, `mcp` and `browser` (absent = none, `true` = any site,
+  `{allow: hosts}` = only those; [Runs' browser](#runs-browser)); startup refuses one whose `server.ts` also
+  declares `llm.runTools`, `llm.mcp` or `llm.browser`. A plugin's `ctx.http` reaches only `hosts` (exact or `*.domain`).
   Approvals shows a proposal as diff lines; accept commits `<id>: grants — <reason>` and restarts, reject
   sends the reason back into the conversation.
 - **Import check** (`server/agent/imports.ts`), best effort, not a sandbox: code under the two areas may

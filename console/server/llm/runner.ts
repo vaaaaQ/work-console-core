@@ -42,6 +42,18 @@ export function safeName(n: string) {
   return s
 }
 
+/** a sign-in page: http or https only, as the window will open it */
+export function signinUrl(u: string): string {
+  let x: URL
+  try { x = new URL(u) } catch { throw new Error(`not a url: ${u}`) }
+  if (x.protocol !== 'http:' && x.protocol !== 'https:') throw new Error(`only http and https pages, not ${x.protocol}`)
+  return x.href
+}
+/** the draft a run leaves when the runs' browser is signed out of a site */
+export const signinText = (site: string, url: string) =>
+  `Sign in to ${site} again: the runs' browser is signed out of it. Press Sign in on this step, sign in at ${url} in the window that opens, `
+  + 'press Done, then reply on this step and the run goes on.'
+
 /** where a run's new jobs go: its workspace, the default playbook and the projects (the first is the default), and the
     prefix of the jobs it may start */
 export type JobTools = { ws: Ws; pb: string; prj: string[]; prefix: string }
@@ -54,6 +66,7 @@ export class Runner {
   private jobTools?: JobTools
   private notes?: Notes
   private autoResume: boolean
+  private browser: boolean
   /** reply = the reply's text has not reached its session yet */
   private queue: { id: string; resume?: string; reply?: boolean }[] = []
   private live = new Map<string, Live>()
@@ -74,10 +87,12 @@ export class Runner {
     notes?: Notes
     /** an interrupted run resumes by itself once, at resumeDue() after the comeback */
     autoResume?: boolean
+    /** runs have the runs' browser, so they get signin_needed */
+    browser?: boolean
   }) {
     this.store = o.store; this.jobs = o.jobs; this.bus = o.bus; this.pick = pickOf(o.sdk); this.cwd = o.cwd
     this.max = o.max ?? 3; this.gate = o.gate; this.via = o.via; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => ({ ctx: [], images: [] })); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot; this.jobTools = o.jobTools; this.notes = o.notes
-    this.autoResume = !!o.autoResume
+    this.autoResume = !!o.autoResume; this.browser = !!o.browser
   }
 
   /** draft ready, answered, failed or interrupted: the moments worth a push */
@@ -360,17 +375,18 @@ export class Runner {
     const shot = this.screenshot, jt = this.jobTools, kn = this.notes
     const input = (j: Job) => this.input(j, cwd)
     let made = 0
+    const submitDraft = async (t: string) => {
+      if (l.drafted) throw new Error('a draft was already submitted for this run')
+      await this.jobs.cmd(rec.job, { op: 'runDraft', step: rec.step, t }, undefined, 'runner')
+      l.drafted = true
+      r = { ...r!, state: 'draft' }
+      // an accept turn accepts at once, before anyone can act on the draft; it pushes only if that fails
+      const accepted = rec.intent === 'accept' && await this.jobCmd(rec, { op: 'acceptDraft', step: rec.step, said: true }, rec.via ?? 'page')
+      if (rec.intent === 'accept' && !accepted) await this.notAccepted(rec)
+      await this.save(r, !accepted)
+    }
     const tools = {
-      submitDraft: async (t: string) => {
-        if (l.drafted) throw new Error('a draft was already submitted for this run')
-        await this.jobs.cmd(rec.job, { op: 'runDraft', step: rec.step, t }, undefined, 'runner')
-        l.drafted = true
-        r = { ...r!, state: 'draft' }
-        // an accept turn accepts at once, before anyone can act on the draft; it pushes only if that fails
-        const accepted = rec.intent === 'accept' && await this.jobCmd(rec, { op: 'acceptDraft', step: rec.step, said: true }, rec.via ?? 'page')
-        if (rec.intent === 'accept' && !accepted) await this.notAccepted(rec)
-        await this.save(r, !accepted)
-      },
+      submitDraft,
       addArtifact: (n: string, content: string) => keep(safeName(n), (f) => writeFile(f, content, 'utf8')),
       addArtifactFile: async (p: string, n?: string) => {
         const real = await within(p), s = await stat(real)
@@ -411,6 +427,15 @@ export class Runner {
         knowledgeSearch: (q: string, tags?: string[]) => kn.search(q, tags),
         knowledgeRead: (nid: string) => kn.read(nid),
         knowledgePropose: async (p: KnowledgeIn) => (await kn.propose({ ...p, by: `run ${rec.job}/${rec.step}` })).id,
+      } : {}),
+      ...(this.browser ? {
+        // a draft like any other, so the user's reply resumes the session once they signed in
+        signinNeeded: async (o: { site: string; url: string }) => {
+          const u = signinUrl(o.url), was = r
+          if (l.drafted) throw new Error('a draft was already submitted for this run')
+          r = { ...r!, signin: { site: o.site, url: u } }
+          try { await submitDraft(signinText(o.site, u)) } catch (e) { r = was; throw e }
+        },
       } : {}),
       ...(rec.parent ? {
         openBlocker: async (say: string) => {

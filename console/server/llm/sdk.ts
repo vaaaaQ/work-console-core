@@ -1,12 +1,14 @@
 import { createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk'
 import type { HookCallback, McpServerConfig, SDKMessage, SDKResultMessage, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk'
 import { homedir } from 'node:os'
-import { sep } from 'node:path'
+import { join, sep } from 'node:path'
 import { z } from 'zod'
 import { canWrite } from '../agent/limits.ts'
 import type { Limits } from '../agent/limits.ts'
 import type { Hit, Note, ProposalIn } from '../knowledge/notes.ts'
 import type { PromptImage } from './context.ts'
+import { BROWSER, BROWSER_TOOLS, WITHHELD } from './runBrowser.ts'
+import type { StdioServer } from './runBrowser.ts'
 import type { Shot } from './shot.ts'
 
 /* The only module that touches the Agent SDK. A session reads untrusted chat and mail text, so it
@@ -36,6 +38,8 @@ export interface RunTools {
   knowledgeRead?(id: string): Promise<Note>
   /** the proposal's id */
   knowledgePropose?(p: KnowledgeIn): Promise<string>
+  /** the runs' browser lost a site's session: the run ends on a draft asking the user to sign in there; only where the workspace has the browser */
+  signinNeeded?(o: { site: string; url: string }): Promise<void>
   /** a reply run only: keeps what the user asked on the step for the blocker builder, and ends the run */
   openBlocker?(say: string): Promise<void>
 }
@@ -58,12 +62,14 @@ export interface Sdk {
 
 const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status']
 export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__context', 'mcp__run__screenshot', 'mcp__run__create_job', 'mcp__run__start_job',
-  'mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose', 'mcp__run__open_blocker', ...BRIDGE]
+  'mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose', 'mcp__run__open_blocker', 'mcp__run__signin_needed', ...BRIDGE]
 export const DENY = [
   'mcp__bridge__bridge_act', 'mcp__work-console',
   'Read(~/.bridge/**)', 'Read(~/.work-console/**)', 'Read(**/.work-console/**)',
   'Bash(*.bridge*)', 'PowerShell(*.bridge*)', 'Bash(*console.token*)', 'PowerShell(*console.token*)',
   'Bash(*mcp.token*)', 'PowerShell(*mcp.token*)', 'Bash(*.work-console*)', 'PowerShell(*.work-console*)',
+  // the browser tools that read cookies and storage, send the PC's files or run raw Playwright code
+  ...WITHHELD.map((t) => `mcp__${BROWSER}__${t}`),
 ]
 
 const HOME = homedir().split(sep).join('/')
@@ -72,14 +78,14 @@ const USER_MD = [`${HOME}/.claude/CLAUDE.md`, `${HOME}/.claude/rules/**`]
 
 /** the permission half of a session's options: which settings load and which tools it may use.
     strictMcpConfig keeps the user's own user-scope MCP servers, the console's own job tools among them, out;
-    bridge false: a workspace without a gateway, so no bridge tools */
-export function permissions(runTools: string[], bridge = true) {
+    bridge false: a workspace without a gateway, so no bridge tools; browser true: the runs' browser tools, each by name */
+export function permissions(runTools: string[], bridge = true, browser = false) {
   return {
     settingSources: ['project'] as ('project')[],
     settings: { claudeMdExcludes: USER_MD },
     strictMcpConfig: true,
     permissionMode: 'dontAsk' as const,
-    allowedTools: [...(bridge ? ALLOW : ALLOW.filter((t) => !BRIDGE.includes(t))), ...runTools],
+    allowedTools: [...(bridge ? ALLOW : ALLOW.filter((t) => !BRIDGE.includes(t))), ...(browser ? BROWSER_TOOLS : []), ...runTools],
     disallowedTools: DENY,
   }
 }
@@ -146,12 +152,13 @@ function resultError(m: SDKResultMessage) {
   return signinReason(errs?.length ? errs.join('; ') : ('result' in m && typeof m.result === 'string' && m.result) || m.subtype)
 }
 
-/** A's bridge with the LLM's read-only token (none when bridge is false), the run's own tools, then the
-    workspace's own servers; checkWorkspaces keeps those from taking the name bridge or run */
-export function mcpServers(o: { gatewayUrl: string; llmToken: () => string; mcp?: Record<string, unknown>; bridge?: boolean }, run: McpServerConfig): Record<string, McpServerConfig> {
+/** A's bridge with the LLM's read-only token (none when bridge is false), the run's own tools, the runs' browser, then the
+    workspace's own servers; checkWorkspaces and normGrants keep those from taking the name bridge, run or browser */
+export function mcpServers(o: { gatewayUrl: string; llmToken: () => string; mcp?: Record<string, unknown>; bridge?: boolean }, run: McpServerConfig, browser?: McpServerConfig): Record<string, McpServerConfig> {
   return {
     ...(o.bridge === false ? {} : { bridge: { type: 'http' as const, url: o.gatewayUrl.replace(/\/$/, '') + '/mcp', headers: { Authorization: `Bearer ${o.llmToken()}` } } }),
     run,
+    ...(browser ? { [BROWSER]: browser } : {}),
     ...(o.mcp as Record<string, McpServerConfig> | undefined),
   }
 }
@@ -189,6 +196,9 @@ export function runToolDefs(tools: RunTools) {
     ...(tools.openBlocker ? [tool('open_blocker', "Open the blocker builder on this step: only when the user's reply asks in so many words for a job this step has to wait for. say = what the user asked, in their words. It ends this run and the draft stays; stop after it.",
       { say: z.string().min(1) },
       (a) => wrap(() => tools.openBlocker!(a.say), 'the blocker builder waits on the step; stop here')())] : []),
+    ...(tools.signinNeeded ? [tool('signin_needed', "The runs' browser is signed out of a site this step needs (its sign-in page shows where the content should be). site = its name, url = the page to sign in on. It ends this run on a draft that asks the user to sign in; the user replies when done and you go on. Stop after it.",
+      { site: z.string().min(1), url: z.string().min(1) },
+      (a) => wrap(() => tools.signinNeeded!(a), 'the user is asked to sign in; stop here')())] : []),
   ]
 }
 
@@ -226,19 +236,28 @@ export async function* sessionEvents(q: AsyncIterable<SDKMessage>, own?: string)
   }
 }
 
-/** claudePath = read at each session's start */
-export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runTools: string[]; mcp?: Record<string, unknown>; bridge?: boolean; claudePath?: () => string | undefined }): Sdk {
+/** a run's browser server, its files under cwd; a browser that will not start leaves the run without it and says why in its feed */
+async function browserOf(browser: ((outDir: string) => Promise<StdioServer>) | undefined, cwd: string): Promise<{ server?: StdioServer; why?: string }> {
+  if (!browser) return {}
+  try { return { server: await browser(join(cwd, '.playwright-mcp')) } } catch (e) { return { why: `the runs' browser is not there for this run: ${(e as Error).message}` } }
+}
+
+/** claudePath = read at each session's start; browser = the runs' browser server, started for each run that needs it */
+export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runTools: string[]; mcp?: Record<string, unknown>; bridge?: boolean; claudePath?: () => string | undefined
+  browser?: (outDir: string) => Promise<StdioServer> }): Sdk {
   return {
     async *start({ prompt, images, resume, cwd, tools, abort }) {
       const run = createSdkMcpServer({ name: 'run', version: '1.0.0', tools: runToolDefs(tools) })
+      const b = await browserOf(o.browser, cwd)
+      if (b.why) yield { k: 'text', t: b.why }
       const q = query({
         // pictures need a streamed message; the SDK keeps its input open until the run ends
         prompt: images?.length ? once(userMessage(prompt, images)) : prompt,
         options: {
           cwd, resume, abortController: abort,
-          ...permissions(o.runTools, o.bridge !== false),
+          ...permissions(o.runTools, o.bridge !== false, !!b.server),
           ...exeOption(o.claudePath?.()),
-          mcpServers: mcpServers(o, run),
+          mcpServers: mcpServers(o, run, b.server),
         },
       })
       yield* sessionEvents(q)

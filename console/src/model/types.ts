@@ -174,6 +174,8 @@ export type RunState = 'queued' | 'running' | 'draft' | 'answered' | 'failed' | 
 export interface RunRec {
   id: string; job: string; step: string; q: string; state: RunState; session?: string; reason?: string; at: string; ended?: string
   ar?: 'due' | 'used'; parent?: string; intent?: RunIntent; a?: string; via?: 'session' | 'console'; provider?: 'claude' | 'cursor'
+  /** the run ended on a draft asking the user to sign in to site, at url, in the runs' browser */
+  signin?: { site: string; url: string }
 }
 
 /** at = time of day; ts = the journal entry's ISO time, which Home orders logs that span days by (the demo's seeded rows have none) */

@@ -39,7 +39,7 @@ test('built-in playbook ids are unique across workspaces and not a core id', () 
 
 test("a workspace's own MCP servers may not take the name of the console's bridge or run server", () => {
   checkWorkspaces([{ ...acmeServer, llm: { mcp: { tracker: { type: 'http', url: 'http://127.0.0.1:1/mcp' } } } }])
-  for (const name of ['bridge', 'run']) bad([{ ...acmeServer, llm: { mcp: { [name]: { type: 'http', url: 'http://x' } } } }], `workspace acme: llm.mcp may not name ${name}`)
+  for (const name of ['bridge', 'run', 'browser']) bad([{ ...acmeServer, llm: { mcp: { [name]: { type: 'http', url: 'http://x' } } } }], `workspace acme: llm.mcp may not name ${name}`)
 })
 
 test('without fake() the seed is derived from the demo; an own fake() wins', () => {
@@ -75,5 +75,11 @@ test('a managed workspace takes runTools and mcp from grants.json, never from it
   bad2([{ ...acmeServer, llm: { runTools: ['Read'] } }], managed, 'workspace acme is managed: its runTools come from grants.json, not llm.runTools')
   bad2([{ ...acmeServer, llm: { mcp: { t: {} } } }], managed, 'workspace acme is managed: its MCP servers come from grants.json, not llm.mcp')
   checkWorkspaces([{ ...acmeServer, llm: { runTools: ['Read'], mcp: { t: {} } } }], () => false)
+  bad2([{ ...acmeServer, llm: { browser: true } }], managed, 'workspace acme is managed: its browser comes from grants.json, not llm.browser')
+})
+
+test("a workspace's llm.browser is checked at startup", () => {
+  checkWorkspaces([{ ...acmeServer, llm: { browser: { allow: ['a.example'] } } }], () => false)
+  bad2([{ ...acmeServer, llm: { browser: { allow: [] } } }], () => false, 'workspace acme: browser: allow must list at least one host; leave it out for any site')
 })
 const bad2 = (list: WorkspaceServer[], managed: (id: string) => boolean, message: string) => assert.throws(() => checkWorkspaces(list, managed), { message })

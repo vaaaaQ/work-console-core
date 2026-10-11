@@ -10,6 +10,7 @@ import type { Bridge } from './http/app.ts'
 import type { GrantsFn } from './browser/packs.ts'
 import type { Jobs } from './jobs/jobs.ts'
 import type { WorkDir } from './llm/worktree.ts'
+import { BROWSER, normRunBrowser } from './llm/runBrowser.ts'
 import type { Store } from './store/port.ts'
 
 /* The server half of a workspace: how its gateway is reached, what job ids it mints, what its plugins add.
@@ -53,8 +54,9 @@ export interface WorkspaceServer {
   store?(source: Source, cfg: WsConfig, o: { bus: Bus; home: string; ws: string; prefix: string; playbooks: Record<string, Playbook> }): Store
   /** bridge false: no gateway, so runs get neither the bridge MCP server nor its tools;
       screenshot: runs may take pngs of pages (it reaches any http url, so only where runs read no untrusted text);
-      jobTools: runs may create jobs in their workspace (board.start's playbook, the pack's first project by default) and start them */
-  llm?: { runTools?: string[]; mcp?: Record<string, unknown>; bridge?: boolean; screenshot?: boolean; jobTools?: boolean }
+      jobTools: runs may create jobs in their workspace (board.start's playbook, the pack's first project by default) and start them;
+      browser: the runs' signed-in browser through Playwright MCP: true for any site, {allow: hosts} for only those (server/llm/runBrowser.ts) */
+  llm?: { runTools?: string[]; mcp?: Record<string, unknown>; bridge?: boolean; screenshot?: boolean; jobTools?: boolean; browser?: boolean | { allow?: string[] } }
   /** each job's own dir for its runs, cleaned up when the job closes; default: every run in cfg.workDir. Not in fake mode */
   workDir?(cfg: WsConfig): WorkDir
   plugins?(x: PluginCtx): Plugin[]
@@ -64,7 +66,8 @@ export interface WorkspaceServer {
 export const WS_ID = /^[a-z][a-z0-9-]{0,31}$/, PREFIX = /^[A-Z][A-Z0-9]{0,7}$/
 
 /** ids well-formed and unique, prefixes well-formed and unique, built-in playbook ids unique across workspaces and apart from the core's,
-    no own MCP server named bridge or run; a managed workspace (one with grants.json) declares neither runTools nor MCP servers */
+    no own MCP server named bridge, run or browser, a well-formed llm.browser; a managed workspace (one with grants.json)
+    declares neither runTools, MCP servers nor a browser */
 export function checkWorkspaces(list: WorkspaceServer[], managed: (id: string) => boolean = (id) => grantsOf(id) !== null): void {
   const ids = new Set<string>(), prefixes = new Map<string, string>()
   // the core's playbooks belong to every workspace, so none may define one of its own
@@ -79,10 +82,12 @@ export function checkWorkspaces(list: WorkspaceServer[], managed: (id: string) =
     if (other) throw new Error(`workspaces ${other} and ${id} both use job prefix ${jobPrefix}`)
     prefixes.set(jobPrefix, id)
     // a session's servers are bridge and run, then the workspace's own: an own one by those names would replace them
-    for (const name of ['bridge', 'run']) if (llm?.mcp && Object.hasOwn(llm.mcp, name)) throw new Error(`workspace ${id}: llm.mcp may not name ${name}`)
+    for (const name of ['bridge', 'run', BROWSER]) if (llm?.mcp && Object.hasOwn(llm.mcp, name)) throw new Error(`workspace ${id}: llm.mcp may not name ${name}`)
+    try { normRunBrowser(llm?.browser) } catch (e) { throw new Error(`workspace ${id}: ${(e as Error).message}`) }
     if (managed(id)) {
       if (llm?.runTools) throw new Error(`workspace ${id} is managed: its runTools come from grants.json, not llm.runTools`)
       if (llm?.mcp) throw new Error(`workspace ${id} is managed: its MCP servers come from grants.json, not llm.mcp`)
+      if (llm?.browser !== undefined) throw new Error(`workspace ${id} is managed: its browser comes from grants.json, not llm.browser`)
     }
     for (const pb of Object.keys(page.playbooks)) {
       const first = owners.get(pb)
