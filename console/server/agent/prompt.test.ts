@@ -60,6 +60,8 @@ async function stateJob(): Promise<{ j: Job; all: Job[] }> {
   await jobs.cmd(j0.id, { op: 'ppAccept' })
   await jobs.cmd(j0.id, { op: 'ppSet', say: 'one more question', by: 'c2', cmds: [{ op: 'noteAdd', step: 'tr', k: 'q', t: 'who signs?' }] }, undefined, 'console')
   const j = structuredClone((await jobs.get(j0.id))!)
+  // the step was added today; pin its date so the expected line does not move with the clock
+  for (const p of j.ph ?? []) for (const s of p.s) if (s.add) s.add.at = '2026-10-09T09:00:00Z'
   j.flow.tr.rw = { src: 'chat', ch: '19:abc', at: '2026-10-09T12:00:00Z' }
   j.flow.tr.rp = [{ id: 'm1', at: '2026-10-09T12:05:00Z', from: 'Imre', t: 'yes, go' }]
   j.jr = Array.from({ length: 25 }, (_, i) => ({ ts: `2026-10-09T10:${String(i).padStart(2, '0')}:00Z`, a: 'x', o: `line ${i}`, c: '', n: '' }))
