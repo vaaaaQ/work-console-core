@@ -5,7 +5,7 @@ import { clone, hm, norm, refill, store } from '../lib/util.ts'
 import * as T from './transitions.ts'
 import { preview } from './preview.ts'
 import { KINDS, ctxLabel, ctxOf, ctxUnit } from './context.ts'
-import type { BadgeKind, Chat, Cmd, CtxItem, Flow, Job, LogEntry, Mail, NodeState, Playbook, Src, SrcKey, Step, Tpl, Ui, Ws } from './types.ts'
+import type { BadgeKind, Chat, Cmd, CtxItem, Draft, Flow, Job, LogEntry, Mail, NodeState, Playbook, Src, SrcKey, Step, Tpl, Ui, Ws } from './types.ts'
 
 /* ===== the world: plain mutable data, as in the prototype; the views re-render after each commit() =====
    Empty until install() (src/workspace.ts) seeds it from the registered workspaces through resetWorld(). */
@@ -45,6 +45,8 @@ export const pview = (j: Job) => preview(jctx(), j)
 export const proposals = () => wsJobs().filter((j) => j.pp).sort((a, b) => b.pp!.at.localeCompare(a.pp!.at))
 export const steps = (pb: string) => T.steps(CTX, pb)
 export const stepOf = (j: Job, id: string | null) => T.stepOf(CTX, j, id)
+/** the line on a draft that reports it did not finish, or null */
+export const draftReport = (j: Job, dr: Draft) => T.reportText(CTX, j, dr)
 /** a job's own phases, steps and planned messages once it has them, else its playbook's */
 export const phases = (j: Job) => T.phasesOf(CTX, j)
 export const jsteps = (j: Job) => T.stepsOf(CTX, j)

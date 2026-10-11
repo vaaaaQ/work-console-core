@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { canWrite } from '../agent/limits.ts'
 import type { Limits } from '../agent/limits.ts'
 import type { Hit, Note, ProposalIn } from '../knowledge/notes.ts'
+import type { DraftReport, Outcome } from '../../src/model/types.ts'
 import type { PromptImage } from './context.ts'
 import { BROWSER, BROWSER_TOOLS, WITHHELD } from './runBrowser.ts'
 import type { StdioServer } from './runBrowser.ts'
@@ -20,7 +21,8 @@ import type { Shot } from './shot.ts'
    token and writes only through the run's own tools. */
 
 export interface RunTools {
-  submitDraft(t: string): Promise<void>
+  /** r = the draft's report: not finished or failed, and the step to go back to */
+  submitDraft(t: string, r?: DraftReport): Promise<void>
   addArtifact(n: string, content: string): Promise<void>
   /** a file already under the run's dir (a screenshot, a build output), path relative to it */
   addArtifactFile(path: string, name?: string): Promise<void>
@@ -165,11 +167,30 @@ export function mcpServers(o: { gatewayUrl: string; llmToken: () => string; mcp?
   }
 }
 
+/** how a draft says the step is not finished: the same words in every submit_draft */
+export const OUTCOME_HELP = 'If the step is not finished, or a check or a test failed, say so with outcome not_done or failed '
+  + '(accepting such a draft never marks the step done) and name in return_to the earlier step the job should go back to, if any, '
+  + 'by its id or exact title; why says why in one line. Leave outcome out, or done, when the step is done.'
+const REPORT_SCHEMA = {
+  outcome: z.enum(['done', 'not_done', 'failed']).optional(),
+  return_to: z.string().min(1).optional(),
+  why: z.string().optional(),
+}
+/** the tool's arguments as a draft's report; only what was given */
+export function reportOf(a: { outcome?: unknown; return_to?: unknown; why?: unknown }): DraftReport {
+  return {
+    ...(a.outcome !== undefined ? { o: a.outcome as Outcome } : {}),
+    ...(typeof a.return_to === 'string' && a.return_to ? { rt: a.return_to } : {}),
+    ...(typeof a.why === 'string' && a.why.trim() ? { why: a.why } : {}),
+  }
+}
+
 /** the run server's tools: always its own, then the ones this run's tools carry */
 export function runToolDefs(tools: RunTools) {
   return [
-    tool('submit_draft', 'Submit the draft for this step for the user to review. Call exactly once, at the end.', { text: z.string().min(1) },
-      (a) => wrap(() => tools.submitDraft(a.text), 'draft submitted')()),
+    tool('submit_draft', `Submit the draft for this step for the user to review. Call exactly once, at the end. ${OUTCOME_HELP}`,
+      { text: z.string().min(1), ...REPORT_SCHEMA },
+      (a) => wrap(() => tools.submitDraft(a.text, reportOf(a)), 'draft submitted')()),
     tool('add_artifact', 'Save a file this step produces (for example analysis.md). Same name replaces it.', { name: z.string().min(1), content: z.string() },
       (a) => wrap(() => tools.addArtifact(a.name, a.content), 'artifact saved')()),
     tool('add_artifact_file', 'Save a file already under your working dir (an image, a log, a build output), at most 20 MB. name defaults to the file name.',

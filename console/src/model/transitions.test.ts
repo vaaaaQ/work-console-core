@@ -6,7 +6,7 @@ import { JOBS0, JR, OVR, TPL0 } from '../data/demo.ts'
 import { clone } from '../lib/util.ts'
 import { KINDS } from './context.ts'
 import type { Cmd, Job, Step } from './types.ts'
-import { CmdError, DESC_MAX, allSent, apply, askText, atOf, fitFlow, freshJob, hasDraft, isClosed, isLive, needsYou, nextMonth, phasesOf, seedFlow, stepOf, steps, stepsOf, tplOf, unsentAt } from './transitions.ts'
+import { CmdError, DESC_MAX, reportText, allSent, apply, askText, atOf, fitFlow, freshJob, hasDraft, isClosed, isLive, needsYou, nextMonth, phasesOf, seedFlow, stepOf, steps, stepsOf, tplOf, unsentAt } from './transitions.ts'
 import type { Ctx, NewJob } from './transitions.ts'
 
 const T0 = new Date('2026-09-30T12:00:00Z')
@@ -365,6 +365,97 @@ test('rejectDraft with why journals the reason; acceptDraft said journals the wo
   assert.match(apply(X, j, { op: 'rejectDraft', step: at, why: 'Too dry.' }).job.jr[0].o, /: Too dry\.$/)
   const a = apply({ ...X, by: 'Claude Code' }, j, { op: 'acceptDraft', step: at, said: true }).job
   assert.match(a.jr[0].o, /as said in the reply/); assert.equal(a.jr[0].a, 'Claude Code')
+})
+
+/* ===== a draft that reports it did not finish ===== */
+
+/** a job at a step past its first, with a run on it that drafts with a report */
+function reported(rep: { o?: 'done' | 'not_done' | 'failed'; rt?: string; why?: string }) {
+  const j0 = open(), at = atOf(X, j0)!, all = steps(X, j0.pb)
+  let j = apply(X, j0, { op: 'runStart', step: at, q: 'go', id: 'r1' }).job
+  j = apply(X, j, { op: 'runDraft', step: at, t: 'The smoke test failed.\nDetails below.', ...rep }).job
+  return { j, at, all }
+}
+
+test('a draft carries its outcome, the step to go back to and why; return_to is a step already passed, by id or exact title', () => {
+  const { j, at, all } = reported({ o: 'failed', rt: steps(X, open().pb)[0].t, why: 'the smoke test failed' })
+  assert.deepEqual({ o: j.flow[at].dr!.o, rt: j.flow[at].dr!.rt, why: j.flow[at].dr!.why }, { o: 'failed', rt: all[0].id, why: 'the smoke test failed' })
+  assert.match(j.jr[0].o, /reports failed/)
+  // done is the default and is not stored; an outcome alone is enough
+  const d = reported({ o: 'done' }).j
+  assert.ok(!('o' in d.flow[at].dr!) && !('rt' in d.flow[at].dr!))
+  assert.equal(reported({ o: 'not_done' }).j.flow[at].dr!.o, 'not_done')
+  // a step not passed yet, the step itself, an unknown step, an unknown outcome, and return_to on a done draft are refused
+  const j0 = open(), run = apply(X, j0, { op: 'runStart', step: at, q: 'go', id: 'r1' }).job
+  code(() => apply(X, run, { op: 'runDraft', step: at, t: 'x', o: 'failed', rt: at }), 'bad_step')
+  code(() => apply(X, run, { op: 'runDraft', step: at, t: 'x', o: 'failed', rt: all.at(-1)!.id }), 'bad_step')
+  code(() => apply(X, run, { op: 'runDraft', step: at, t: 'x', o: 'failed', rt: 'nowhere' }), 'bad_step')
+  code(() => apply(X, run, { op: 'runDraft', step: at, t: 'x', o: 'broken' as 'failed' }), 'bad_args')
+  code(() => apply(X, run, { op: 'runDraft', step: at, t: 'x', rt: all[0].id }), 'bad_args')
+  // a draft handed in by hand carries the same
+  const h = apply(X, j0, { op: 'draftIn', step: at, t: 'not yet', o: 'not_done' }).job
+  assert.equal(h.flow[at].dr!.o, 'not_done')
+})
+
+test('accepting a draft that reports failed with return_to goes back there, keeps the draft as the step’s output, and never closes the step', () => {
+  const { j, at, all } = reported({ o: 'failed', rt: steps(X, open().pb)[0].id, why: 'the smoke test failed' })
+  for (const extra of [{}, { auto: true as const }, { said: true }, { auto: true as const, asDone: true as const }, { said: true, asDone: true as const }]) {
+    const r = apply(X, j, { op: 'acceptDraft', step: at, ...extra })
+    const k = r.job
+    assert.equal(r.nx, all[0].id, JSON.stringify(extra))
+    assert.equal(k.rf, all[0].id)
+    assert.equal(k.flow[all[0].id].s, 'cur')
+    assert.notEqual(k.flow[at].s, 'done')
+    assert.equal(k.rounds!.at(-1)!.flow[at].out, 'The smoke test failed.\nDetails below.')
+    assert.equal(k.rounds!.at(-1)!.flow[at].m, 'reported failed')
+    assert.equal(k.rounds!.at(-1)!.flow[at].s, 'cur')
+    assert.ok(k.jr.some((l) => /reported failed/.test(l.o)), 'journalled')
+    assert.match(k.jr[0].o, /^Returned to “.+”: the smoke test failed$/)
+  }
+})
+
+test('accepting a draft that reports not_done without return_to keeps the step open with the draft as its output', () => {
+  const { j, at } = reported({ o: 'not_done' })
+  for (const extra of [{}, { auto: true as const }, { said: true }]) {
+    const r = apply(X, j, { op: 'acceptDraft', step: at, ...extra })
+    const k = r.job
+    assert.equal(atOf(X, k), at, JSON.stringify(extra))
+    assert.equal(k.flow[at].s, 'cur')
+    assert.equal(k.flow[at].dr, null)
+    assert.equal(k.flow[at].out, 'The smoke test failed.\nDetails below.')
+    assert.equal(k.flow[at].m, 'reported not done')
+    assert.match(k.jr[0].o, /reported not done/)
+    assert.equal(k.rounds, j.rounds)
+  }
+  // without a why, the first line of the draft is the reason to go back
+  const w = reported({ o: 'failed', rt: steps(X, open().pb)[0].id })
+  assert.match(apply(X, w.j, { op: 'acceptDraft', step: w.at }).job.jr[0].o, /: The smoke test failed\.$/)
+})
+
+test('asDone from the page marks a reported failure done anyway and says so; a draft without an outcome is accepted as before', () => {
+  const { j, at } = reported({ o: 'failed', rt: steps(X, open().pb)[0].id })
+  const k = apply(X, j, { op: 'acceptDraft', step: at, asDone: true }).job
+  assert.equal(k.flow[at].s, 'done')
+  assert.equal(k.rounds, j.rounds)
+  assert.match(k.jr[0].o, /although it reported failed/)
+  const plain = reported({}).j
+  const p = apply(X, plain, { op: 'acceptDraft', step: at }).job
+  assert.equal(p.flow[at].s, 'done')
+  assert.equal(p.flow[at].m, 'draft accepted')
+})
+
+test('stay keeps a reported step open even when its draft names a step to go back to', () => {
+  const { j, at } = reported({ o: 'failed', rt: steps(X, open().pb)[0].id })
+  const k = apply(X, j, { op: 'acceptDraft', step: at, stay: true }).job
+  assert.equal(atOf(X, k), at); assert.equal(k.flow[at].s, 'cur'); assert.equal(k.rounds, j.rounds)
+  assert.equal(k.flow[at].m, 'reported failed')
+})
+
+test('reportText is the line the page shows on a draft that reports it did not finish; none on a plain draft', () => {
+  const { j, at, all } = reported({ o: 'failed', rt: steps(X, open().pb)[0].id, why: 'smoke red' })
+  assert.equal(reportText(X, j, j.flow[at].dr!), `reports failed → returns to “${all[0].t}” on accept: smoke red`)
+  assert.equal(reportText(X, j, { t: 'x', at: '', o: 'not_done' }), 'reports not done → the step stays open on accept')
+  assert.equal(reportText(X, j, { t: 'x', at: '' }), null)
 })
 
 /* ===== blockers ===== */

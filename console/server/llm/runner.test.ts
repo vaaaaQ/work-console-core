@@ -408,6 +408,7 @@ const PROMPT = [
   '- Write progress with the run tool journal(observed, changed, next) at meaningful points.',
   '- Save files the step expects with add_artifact(name, content), or with add_artifact_file(path) for a file already under your working dir; images show on the page.',
   '- Finish by calling submit_draft(text) exactly once with the draft for the user to review. Without it the run counts as failed.',
+  '- If the step is not finished, or a check or a test failed, call submit_draft with outcome not_done or failed, and name in return_to the earlier step the job should go back to, if any (id or exact title), with why: accepting such a draft never marks the step done.',
   '',
   '## Instruction (from the user)',
   'Draft the reply.',
@@ -432,7 +433,8 @@ test("the user's part comes last, the description before the instruction; the jo
   j.d = 'Sam asked twice.\n\n- keep it short'
   j.jr = Array.from({ length: 25 }, (_, i) => ({ ts: `2026-10-01T09:${String(24 - i).padStart(2, '0')}:00.000Z`, a: 'you', o: `entry ${24 - i}`, c: '-', n: '-' }))
   const p = buildPrompt(x, j, 'sn', 'Draft the reply.')
-  assert.ok(p.endsWith('submit_draft(text) exactly once with the draft for the user to review. Without it the run counts as failed.\n\n'
+  assert.ok(p.endsWith('submit_draft(text) exactly once with the draft for the user to review. Without it the run counts as failed.\n'
+    + '- If the step is not finished, or a check or a test failed, call submit_draft with outcome not_done or failed, and name in return_to the earlier step the job should go back to, if any (id or exact title), with why: accepting such a draft never marks the step done.\n\n'
     + '## Description (from the user)\nSam asked twice.\n\n- keep it short\n\n## Instruction (from the user)\nDraft the reply.'), p.slice(-400))
   assert.match(p, /## Journal \(oldest first; the latest 20 of 25\)\n- 2026-10-01T09:05:00\.000Z you: entry 5 → - Next: -\n/)
   assert.ok(p.indexOf('entry 5 ') < p.indexOf('entry 24 '))
@@ -760,6 +762,29 @@ test("an accept reply revises, then accepts on the replier's word", async () => 
   const e = j.jr.find((x) => /as said in the reply/.test(x.o))!
   assert.equal(e.a, 'Claude Code')
   assert.ok(j.jr.some((x) => /Replied to the LLM draft/.test(x.o) && x.a === 'Claude Code'))
+})
+
+test('submit_draft with an outcome stores it; a bad return_to is refused and the run may hand in again', async () => {
+  const { runner, sessions, jobs } = setup(), j = await started(jobs), step = T.atOf(demoCtx(), j)!
+  const r = await runner.ask(j.id, step, 'deploy')
+  await until(() => sessions.length === 1)
+  await assert.rejects(sessions[0].tools.submitDraft('The step is not done.', { o: 'not_done', rt: step }), /not been passed/)
+  await sessions[0].tools.submitDraft('The step is not done.', { o: 'not_done', why: 'the build broke' })
+  sessions[0].end()
+  await until(async () => (await runner.get(r.id))?.ended != null)
+  const f = (await jobs.get(j.id))!.flow[step]
+  assert.deepEqual([f.dr!.o, f.dr!.why], ['not_done', 'the build broke'])
+  assert.equal(await state(runner, r.id), 'draft')
+})
+
+test('an accept reply whose new draft reports failed does not close the step', async () => {
+  const s = setup(), d = await withDraft(s)
+  const r = await s.runner.reply(d.job, d.step, 'run the smoke test and accept', 'accept', { via: 'session' })
+  await until(() => s.sessions.length === 2)
+  await s.sessions[1].tools.submitDraft('The smoke test failed.', { o: 'failed' }); s.sessions[1].end()
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  const f = (await s.jobs.get(d.job))!.flow[d.step]
+  assert.equal(f.s, 'cur'); assert.equal(f.m, 'reported failed'); assert.equal(f.out, 'The smoke test failed.')
 })
 
 test('an accept reply accepts as soon as its draft is in, while the session still winds down', async () => {

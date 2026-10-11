@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { tfmt } from '../lib/util.ts'
-import { S, W, approvals, chName, proposals, tplOf } from '../model/world.ts'
+import { S, W, approvals, chName, draftReport, proposals, tplOf } from '../model/world.ts'
 import type { Approval } from '../model/world.ts'
 import { go } from '../actions/nav.tsx'
 import { acceptDraft, editDraft, rejectDraft, tplSend } from '../actions/flow.tsx'
@@ -27,7 +27,7 @@ function ApCard({ x }: { x: Approval }) {
     return (
       <article className={'dc' + (dr.nw ? ' new' : '')}>
         <div className="dc-h"><span className="st"><Ic n="bot" sm /><b>LLM draft · {s.t}</b></span>{lnk}<span className="src">{tfmt(dr.at)}</span><OutSeg /></div>
-        <div className="why">{j.t} · done when: {s.x}</div><OutText t={dr.t} />
+        <div className="why">{j.t} · done when: {s.x}</div>{draftReport(j, dr) && <div className="why rep">{draftReport(j, dr)}</div>}<OutText t={dr.t} />
         <div className="row"><button className="btn sm pri" disabled={!!f.run} onClick={() => acceptDraft(j.id, s.id)}><Ic n="check" sm />Accept</button>
           <button className="btn sm" disabled={!!f.run} onClick={() => editDraft(j.id, s.id)}><Ic n="pen" sm />Edit…</button>
           <button className="btn sm" disabled={!!f.run} onClick={() => rejectDraft(j.id, s.id)}><Ic n="x" sm />Reject…</button>{open}</div>

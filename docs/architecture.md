@@ -308,6 +308,7 @@ carry it, and the page shows it in a banner.
   Images show on the page; html and svg are served as text.
 - It never reads the console home: the deny list covers `.work-console` for Read, Bash and PowerShell.
 - The run hands back its draft with `submit_draft`. The page shows the draft, and a person sends it.
+- A draft can report that its step is not done: `submit_draft` takes `outcome` (`done` by default, `not_done`, `failed`), `return_to` (an earlier step, by id or exact title, checked when the draft is handed in) and `why`. Accepting such a draft keeps it as the step's output and never marks the step done: with `return_to` the job goes back there as `returnTo` does, without it the step stays open. On the page, Accept asks: **Return to** the step, **Keep the step open** (`stay`), or **Mark done anyway** (`asDone`, refused from anything but the page). An auto step holds such a draft back for the person, and a reply that accepts never closes it. Nothing is read from the draft's words.
 - The gateway serves the run's read tools as MCP at `{gateway}/mcp` with the `llm` token. The fake
   gateway does not serve `/mcp`, so a demo run uses the fake SDK in tests.
 
@@ -508,7 +509,7 @@ only one workspace is registered.
   blocker, `holds`, the steps of other jobs that wait for it; `holds` is read from every job of the workspace.
 - Every change is signed with the client's name from `initialize` (`clientInfo.name`), Claude Code when it gives none.
 - `step_context {id, step}` returns what a run of the step would be told, pictures included, with How to work told for a session opened by hand.
-- `submit_draft {id, step, output, artifacts?}` hands that session's draft in (`draftIn`): it waits in Approvals like a run's. It is `busy` while a run of the step is queued or running, and `draft_waiting` while a draft waits. Undo takes back the draft and its artifact links.
+- `submit_draft {id, step, output, outcome?, return_to?, why?, artifacts?}` hands that session's draft in (`draftIn`): it waits in Approvals like a run's. It is `busy` while a run of the step is queued or running, and `draft_waiting` while a draft waits. Undo takes back the draft and its artifact links.
 
 ## Notifications
 

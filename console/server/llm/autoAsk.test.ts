@@ -304,6 +304,19 @@ test('holdOf names what keeps a draft from being accepted by itself', () => {
   assert.equal(holdOf(f({ w: [{ j: 'J-2', st: 'open', at: '' }] as Flow['w'] })), 'open blockers')
 })
 
+test('an auto step\'s draft that reports failed or not done is held back for the person, never closed by itself', async () => {
+  const s = modes(false), j = await s.job('auto')
+  await s.jobs.cmd(j.id, { op: 'start' }, (await s.get(j.id)).v)
+  await until(() => s.sessions.length === 1)
+  await s.sessions[0].tools.submitDraft('The smoke test failed.', { o: 'failed' }); s.sessions[0].end()
+  await until(async () => (await s.get(j.id)).jr[0].o.startsWith('Held back'))
+  const a = await s.get(j.id)
+  assert.equal(a.jr[0].o, 'Held back the automatic accept of “Understand the request”: the draft reports failed.')
+  assert.equal(a.flow.tr.s, 'wait'); assert.equal(a.flow.tr.dr!.o, 'failed')
+  assert.equal(holdOf({ ...a.flow.tr, dr: { ...a.flow.tr.dr!, o: 'not_done' } }), 'the draft reports not done')
+  s.off()
+})
+
 test('a failed auto run accepts nothing', async () => {
   const s = modes(true), j = await s.job('auto')
   await s.jobs.cmd(j.id, { op: 'start' }, (await s.get(j.id)).v)

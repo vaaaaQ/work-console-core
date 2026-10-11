@@ -14,6 +14,8 @@ export const startOf = (s: Step | undefined, on: boolean): Start | null =>
   !s || s.m !== 'llm' ? null : s.start ?? (on ? 'self' : 'hand')
 /** what keeps a draft from being accepted by itself, or null */
 export function holdOf(f: Flow): string | null {
+  // a draft that says it did not finish is the person's to accept: going back by itself could loop
+  if (f.dr?.o) return `the draft reports ${f.dr.o === 'failed' ? 'failed' : 'not done'}`
   if (f.b.some((b) => b.o && b.k === 'q')) return 'an open question'
   if (f.b.some((b) => b.o && b.k === 'p')) return 'a problem note'
   if (f.bb) return 'a blocker asked for'

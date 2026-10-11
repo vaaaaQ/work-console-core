@@ -7,7 +7,7 @@ import { LIVE } from '../live/api.ts'
 import { down } from '../live/boot.ts'
 import { actFor, addrs, isAddr } from '../live/adapt.ts'
 import {
-  S, allSent, applyLocal, byId, chName, chatOf, clearNew, ctxRows, isLive, jsteps, keyShort, llmText, plainT, postToChat, putJob,
+  S, allSent, applyLocal, byId, chName, chatOf, clearNew, ctxRows, draftReport, isLive, jsteps, keyShort, llmText, plainT, postToChat, putJob,
   restore, rvState, snap, stepOf, tplOf,
 } from '../model/world.ts'
 import { openOf } from '../model/blockers.ts'
@@ -202,8 +202,34 @@ export async function llmResume(runId: string) {
 export function acceptDraft(id: string, sid: string, text?: string, force = false) {
   const j = byId(id), f = j?.flow[sid]
   if (!j || !f || !f.dr) return
+  // a draft that reports it did not finish asks how: go back, keep the step open, or mark it done anyway
+  if (f.dr.o) { acceptReported(id, sid, text); return }
   if (!force && openOf(f).length) { confirmForce(j, sid, () => acceptDraft(id, sid, text, true)); return }
   void doCmd(id, { op: 'acceptDraft', step: sid, ...(text != null ? { text } : {}), ...(force ? { force } : {}) }, `Accepted · ${stepOf(j, sid)!.t}`, { moveSel: true })
+}
+
+/** the dialog on a draft that reports not done or failed: Mark done anyway is the only way it closes the step */
+function acceptReported(id: string, sid: string, text?: string) {
+  const j = byId(id), dr = j?.flow[sid].dr
+  if (!j || !dr?.o) return
+  const t = stepOf(j, sid)!.t, back = dr.rt ? stepOf(j, dr.rt)?.t : undefined, rep = dr.o === 'failed' ? 'failed' : 'not done'
+  const send = (extra: { stay?: true; asDone?: true }, say: string, force = false) => {
+    closeModal()
+    const f = byId(id)?.flow[sid]
+    if (extra.asDone && !force && f && openOf(f).length) { confirmForce(byId(id)!, sid, () => send(extra, say, true)); return }
+    void doCmd(id, { op: 'acceptDraft', step: sid, ...(text != null ? { text } : {}), ...extra, ...(force ? { force } : {}) }, say, { moveSel: true })
+  }
+  modal({
+    title: `The draft reports ${rep} · ${t}`,
+    body: <>
+      <p>{draftReport(j, dr)}</p>
+      <p className="why" style={{ margin: 0 }}>Accepting keeps the draft as the step’s output. The step is not marked done unless you say so.</p>
+    </>,
+    foot: <><CancelBtn />
+      <button type="button" className="btn" onClick={() => send({ asDone: true }, `Marked done although it reported ${rep} · ${t}`)}>Mark done anyway</button>
+      <button type="button" className={'btn' + (back ? '' : ' pri')} onClick={() => send({ stay: true }, `Kept open · ${t}`)}>Keep the step open</button>
+      {back && <button type="button" className="btn pri" onClick={() => send({}, `Back to ${back}`)}><Ic n="check" sm />Return to {back}</button>}</>,
+  })
 }
 
 /** with a reason, live, the LLM redoes the step in a new session */

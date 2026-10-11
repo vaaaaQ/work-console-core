@@ -6,7 +6,7 @@ import { openOf, waitsM } from '../../src/model/blockers.ts'
 import * as T from '../../src/model/transitions.ts'
 import { thread } from '../../src/model/thread.ts'
 import { INTENTS } from '../../src/model/types.ts'
-import type { Cmd, Job, RunIntent, RunRec, Ws } from '../../src/model/types.ts'
+import type { Cmd, DraftReport, Job, RunIntent, RunRec, Ws } from '../../src/model/types.ts'
 import { HttpError, downError } from '../events.ts'
 import type { Bus, Via } from '../events.ts'
 import type { ActReq, ActRes } from '../bridge/wire.ts'
@@ -388,9 +388,9 @@ export class Runner {
       await this.jobCmd(rec, { op: 'noteAdd', step: rec.step, k: 'p', t: `Not sent (${action}): ${why}${text}` })
       throw new Error(why)
     }
-    const submitDraft = async (t: string) => {
+    const submitDraft = async (t: string, rep: DraftReport = {}) => {
       if (l.drafted) throw new Error('a draft was already submitted for this run')
-      await this.jobs.cmd(rec.job, { op: 'runDraft', step: rec.step, t }, undefined, 'runner')
+      await this.jobs.cmd(rec.job, { op: 'runDraft', step: rec.step, t, ...rep }, undefined, 'runner')
       l.drafted = true
       r = { ...r!, state: 'draft' }
       // an accept turn accepts at once, before anyone can act on the draft; it pushes only if that fails
