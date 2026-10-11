@@ -529,6 +529,9 @@ export function createApp(d: Deps) {
     ['POST', /^\/agent\/new$/, async (_r, s) => ({ agent: await agentOf(s).fresh() })],
     ['POST', /^\/agent\/reintegrate$/, async (_r, s) => ({ agent: (await codeAgentOf(s).reintegrate()).rec })],
     ['POST', /^\/agent\/undo$/, async (r, s) => ({ agent: await codeAgentOf(s).undo(str((await r.body()).sha, 'sha')) })],
+    // what the agent changed in its worktree and did not apply, and the person's Discard of it
+    ['GET', /^\/agent\/unapplied$/, async (_r, s) => ({ files: await codeAgentOf(s).unapplied() })],
+    ['POST', /^\/agent\/discard$/, async (_r, s) => ({ files: await codeAgentOf(s).discard() })],
     ['POST', /^\/agent\/grants$/, async (r, s) => {
       const a = codeAgentOf(s), b = await r.body()
       if (typeof b.accept !== 'boolean') throw new HttpError(400, 'bad_args', 'accept is true or false')

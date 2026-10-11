@@ -13,8 +13,8 @@ import { closeModal, modal } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
 import { VoiceField } from '../ui/VoiceField.tsx'
 
-/* The workspace agent's buttons: the panel, a message, Stop, Retry, a new conversation, Undo of a commit, and the answer
-   to a grants change. */
+/* The workspace agent's buttons: the panel, a message, Stop, Retry, a new conversation, Undo of a commit, Discard of what
+   it did not apply, and the answer to a grants change. */
 
 const short = (sha: string) => sha.slice(0, 8)
 const errText = (e: unknown) => String((e as Error)?.message || e)
@@ -62,6 +62,22 @@ export function agentUndo(ws: string, c: AgentCommit) {
       closeModal()
       toast(`Undoing ${short(c.sha)}…`)
       void api.agentUndo(ws, c.sha).then((a) => { put(ws, a); toast(`Undone · ${c.summary}`) }, (e) => toast(`Not undone: ${errText(e)}`))
+    },
+  })
+}
+
+/** the person drops what the agent changed in its worktree and did not apply; the live folder is not touched */
+export function agentDiscard(ws: string, files: string[], done: () => void) {
+  modal({
+    title: 'Discard what is not applied', form: 'agent-discard',
+    body: <>
+      <p className="why" style={{ margin: 0 }}>The agent's worktree goes back to the console's last commit. These are dropped there; the live console does not change:</p>
+      <ul className="al">{files.map((f) => <li key={f} className="mono">{f}</li>)}</ul>
+    </>,
+    foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="x" sm />Discard</button></>,
+    onSubmit: () => {
+      closeModal()
+      void api.agentDiscard(ws).then((f) => { toast(`Discarded ${f.length} file${f.length === 1 ? '' : 's'}`); done() }, (e) => toast(`Not discarded: ${errText(e)}`))
     },
   })
 }

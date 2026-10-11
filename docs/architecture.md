@@ -229,23 +229,32 @@ its panel.
 flowchart LR
   you[Agent panel] -->|message| s[AgentSession]
   s -->|turn, resume by session id| p[auto provider]
-  p -->|edits| area["workspaces/#lt;id#gt;/ · tools/"]
-  p -->|apply| ops[Ops: check · build to stage · commit]
+  p -->|edits| area["its worktree: workspaces/#lt;id#gt;/ · tools/"]
+  p -->|apply| ops[Ops: commit · rebase · check · build · fast-forward]
   ops -->|after the turn| r[exit 75]
   p -->|propose_grants| ap[Approvals] -->|accept| g[(grants.json commit)] --> r
   ap -->|reject + reason| s
 ```
-*The agent edits files; the console checks, builds, commits and restarts. Grants change only through a
-person's approval.*
+*The agent edits files in its own worktree; the console commits, checks and builds them there, fast-forwards the
+live folder and restarts. Grants change only through a person's approval.*
 
 | Piece | What |
 |---|---|
 | Session | `server/agent/session.ts`; records of kind `agent` in the workspace's store (a JSON file under `<home>/agent/` when the store keeps none). One turn at a time, 60 minutes at most; Stop ends it idle. A turn left running when the console stopped reads back as failed |
-| Limits | `server/agent/limits.ts`, provider-neutral. cwd = the console's folder; Read, Glob and Grep anywhere; Edit and Write only under `workspaces/<id>/**` and `tools/**`. Denied: its `grants.json`, the two registries, `core.lock.json` and every core file it lists, Bash, PowerShell. A path is matched after its links resolve and case-folded where the disk ignores case. The Claude provider maps them to `dontAsk` rules plus a PreToolUse guard, with `settingSources: ['project']`; the Cursor provider to its CLI's denies, a preToolUse hook and its answers to permission requests (`server/llm/cursor/policy.ts`) |
+| Worktree | `server/agent/trees.ts`. A code turn works in its workspace's own git worktree, `<home>-agents/<id>` on branch `agent/<id>`, beside `update.mjs`'s `<home>-updates`; `node_modules` there is a junction to the live one. It is made at the first code turn and kept; a turn starts by fast-forwarding a clean one to the live HEAD, and is told what an earlier turn left there unapplied. Job and read-only turns stay on the live folder. The page shows the unapplied files under the agent panel with **Discard** (`GET /agent/unapplied`, `POST /agent/discard`). At its start the console moves what an agent left uncommitted in the live folder (as before this) into that agent's clean worktree, and says so in its conversation. A console folder outside git has no worktree |
+| Limits | `server/agent/limits.ts`, provider-neutral. cwd = the agent's worktree for a code turn, else the console's folder; Read, Glob and Grep anywhere; Edit and Write only under `workspaces/<id>/**` and `tools/**`. Denied: its `grants.json`, the two registries, `core.lock.json` and every core file it lists, Bash, PowerShell. A path is matched after its links resolve and case-folded where the disk ignores case. The Claude provider maps them to `dontAsk` rules plus a PreToolUse guard, with `settingSources: ['project']`; the Cursor provider to its CLI's denies, a preToolUse hook and its answers to permission requests (`server/llm/cursor/policy.ts`) |
 | Tools | `check`, `apply {summary}`, `undo {sha}`, `delete {path}` (one file it may change, so a provider without a delete of its own can drop one), `propose_grants {change, reason}`, `create_workspace {id, prefix, title}` (`server/agent/tools.ts`) |
 | First conversation | of a workspace whose grants are still empty: the agent interviews the person, one question at a time, then proposes grants and sets up the board and playbooks |
 | Template | `consumer/workspace-template/`, on the local browser. Install renders it as `home` with empty grants; `create_workspace` copies it, adds both registry lines and the workspace's database settings in `config.json`, and commits it with empty grants |
 
+- **Apply through the worktree.** `apply` commits the agent's changes on `agent/<id>`, rebases the commit onto the
+  live HEAD, checks and builds in the worktree as below, then lands: the live HEAD must still be the one rebased
+  onto and the live areas clean, the live folder runs `git merge --ff-only`, the build is swapped in and the console
+  restarts. A conflict, a failed check or build, or a live folder that moved meanwhile takes the commit back
+  (`reset HEAD~1`) and leaves the files uncommitted in the worktree; the live folder is untouched. So a failed apply,
+  a stopped turn or a crash never leave the agent's files in the live folder, and `update.mjs` is never blocked by
+  them. `undo`, accepted grants and a new workspace still commit on the live folder; the worktree takes them in at
+  its next rebase.
 - **Apply.** `server/agent/ops.ts`, one op at a time: refuse staged paths outside the two areas and any
   `grants.json`; refuse symlinks and junctions there; the static import check; `npm run typecheck`; the tests
   under the two areas with the drift test and the registry's start checks (`server/registry.test.ts`), never Edge
