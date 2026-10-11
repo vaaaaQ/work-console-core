@@ -11,6 +11,9 @@ Guidance for an agent working in this repo.
   in that browser (open pages, click, type, send) through the Playwright MCP tools `server/llm/runBrowser.ts` lists.
   The person turned it on for that workspace, and the allowlist mode limits the hosts. Packs, `/api/act` and the bridge do not change,
   and the runs' browser never reaches the console's own ports or reads cookies, storage or the PC's files.
+  A second exception: a run may call the acts its workspace's `grants.json` lists under `llmActs` (run tool `act`,
+  at most 10 a run), only on the targets `scopes` allows for a scoped pack. The person grants both through Approvals;
+  a refused or failed act shows on the step as a problem with its text, and is never retried.
 - **The core names no workplace.** Code under `console/` and `schemas/` must not mention a real
   company, product, person or host. A workplace lives in its workspace, `console/workspaces/<id>/`
   (pack, playbooks, board rule, demo data), and in a bridge pack under `packs/<name>/`. The demo

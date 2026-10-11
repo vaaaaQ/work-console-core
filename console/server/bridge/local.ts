@@ -68,6 +68,7 @@ const within = (p: Promise<void>, ms: number) => new Promise<void>((ok) => {
   const t = setTimeout(ok, ms)
   void p.then(() => { clearTimeout(t); ok() })
 })
+const inScope = (ids: ReadonlySet<string>, v: unknown) => typeof v === 'string' && ids.has(v)
 const err = (code: string, message: string): ActRes => ({ status: 'error', error: { code, message } })
 const why = (s: BrowserStatus) => (s.state === 'unavailable' ? `the browser is unavailable: ${s.reason ?? 'no reason given'}` : `the browser is ${s.state}`)
 
@@ -117,6 +118,13 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
   for (const [name, problem] of Object.entries(problems))
     for (const c of declared(packsDir, name)) if (!cs.has(c) && !STATE.includes(c)) down.set(c, `pack ${name} did not load: ${problem}`)
 
+  /** the ids a scoped pack serves; a pack the scopes leave out serves none */
+  const scopeOf = (p: LoadedPack): ReadonlySet<string> => new Set(g.scopes?.[p.name] ?? [])
+  const conceptScope = (c: Concept) => {
+    const field = c.pack.concepts[c.name].scope
+    return field ? { field, ids: scopeOf(c.pack) } : null
+  }
+
   const reset = (c: string) => { if (cs.has(c)) bus.emit({ kind: 'source', concept: c, upserts: [], removes: [], reset: true }) }
   const docs = o.docs ?? defaultDocs(cfg, home, o.ws, o.needDb)
   const b = new StateB({
@@ -155,7 +163,10 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
     if (c.busy) { c.again = true; return c.busy }
     c.busy = (async () => {
       try {
-        const raw = await c.rt.read(c.tab, { verb: 'read', concept: c.name, watch: watched.snapshot() })
+        const sc = conceptScope(c), call = { verb: 'read', concept: c.name, watch: watched.snapshot() }
+        let raw = await c.rt.read(c.tab, sc ? { ...call, scope: [...sc.ids] } : call)
+        // the console's own filter: a pack that reads past its scope still serves nothing outside it
+        if (sc && Array.isArray(raw)) raw = raw.filter((it) => inScope(sc.ids, (it as Record<string, unknown> | null)?.[sc.field]))
         const items = checkItems(raw, c.cap, (it) => val.item(c.name, it))
         const was = c.proj.state, ch = c.proj.apply(items)
         if (ch) emitSource(c.name, ch)
@@ -202,11 +213,13 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
   const runAct = async (a: ActReq): Promise<ActRes> => {
     const p = packs.find((x) => Object.hasOwn(x.actions, a.action))
     if (!p || (g.acts && !g.acts.includes(a.action))) return err('unknown_action', `no granted pack runs ${a.action}`)
+    const spec = p.actions[a.action], args = a.args ?? {}
+    const ids = spec.scope ? scopeOf(p) : null
+    if (ids && !inScope(ids, args[spec.scope!])) return err('out_of_scope', `${a.action}: ${spec.scope} ${JSON.stringify(args[spec.scope!] ?? null)} is not in this workspace's scope for ${p.name}; nothing was sent`)
     const s = browser!.status()
     if (s.state !== 'up') return err('source_unavailable', why(s))
-    const spec = p.actions[a.action]
     try {
-      const data = await rts.get(p.name)!.act(spec.tab, { verb: 'act', action: a.action, actionId: a.actionId, args: a.args ?? {} })
+      const data = await rts.get(p.name)!.act(spec.tab, { verb: 'act', action: a.action, actionId: a.actionId, args, ...(ids ? { scope: [...ids] } : {}) })
       const c = cs.get(spec.concept)
       if (c) void poll(c)
       return data != null ? { status: 'ok', result: data } : { status: 'ok' }
@@ -257,10 +270,14 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
       if (STATE.includes(concept)) return b.get(concept, id)
       const c = cs.get(concept)
       if (!c) return { status: 'source_error', message: down.get(concept) ?? `no granted pack serves ${concept}` }
+      const sc = conceptScope(c)
+      // an id field is checked as given; any other field through the item the scoped read kept
+      if (sc && !(sc.field === 'id' ? inScope(sc.ids, id) : c.proj.items.some((x) => (x as { id?: unknown }).id === id)))
+        return { status: 'out_of_scope', message: `${concept} ${id} is not in this workspace's scope for ${c.pack.name}` }
       const s = browser!.status()
       if (s.state !== 'up') return { status: 'source_unavailable', message: why(s) }
       try {
-        const v = await c.rt.read(c.tab, { verb: 'get', concept, id, ...(cursor ? { cursor } : {}) })
+        const v = await c.rt.read(c.tab, { verb: 'get', concept, id, ...(cursor ? { cursor } : {}), ...(sc ? { scope: [...sc.ids] } : {}) })
         const errors = val.get(concept, v)
         if (errors.length) return { status: 'source_error', message: `${concept} ${id}: ${errors.slice(0, 3).join('; ')}` }
         watched.add(concept, id)

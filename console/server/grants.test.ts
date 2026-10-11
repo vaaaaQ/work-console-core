@@ -36,6 +36,28 @@ test('grantsDiff says when the browser turns on, off, or changes mode', () => {
   assert.deepEqual(grantsDiff(only, only), [])
 })
 
+test('normGrants: scopes list ids per granted pack, llmActs are granted acts; both are absent while empty', () => {
+  const g = normGrants({ packs: ['chat-web'], acts: ['chat.post'], scopes: { 'chat-web': ['-100', '-100'] }, llmActs: ['chat.post'] })
+  assert.deepEqual(g.scopes, { 'chat-web': ['-100'] })
+  assert.deepEqual(g.llmActs, ['chat.post'])
+  assert.ok(!('scopes' in normGrants({})) && !('llmActs' in normGrants({})), 'an old grants.json reads and writes as before')
+  assert.ok(!('scopes' in normGrants({ scopes: {} })) && !('llmActs' in normGrants({ llmActs: [] })))
+  assert.throws(() => normGrants({ scopes: [] }), /scopes must be an object of id lists per pack/)
+  assert.throws(() => normGrants({ packs: ['p'], scopes: { p: '-1' } }), /scopes\.p must be a list of ids/)
+  assert.throws(() => normGrants({ packs: ['p'], scopes: { p: [''] } }), /scopes\.p must be a list of ids/)
+  assert.throws(() => normGrants({ scopes: { p: ['-1'] } }), /scopes\.p: p is not a granted pack/)
+  assert.throws(() => normGrants({ llmActs: 'chat.post' }), /llmActs must be a list of names/)
+  assert.throws(() => normGrants({ acts: [], llmActs: ['chat.post'] }), /llmActs: chat.post is not a granted act/)
+})
+
+test('grantsDiff says which scope ids and run acts a change adds and removes', () => {
+  const a = normGrants({ packs: ['t'], acts: ['chat.post'], scopes: { t: ['-1', '-2'] } })
+  const b = normGrants({ packs: ['t'], acts: ['chat.post'], scopes: { t: ['-2', '-3'] }, llmActs: ['chat.post'] })
+  assert.deepEqual(grantsDiff(a, b), ['+ scope t -3', '- scope t -1', '+ llmAct chat.post'])
+  assert.deepEqual(grantsDiff(b, a), ['+ scope t -1', '- scope t -3', '- llmAct chat.post'])
+  assert.deepEqual(grantsDiff(b, b), [])
+})
+
 test('grantsOf: no file = unmanaged, a file = its grants, a bad file throws naming it', () => {
   const r = root()
   assert.equal(grantsOf('w1', r), null)

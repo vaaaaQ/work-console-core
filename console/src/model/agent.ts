@@ -2,8 +2,12 @@
    conversation with its record of turns and commits. */
 
 /** a managed workspace's grants.json: the packs and hosts it may reach, the acts it may run, its runs' tools and MCP servers,
-    and its runs' browser: null = none, allow null = any site, else only the listed hosts */
-export interface Grants { packs: string[]; hosts: string[]; acts: string[]; runTools: string[]; mcp: Record<string, unknown>; browser?: { allow: string[] | null } | null }
+    and its runs' browser: null = none, allow null = any site, else only the listed hosts;
+    scopes = the ids each scoped pack may read and act on (none listed = nothing); llmActs = the acts its runs may call themselves */
+export interface Grants {
+  packs: string[]; hosts: string[]; acts: string[]; runTools: string[]; mcp: Record<string, unknown>; browser?: { allow: string[] | null } | null
+  scopes?: Record<string, string[]>; llmActs?: string[]
+}
 
 export type AgentWho = 'you' | 'agent' | 'tool' | 'note'
 export interface AgentTurn { at: string; who: AgentWho; t: string }

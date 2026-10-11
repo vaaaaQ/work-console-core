@@ -106,6 +106,13 @@ test("a managed workspace's grants name its packs, hosts and acts; its pack sett
   assert.deepEqual(g(cfg), { packs: ['fixture'], hosts: ['board.example'], acts: ['work.comment'], config: { fixture: { org: 'acme' } } })
 })
 
+test("scopes come from a managed workspace's grants only; its config cannot widen them", () => {
+  const cfg = { scopes: { fixture: ['-1', '-2'] }, packConfig: {} } as unknown as WsConfig
+  assert.deepEqual(configGrants(cfg).scopes, { fixture: ['-1', '-2'] })
+  assert.deepEqual(grantsFrom({ packs: ['fixture'], hosts: [], acts: [], scopes: { fixture: ['-1'] } })(cfg).scopes, { fixture: ['-1'] })
+  assert.ok(!('scopes' in grantsFrom({ packs: ['fixture'], hosts: [], acts: [] })(cfg)), 'none granted = none, whatever the config says')
+})
+
 test("the core's packs dir holds the example pack", () => {
   assert.match(readFileSync(join(PACKS_DIR, 'example', 'pack.json'), 'utf8'), /"name": "example"/)
 })

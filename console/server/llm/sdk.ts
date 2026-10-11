@@ -40,6 +40,8 @@ export interface RunTools {
   knowledgePropose?(p: KnowledgeIn): Promise<string>
   /** the runs' browser lost a site's session: the run ends on a draft asking the user to sign in there; only where the workspace has the browser */
   signinNeeded?(o: { site: string; url: string }): Promise<void>
+  /** runs one of the acts the workspace lets runs call (grants.llmActs), under its scopes; what it answered, or throws why it was not sent */
+  act?(action: string, args: Record<string, unknown>): Promise<string>
   /** a reply run only: keeps what the user asked on the step for the blocker builder, and ends the run */
   openBlocker?(say: string): Promise<void>
 }
@@ -62,7 +64,7 @@ export interface Sdk {
 
 const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status']
 export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__context', 'mcp__run__screenshot', 'mcp__run__create_job', 'mcp__run__start_job',
-  'mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose', 'mcp__run__open_blocker', 'mcp__run__signin_needed', ...BRIDGE]
+  'mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose', 'mcp__run__open_blocker', 'mcp__run__signin_needed', 'mcp__run__act', ...BRIDGE]
 export const DENY = [
   'mcp__bridge__bridge_act', 'mcp__work-console',
   'Read(~/.bridge/**)', 'Read(~/.work-console/**)', 'Read(**/.work-console/**)',
@@ -199,6 +201,9 @@ export function runToolDefs(tools: RunTools) {
     ...(tools.signinNeeded ? [tool('signin_needed', "The runs' browser is signed out of a site this step needs (its sign-in page shows where the content should be). site = its name, url = the page to sign in on. It ends this run on a draft that asks the user to sign in; the user replies when done and you go on. Stop after it.",
       { site: z.string().min(1), url: z.string().min(1) },
       (a) => wrap(() => tools.signinNeeded!(a), 'the user is asked to sign in; stop here')())] : []),
+    ...(tools.act ? [tool('act', "Run an act this workspace lets runs call by themselves (for example a post into an allowed chat), at most 10 a run. It goes out at once, without the user's review; only the chats or targets the workspace allows are accepted. A refusal or failure is shown on the step with the text; do not retry it.",
+      { action: z.string().min(1), args: z.record(z.string(), z.unknown()) },
+      (a) => answer(() => tools.act!(a.action, a.args))())] : []),
   ]
 }
 

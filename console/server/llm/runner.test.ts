@@ -10,7 +10,7 @@ import { Jobs } from '../jobs/jobs.ts'
 import { fileStore } from '../store/file.ts'
 import { demoCtx, demoSeed, fakeSdk } from '../testkit.ts'
 import { GatewayError } from '../bridge/wire.ts'
-import type { ConceptReply } from '../bridge/wire.ts'
+import type { ActReq, ActRes, ConceptReply } from '../bridge/wire.ts'
 import { notesStore } from '../knowledge/notes.ts'
 import { resolveContext } from './context.ts'
 import { buildPrompt } from './prompt.ts'
@@ -633,6 +633,66 @@ test('job tools create jobs in the run\'s workspace and start them; at most 5 a 
   await until(() => plain.sessions.length === 1)
   assert.equal(plain.sessions[0].tools.createJob, undefined)
   assert.equal(plain.sessions[0].tools.startJob, undefined)
+})
+
+/** a runner whose runs may call the given acts on a fake source that answers from `answer` and records each call */
+async function actRun(allowed: string[], answer: (a: ActReq) => ActRes = () => ({ status: 'ok' })) {
+  const s = setup(), [t] = await targets(s.jobs, 1), calls: ActReq[] = []
+  const runner = new Runner({ store: s.store, jobs: s.jobs, bus: s.bus, sdk: fakeSdk(s.sessions).sdk, cwd: s.dir, gate: () => true, artifactsDir: join(s.dir, 'arts'), ctx: demoCtx,
+    acts: { allowed, act: async (a) => { calls.push(a); return answer(a) } } })
+  await runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  const badges = async () => (await s.jobs.get(t.job))!.flow[t.step].b.filter((b) => b.k === 'p' && b.o)
+  return { s, t, calls, tools: s.sessions[0].tools, badges }
+}
+
+test('act: a run calls an act its workspace lets runs call, with a fresh action id each time, and no step is flagged', async () => {
+  const { calls, tools, badges } = await actRun(['chat.post'])
+  assert.match(await tools.act!('chat.post', { chat: '-100', text: 'hi' }), /^sent chat.post/)
+  await tools.act!('chat.post', { chat: '-100', text: 'again' })
+  assert.deepEqual(calls.map((c) => [c.action, c.args]), [['chat.post', { chat: '-100', text: 'hi' }], ['chat.post', { chat: '-100', text: 'again' }]])
+  assert.ok(calls[0].actionId && calls[0].actionId !== calls[1].actionId)
+  assert.deepEqual(await badges(), [])
+})
+
+test('act: an act runs may not call is refused before the source, and the step shows what was not sent and why', async () => {
+  const { calls, tools, badges } = await actRun(['chat.post'])
+  await assert.rejects(tools.act!('mail.send', { to: ['x@y.example'], text: 'hello there' }), /mail\.send is not an act runs may call here/)
+  assert.deepEqual(calls, [])
+  const [b] = await badges()
+  assert.match(b.t, /^Not sent \(mail\.send\)/); assert.match(b.t, /not an act runs may call/); assert.match(b.t, /hello there/)
+})
+
+test('act: a target out of the scope is refused by the source; the run sees why and the step is flagged with the text', async () => {
+  const { calls, tools, badges } = await actRun(['chat.post'], (a) => (a.args.chat === '-100' ? { status: 'ok' } : { status: 'error', error: { code: 'out_of_scope', message: 'chat "-200" is not in scope' } }))
+  await assert.rejects(tools.act!('chat.post', { chat: '-200', text: 'to the wrong chat' }), /out_of_scope: chat "-200" is not in scope/)
+  assert.equal(calls.length, 1)
+  const [b] = await badges()
+  assert.match(b.t, /^Not sent \(chat.post\)/); assert.match(b.t, /out_of_scope/); assert.match(b.t, /to the wrong chat/)
+})
+
+test('act: an unknown outcome is flagged as maybe sent, never retried', async () => {
+  const { calls, tools, badges } = await actRun(['chat.post'], () => ({ status: 'outcome_unknown', error: { code: 'outcome_unknown', message: 'no server confirmation' } }))
+  await assert.rejects(tools.act!('chat.post', { chat: '-100', text: 'x' }), /may or may not have been sent/)
+  assert.equal(calls.length, 1)
+  assert.match((await badges())[0].t, /may or may not have been sent/)
+})
+
+test('act: at most 10 a run; the 11th is refused and flagged', async () => {
+  const { calls, tools, badges } = await actRun(['chat.post'])
+  for (let i = 0; i < 10; i++) await tools.act!('chat.post', { chat: '-100', text: `m${i}` })
+  await assert.rejects(tools.act!('chat.post', { chat: '-100', text: 'm10' }), /already called 10 acts/)
+  assert.equal(calls.length, 10)
+  assert.equal((await badges()).length, 1)
+})
+
+test('act: a workspace that lets runs call no act gives them no act tool', async () => {
+  const none = await actRun([])
+  assert.equal(none.tools.act, undefined)
+  const s = setup(), [t] = await targets(s.jobs, 1)
+  await s.runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  assert.equal(s.sessions[0].tools.act, undefined)
 })
 
 /** a started job whose first step holds a draft from a run with session S1 */

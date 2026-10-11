@@ -18,7 +18,7 @@ export const grantsPath = (id: string, root = CONSOLE) => join(root, 'workspaces
 export function normGrants(x: unknown): Grants {
   if (!x || typeof x !== 'object' || Array.isArray(x)) throw new Error('grants must be an object')
   const o = x as Record<string, unknown>
-  for (const k of Object.keys(o)) if (![...LISTS, 'mcp', 'browser'].includes(k)) throw new Error(`unknown key ${k}`)
+  for (const k of Object.keys(o)) if (![...LISTS, 'mcp', 'browser', 'scopes', 'llmActs'].includes(k)) throw new Error(`unknown key ${k}`)
   const out: Grants = structuredClone(EMPTY_GRANTS)
   for (const k of LISTS) {
     const v = o[k] ?? []
@@ -31,8 +31,20 @@ export function normGrants(x: unknown): Grants {
   out.mcp = structuredClone(mcp as Record<string, unknown>)
   const browser = normRunBrowser(o.browser)
   if (browser) out.browser = browser
+  const scopes = o.scopes ?? {}
+  if (!scopes || typeof scopes !== 'object' || Array.isArray(scopes)) throw new Error('scopes must be an object of id lists per pack')
+  for (const [p, ids] of Object.entries(scopes)) {
+    if (!out.packs.includes(p)) throw new Error(`scopes.${p}: ${p} is not a granted pack`)
+    if (!names(ids)) throw new Error(`scopes.${p} must be a list of ids`)
+    if (ids.length) (out.scopes ??= {})[p] = [...new Set(ids)]
+  }
+  const llm = o.llmActs ?? []
+  if (!names(llm)) throw new Error('llmActs must be a list of names')
+  for (const a of llm) if (!out.acts.includes(a)) throw new Error(`llmActs: ${a} is not a granted act`)
+  if (llm.length) out.llmActs = [...new Set(llm)]
   return out
 }
+const names = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === 'string' && !!s)
 
 /** the workspace's grants; null = unmanaged. A malformed file throws, naming it */
 export function grantsOf(id: string, root = CONSOLE): Grants | null {
@@ -63,6 +75,14 @@ export function grantsDiff(a: Grants, b: Grants): string[] {
   if (!ba && bb) out.push(`+ browser ${mode(bb)}`)
   else if (ba && !bb) out.push('- browser')
   else if (ba && bb && mode(ba) !== mode(bb)) out.push(`~ browser ${mode(bb)}`)
+  const sa = a.scopes ?? {}, sb = b.scopes ?? {}
+  for (const p of [...new Set([...Object.keys(sa), ...Object.keys(sb)])]) {
+    for (const x of sb[p] ?? []) if (!(sa[p] ?? []).includes(x)) out.push(`+ scope ${p} ${x}`)
+    for (const x of sa[p] ?? []) if (!(sb[p] ?? []).includes(x)) out.push(`- scope ${p} ${x}`)
+  }
+  const la = a.llmActs ?? [], lb = b.llmActs ?? []
+  for (const x of lb) if (!la.includes(x)) out.push(`+ llmAct ${x}`)
+  for (const x of la) if (!lb.includes(x)) out.push(`- llmAct ${x}`)
   return out
 }
 

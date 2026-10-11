@@ -68,6 +68,15 @@ test('propose_grants puts the whole grants up for approval; malformed or unchang
   assert.match(await s.tools.propose_grants.run({ change: { packs: ['x'] }, reason: ' ' }), /reason/)
 })
 
+test('propose_grants carries scopes and llmActs to Approvals; a scope for an ungranted pack or a run act that is not an act is refused', async () => {
+  const s = setup()
+  const change = { packs: ['chat-web'], hosts: ['web.chat.example'], acts: ['chat.post'], scopes: { 'chat-web': ['-100'] }, llmActs: ['chat.post'] }
+  assert.match(await s.tools.propose_grants.run({ change, reason: 'post into the team chat' }), /Approvals/)
+  assert.deepEqual(s.proposed[0][0], { ...EMPTY_GRANTS, ...change })
+  assert.match(await s.tools.propose_grants.run({ change: { scopes: { 'chat-web': ['-1'] } }, reason: 'r' }), /Not proposed: scopes\.chat-web: chat-web is not a granted pack/)
+  assert.match(await s.tools.propose_grants.run({ change: { packs: ['chat-web'], llmActs: ['chat.post'] }, reason: 'r' }), /Not proposed: llmActs: chat\.post is not a granted act/)
+})
+
 test('create_workspace passes the registered ids and prefixes and records the commit', async () => {
   const s = setup()
   assert.match(await s.tools.create_workspace.run({ id: 'crm', prefix: 'CRM', title: 'CRM' }), /^Created workspace crm/)

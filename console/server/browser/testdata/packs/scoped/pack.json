@@ -1,0 +1,17 @@
+{
+  "name": "scoped",
+  "zone": "UTC",
+  "script": "scoped.js",
+  "hosts": ["mail.example"],
+  "tabs": {
+    "mail": { "match": "^https://mail\\.example/", "open": "https://mail.example/inbox" }
+  },
+  "concepts": {
+    "chat": { "tab": "mail", "interval": 1, "cap": 50, "scope": "id" },
+    "mail": { "tab": "mail", "interval": 1, "cap": 10 }
+  },
+  "actions": {
+    "chat.post": { "tab": "mail", "concept": "chat", "scope": "chat" },
+    "mail.send": { "tab": "mail", "concept": "mail" }
+  }
+}

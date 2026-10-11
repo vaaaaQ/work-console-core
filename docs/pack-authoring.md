@@ -33,6 +33,18 @@ flowchart LR
 | `concepts.<c>.interval` | Seconds between reads |
 | `concepts.<c>.cap` | Max items kept |
 | `actions.<a>.concept` | Which concept to re-read after the act |
+| `concepts.<c>.scope`, `actions.<a>.scope` | Optional. The item field, or the act's arg, that names a target the workspace must list (see Scope) |
+
+### Scope
+
+A pack that reaches the person's own chats or channels, where the workspace may use only some of them, is
+scoped. `concepts.<c>.scope` names the item field that holds the target's id (usually `id`), and
+`actions.<a>.scope` names the arg that holds it (for example `chat`). The workspace's `grants.json` lists the
+allowed ids under `scopes.<pack>`; a scoped pack with none listed serves nothing.
+
+The console enforces the list, not the pack: a read keeps only listed items (before the bus sees them), a get
+or an act on another id answers `out_of_scope` without running the script. The script gets the list as
+`call.scope` on every scoped call, reads only those targets, and refuses any other id itself, as a second check.
 
 ### Config and hosts
 
@@ -70,6 +82,8 @@ async function (call, env) { ... }   // env is injected only by tests
 | `read` | `concept`, `watch`, `zone`, `now` | an array of items (`<concept>.item` schema) |
 | `get` | `concept`, `id` | one detail (`<concept>.get` schema) |
 | `act` | `action`, `args` | the act's result, small |
+
+A scoped concept or action's call also has `scope`, the allowed ids.
 
 `watch` maps a concept to the ids that jobs follow. A read includes them even when they don't
 match the pack's default query. A get-only concept, such as `image`, answers a read with `[]`.
