@@ -506,6 +506,29 @@ test('the live HEAD moving between the check and the landing refuses the fast-fo
   assert.equal(git('log', '-2', '--format=%s'), 'w1: two\ncore moved')
 })
 
+test('a commit an apply left on agent/<ws> (a crash in the middle) is taken up by the next apply, not lost as nothing to apply', async () => {
+  const { r, git } = repo(), { o, trees, at } = treeOps(r, fakeExec())
+  const d = await trees.dir('w1'), w = at(d)
+  w.put('workspaces/w1/page.ts', 'export const A = 2\n')
+  w.git('add', '-A'); w.git('commit', '-qm', 'w1: left by a crash')
+  const a = await o.apply('w1', 'two')
+  assert.ok(a.ok, JSON.stringify(a))
+  assert.equal(git('log', '-1', '--format=%s'), 'w1: two')
+  assert.equal(git('rev-list', '--count', 'HEAD'), '2', 'one commit on top of init, not two')
+})
+
+test('a throw after the worktree commit (the build cannot be swapped in) fails the apply and takes the commit back', async () => {
+  const { r, git } = repo(), trees = new AgentTrees({ live: r, base: join(tempDir('agents'), 'agents') })
+  const o = new Ops({ root: r, exec: fakeExec().exec, dist: join(r, 'no', 'such', 'dist'), trees })
+  const d = await trees.dir('w1')
+  mkdirSync(join(d, 'workspaces', 'w1'), { recursive: true }); writeFileSync(join(d, 'workspaces', 'w1', 'page.ts'), 'export const A = 2\n')
+  const before = liveState(git), a = await o.apply('w1', 'two')
+  assert.equal(a.ok, false, JSON.stringify(a))
+  assert.deepEqual(liveState(git), before)
+  assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: d, encoding: 'utf8' }).trim(), before.head)
+  assert.deepEqual(await trees.pending('w1'), ['workspaces/w1/page.ts'])
+})
+
 test('uncommitted changes in the live folder under the agent’s areas refuse the landing', async () => {
   const { r, put, git } = repo(), { o, trees, at, restarts } = treeOps(r, fakeExec())
   const w = at(await trees.dir('w1'))

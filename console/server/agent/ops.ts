@@ -243,19 +243,28 @@ export class Ops {
   /** apply through the agent's worktree w: commit there, rebase onto the live HEAD, check and build there, then
       fast-forward the live folder; any failure takes the commit back and leaves the files in w */
   private async applyFrom(ws: string, s: string, w: Ops): Promise<Applied> {
+    const onto = (await this.git('rev-parse', 'HEAD')).trim()
+    // a commit of the agent's the live folder never took (an apply cut off midway) is uncommitted work again
+    const mb = (await w.git('merge-base', 'HEAD', onto)).trim()
+    if ((await w.git('rev-parse', 'HEAD')).trim() !== mb) await w.git('reset', '-q', mb)
     const areas = writeAreas(ws), files = await w.changed(ws)
     if (!files.length) return fail(`nothing to apply: no changes under workspaces/${ws} or tools`)
     const why = w.refused(ws, files)
     if (why) return fail(why)
     const links = linksUnder(w.root, areas)
     if (links.length) return fail('the check failed', links.map((p) => `${p}: a symlink or junction; the agent areas hold plain files only`))
-    const onto = (await this.git('rev-parse', 'HEAD')).trim()
-    await w.commit(areas.filter((a) => files.some((f) => f.startsWith(`${a}/`))), `${ws}: ${s}`)
+    try { await w.commit(areas.filter((a) => files.some((f) => f.startsWith(`${a}/`))), `${ws}: ${s}`) } catch (e) { return fail((e as Error).message) }
     const back = async (error: string, failures?: string[]) => {
       rmSync(this.stage, { recursive: true, force: true })
       await w.git('reset', '-q', 'HEAD~1')
       return fail(error, failures)
     }
+    try { return await this.land(ws, s, w, onto, back) } catch (e) { return back((e as Error).message) }
+  }
+
+  /** applyFrom once committed in w: rebase, check, build, then the live folder's fast-forward; back takes the commit back */
+  private async land(ws: string, s: string, w: Ops, onto: string, back: (error: string, failures?: string[]) => Promise<Applied>): Promise<Applied> {
+    const areas = writeAreas(ws)
     if ((await w.git('rev-parse', 'HEAD~1')).trim() !== onto) {
       const rb = await w.run('git', ['rebase', '-q', onto])
       if (rb.code !== 0) {
