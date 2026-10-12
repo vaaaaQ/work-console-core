@@ -28,7 +28,11 @@ stepDone   td1  → nx pr1, journal: “step done; “Open the PR” is next.”
    - A step with nothing reached after it (for example the last step, as when AD-0003 reopened Deploy) reopens exactly as it does today.
 2. **Page.** For a passed step that has reached steps after it, the button reads **Go back to this step…**. It asks for an optional reason and says that the later steps start again. For other steps it stays “Reopen step”.
 3. **MCP `command` description.** The `stepReopen` line notes that reopening a passed step restarts the steps after it.
-4. **Auto-ask.** `madeCurrent` already treats a step moved onto from `fut` as made current. So after the re-approval, “Branch from develop” / the TDD step becomes current and a `self`/`auto` LLM step there is asked by itself. `stepReopen` routed as a return is added to the same rule as `returnTo`, so a reopened `auto` step is asked as well.
+4. **A message sent in an earlier round is sent again and says what changed.** A restarted step's planned messages go out again in the new round, for example pr2 "Post in USIE DEV" for the new PR. No new stored field is needed. The earlier text comes from the latest kept round in which that step sent the message (`j.rounds[k].flow[sid].sent[i]`).
+   - **LLM run:** the prompt (`server/llm/prompt.ts`) gets a section "Sent in round N on <date>: <text>". Its rule: the new message is a resend, and it says briefly what changed since then. The cause is the reason the job went back (the round's `why`) and the new design.
+   - **Page:** the planned message in the step shows "Sent in round N" with the old text under it, and a hint to say what changed.
+   - A message that was never sent gets nothing extra.
+5. **Auto-ask.** `madeCurrent` already treats a step moved onto from `fut` as made current. So after the re-approval, “Branch from develop” / the TDD step becomes current and a `self`/`auto` LLM step there is asked by itself. `stepReopen` routed as a return is added to the same rule as `returnTo`, so a reopened `auto` step is asked as well.
 
 Nothing else moves: `advance`, `atOf` and `returnTo` stay as they are. The rule depends only on step order, not on step names, so it covers “design” in any playbook, not only `usie-dev-item`.
 
@@ -37,11 +41,17 @@ Nothing else moves: `advance`, `atOf` and `returnTo` stay as they are. The rule 
 - **Failing test first** (`transitions.test.ts`, demo `dev-item`): take the job to pr1, `stepReopen td1`, then `stepDone td1` (and the same through `runDraft` + `acceptDraft`). Expected: next step `td2`, then `im1`. Build steps are `fut`, `pr1` is not live, a round is kept, and `atOf` never jumps over Build. It fails today with `nx = pr1`.
 - Also tested: reopening the last step with nothing after it is unchanged; a run in flight refuses the reopen (`bad_state`, as `returnTo` does); `madeCurrent` for the reopened step; the Drawer label.
 - `npm test` and `npm run typecheck` green; `core-lock` is untouched in this repo.
-- **Live**: after merge, sync the core into `D:\agents\services\work-console` and run `update.ps1`, which Valery runs outside the console. On the deployed console, a scratch job on a two-phase playbook goes reopen design → done and lands on Build. Screenshots of the button and the board column before and after.
+- **Live**: after merge, sync the core into `D:\agents\services\work-console` and run `update.ps1`, which Valery runs outside the console. On the deployed home console, a scratch job goes reopen design → done and lands on Build. A step that sent a message in round 1 shows "Sent in round 1". Screenshots of the button, the board column before and after, and the resend hint.
+
+Also tested for item 4: after a return, a step that sent a message in round 1 shows that text as "Sent in round 1", and its LLM prompt carries the text and the "say what changed" rule. A step that sent nothing gets neither.
+
+## Decisions (Valery, on the first draft)
+
+- **Q1, the reason for going back:** optional, with the default text.
+- **Q2, messages already sent:** they are sent again, and each one says what changed (item 4 above).
+- **Q3, the IAEA job:** Valery has already changed and restarted it by hand. The fix does not touch stored jobs.
+- **Q4, the live check:** on the home console (`D:\agents\services\work-console`).
 
 ## Open questions (notes)
 
-- **Q1.** Should the page require a reason for going back (as `returnTo` does), or should it stay optional with the default text? The proposal is optional.
-- **Q2.** Already-sent planned messages of the restarted steps (e.g. pr2 “Post in USIE DEV”) are planned again in the new round. That matches `returnTo` and fits a new PR. Is that OK?
-- **Q3.** The IAEA job that already went past Build stays as it is: the fix does not rewrite stored jobs. After the deploy, “Go back to this step” on its Build step (or a session `returnTo`) repairs it. Is it enough to name the job, or should the fix do this?
-- **Q4.** Deploy target: the IAEA console runs on iaea-pc. Is the live check there, or is the home console enough for the proof plus a core sync to iaea-pc afterwards?
+- None.
