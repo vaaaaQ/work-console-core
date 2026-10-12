@@ -70,9 +70,11 @@ async function stateJob(): Promise<{ j: Job; all: Job[] }> {
 test('jobState lists the steps with mode and start, waits, replies, the last 20 journal lines and the open proposal', async () => {
   const { j, all } = await stateJob()
   const t = jobState(demoCtx(), j, { all, notes: [{ id: 'n1', v: 1, title: 'How the stand runs', tags: [], playbooks: [], updated: '', size: 1 }] })
+  // the step was added on the real clock, so its day is today's
+  const added = j.ph!.flatMap((p) => p.s).find((s) => s.id === 'n1')!.add!.at.slice(0, 10)
   for (const s of [
     `# The job now: ${j.id} “Local stand”`, 'its own steps', '“Understand the request” · cur · LLM · start default',
-    'n1 “Ask Imre” · tpl · LLM · start self · asks for a reply · added 2026-10-09 by you: the daily said ask first',
+    `n1 “Ask Imre” · tpl · LLM · start self · asks for a reply · added ${added} by you: the daily said ask first`,
     'waits for a reply in chat since 2026-10-09T12:00:00Z', 'reply from Imre at 2026-10-09T12:05:00Z: yes, go', '“Send it” · tpl · you',
     '# Steps of other jobs that wait for this one', '- J-0999 “Other”, step dr',
     '# The open proposal', 'by c2)', 'say: one more question', '1. {"op":"noteAdd","step":"tr","k":"q","t":"who signs?"}',
