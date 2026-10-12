@@ -6,7 +6,7 @@ import { JOBS0, JR, OVR, TPL0 } from '../data/demo.ts'
 import { clone } from '../lib/util.ts'
 import { KINDS } from './context.ts'
 import type { Cmd, Job, Step } from './types.ts'
-import { CmdError, DESC_MAX, allSent, apply, askText, atOf, fitFlow, freshJob, hasDraft, isClosed, isLive, needsYou, nextMonth, phasesOf, seedFlow, stepOf, steps, stepsOf, tplOf, unsentAt } from './transitions.ts'
+import { CmdError, DESC_MAX, allSent, apply, askText, atOf, fitFlow, freshJob, hasDraft, isClosed, isLive, needsYou, nextMonth, phasesOf, reopenGoesBack, seedFlow, sentBefore, stepOf, steps, stepsOf, tplOf, unsentAt } from './transitions.ts'
 import type { Ctx, NewJob } from './transitions.ts'
 
 const T0 = new Date('2026-09-30T12:00:00Z')
@@ -285,15 +285,32 @@ test('reopening a passed design and finishing it again goes through Build, never
 
 test('stepReopen takes an optional reason; a step with nothing reached after it reopens alone; a run in flight refuses the return', () => {
   const j = find((j) => j.id === 'J-0412')
+  assert.deepEqual([reopenGoesBack(X, j, 'td1'), reopenGoesBack(X, j, 'pr3'), reopenGoesBack(X, j, 'nope')], [true, false, false], 'the page offers Go back on td1 only')
   const k = apply(X, j, { op: 'stepReopen', step: 'td1', why: ' new requirements ' }).job
   assert.equal(k.rounds![0].why, 'new requirements')
   const running = apply(X, apply(X, j, { op: 'stepResume', step: 'pr3' }).job, { op: 'runStart', step: 'pr3', q: 'q', id: 'r1' }).job
   code(() => apply(X, running, { op: 'stepReopen', step: 'td1' }), 'bad_state')
   // the last step done, nothing after it: it reopens as before, no round
-  const done = find((j) => j.st === 'done'), back = apply(X, apply(X, done, { op: 'reopen' }).job, { op: 'stepReopen', step: 'qa3' })
+  const done = find((j) => j.st === 'done'), reo = apply(X, done, { op: 'reopen' }).job
+  assert.equal(reopenGoesBack(X, reo, 'qa3'), false)
+  const back = apply(X, reo, { op: 'stepReopen', step: 'qa3' })
   assert.equal(back.job.flow.qa3.s, 'cur')
   assert.equal(back.job.rounds, undefined)
   assert.match(back.job.jr[0].o, /^Reopened “Close the issue”\.$/)
+})
+
+test('sentBefore: a restarted step’s message sent in an earlier round, with why the job went back; none once sent again', () => {
+  let j = apply(X, freshJob(X, 'A-9', { t: 'Reply', key: 'NEW', pb: 'action', prj: '', ws: 'acme' }), { op: 'start' }).job
+  for (const c of [{ op: 'stepDone', step: 'tr' }, { op: 'stepDone', step: 'dr' }, { op: 'sent', step: 'sn', i: 0, t: 'Use v1.', to: 'team' }] as Cmd[]) j = apply(X, j, c).job
+  assert.deepEqual(sentBefore(j, 'sn'), [], 'nothing was returned yet')
+  const back = apply(X, j, { op: 'stepReopen', step: 'tr', why: 'the PO wants v2' }).job
+  assert.deepEqual(sentBefore(back, 'sn'), [{ i: 0, n: 1, at: T0.toISOString(), t: 'Use v1.', why: ['the PO wants v2'] }])
+  assert.deepEqual(sentBefore(back, 'tr'), [], 'a step that sent nothing')
+  let again = back
+  for (const c of [{ op: 'stepDone', step: 'tr' }, { op: 'stepDone', step: 'dr' }, { op: 'sent', step: 'sn', i: 0, t: 'Use v2.', to: 'team' }] as Cmd[]) again = apply(X, again, c).job
+  assert.deepEqual(sentBefore(again, 'sn'), [], 'sent again in this round')
+  const twice = apply(X, again, { op: 'returnTo', step: 'dr', why: 'one more change' }).job
+  assert.deepEqual(sentBefore(twice, 'sn'), [{ i: 0, n: 2, at: T0.toISOString(), t: 'Use v2.', why: ['one more change'] }], 'the latest round that sent it')
 })
 
 test('schedule sets a due date; the job needs you from home-zone midnight of due minus lead', () => {

@@ -156,7 +156,7 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
     {
       name: 'job_command',
       description: 'Apply one job command, exactly as the console page would. It applies at once, shows live in the console and is journaled as Claude Code. '
-        + 'Args per op: start; close {st: done|cancelled, note?}; reopen; stepDone|stepSkip|stepResume|stepReopen {step}; rejectDraft {step, why?: the reason; with one the step is redone in a fresh LLM session}; stepWait {step, m: what it waits for}; '
+        + 'Args per op: start; close {st: done|cancelled, note?}; reopen; stepDone|stepSkip|stepResume {step}; stepReopen {step, why?} (a passed step with later steps reached goes back like returnTo: a new round, every step after it starts again; why defaults to "reopened <step>"); rejectDraft {step, why?: the reason; with one the step is redone in a fresh LLM session}; stepWait {step, m: what it waits for}; '
         + 'acceptDraft {step, text?: edited text}; noteAdd {step, k: q question|c contradiction|d design note|p problem, t}; noteAnswer {step, i, r}; noteReopen {step, i}; '
         + 'sent {step, i: planned message index, t: the text you sent, to: channel} (record only, send it yourself first); vote {step, n: reviewer, v}; '
         + 'nudged {to}; replied {subj}; returnTo {step, why}; describe {d: the description, Markdown in English, the user\'s part of every LLM run; empty removes it}. '

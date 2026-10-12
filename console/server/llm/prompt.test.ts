@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { redoText, replyPrompt, buildPrompt, blockersText, manualText } from './prompt.ts'
-import { freshJob } from '../../src/model/transitions.ts'
+import { apply, freshJob } from '../../src/model/transitions.ts'
 import { demoCtx } from '../testkit.ts'
-import type { Flow } from '../../src/model/types.ts'
+import type { Cmd, Flow } from '../../src/model/types.ts'
 
 test('a reply prompt carries the text and one line by intent', () => {
   assert.match(replyPrompt('make it shorter', 'revise', 'Valery'), /^Valery replied to your draft:\n\nmake it shorter\n\nChange the draft .*submit_draft with the whole new text\.$/s)
@@ -50,6 +50,20 @@ test('a step whose draft a later step sends is told to submit the message alone'
   const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
   assert.match(buildPrompt(x, j, 'dr', 'go', { me: 'Valery' }), /the draft is the message "Send it" sends, word for word: submit_draft carries that message alone.*Remarks for Valery go in journal\(\)/)
   assert.doesNotMatch(buildPrompt(x, j, 'tr', 'go', {}), /word for word/)
+})
+
+test('a restarted step whose message went out in an earlier round is told the old text and to say what changed', () => {
+  const x = demoCtx()
+  let j = apply(x, freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' }), { op: 'start' }).job
+  for (const c of [{ op: 'stepDone', step: 'tr' }, { op: 'stepDone', step: 'dr' }, { op: 'sent', step: 'sn', i: 0, t: 'Use v1.', to: 'team' }] as Cmd[]) j = apply(x, j, c).job
+  assert.doesNotMatch(buildPrompt(x, j, 'dr', 'go', {}), /Sent in round/, 'no earlier round')
+  j = apply(x, j, { op: 'stepReopen', step: 'tr', why: 'the PO wants v2' }).job
+  const p = buildPrompt(x, j, 'dr', 'go', { me: 'Valery' })
+  assert.match(p, /## Sent in an earlier round\n### Send it, message 1\nSent in round 1 on \S+: Use v1\./)
+  assert.match(p, /- A message this step's draft goes into went out in an earlier round.*resend.*says briefly what changed since then.*the PO wants v2/)
+  assert.match(manualText(x, j, 'dr', 'go', {}), /Sent in round 1 on \S+: Use v1\./)
+  assert.match(buildPrompt(x, j, 'sn', 'go', {}), /Sent in round 1/, "the step that sends it")
+  assert.doesNotMatch(buildPrompt(x, j, 'tr', 'go', {}), /Sent in round|what changed/, 'a step no message of which went out')
 })
 
 test('a hand-made session on a step whose draft a later step sends is told to submit the message alone', () => {

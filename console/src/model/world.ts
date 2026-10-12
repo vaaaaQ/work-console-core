@@ -52,6 +52,8 @@ export const tplOf = (j: Job, sid: string) => T.tplOf(CTX, j, sid)
 export const phaseOf = (j: Job, id: string) => phases(j).find((p) => p.s.some((s) => s.id === id))
 export const { isClosed, isLive, flows, hasDraft, ahead } = T
 export const atOf = (j: Job) => T.atOf(CTX, j)
+/** reopening this step starts a new round: the steps after it start again */
+export const goesBack = (j: Job, sid: string) => T.reopenGoesBack(CTX, j, sid)
 /** the open job in this workspace whose current step carries a console action */
 export const jobAtAct = (act: string) => wsJobs().find((j) => !isClosed(j) && stepOf(j, atOf(j))?.act === act)
 /** the job an act's view links to: the one at a step with the act, else an open one (recurring too) whose playbook has such a step */

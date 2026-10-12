@@ -7,7 +7,7 @@ import { LIVE } from '../live/api.ts'
 import { down } from '../live/boot.ts'
 import { actFor, addrs, isAddr } from '../live/adapt.ts'
 import {
-  S, allSent, applyLocal, byId, chName, chatOf, clearNew, ctxRows, isLive, jsteps, keyShort, llmText, plainT, postToChat, putJob,
+  S, allSent, applyLocal, byId, chName, chatOf, clearNew, ctxRows, goesBack, isLive, jsteps, keyShort, llmText, plainT, postToChat, putJob,
   restore, rvState, snap, stepOf, tplOf,
 } from '../model/world.ts'
 import { openOf } from '../model/blockers.ts'
@@ -117,7 +117,26 @@ export async function closeJob(id: string, st: JobStatus, note: string) {
 }
 
 export function stepSkip() { const { j, sid, s } = here(); void doCmd(j.id, { op: 'stepSkip', step: sid }, `Skipped · ${s.t}`, { moveSel: true }) }
-export function stepReopen() { const { j, sid, s } = here(); void doCmd(j.id, { op: 'stepReopen', step: sid }, `Reopened · ${s.t}`, { moveSel: true }) }
+export function stepReopen() {
+  const { j, sid, s } = here(), id = j.id
+  if (!goesBack(j, sid)) { void doCmd(id, { op: 'stepReopen', step: sid }, `Reopened · ${s.t}`, { moveSel: true }); return }
+  // the steps after it were built on it: they start again in a new round, the old one is kept
+  modal({
+    title: `Go back to “${s.t}”`, form: 'reopen',
+    body: <>
+      <label className="field"><span>Why does the job go back? (optional)</span><VoiceField name="why" target="llm" ctx={s.t} rows={2} autoFocus
+        placeholder="e.g. new requirements from the PO" /></label>
+      <p className="why" style={{ margin: 0 }}>Every step after it starts again, so the work built on the old version is done anew.
+        The current pass is kept as a round. Messages sent in it go out again and say what changed.</p>
+    </>,
+    foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="retry" sm />Go back</button></>,
+    onSubmit: (fd) => {
+      closeModal()
+      const why = String(fd.get('why') || '').trim()
+      void doCmd(id, { op: 'stepReopen', step: sid, ...(why ? { why } : {}) }, `Back to · ${s.t}`, { moveSel: true })
+    },
+  })
+}
 
 export function stepWait() {
   const { j, sid } = here(), id = j.id

@@ -3,8 +3,9 @@ import { BK, EXEC, MODES } from '../data/core.ts'
 import { PRI } from '../data/demo.ts'
 import { PACKS } from '../data/packs.ts'
 import { hm, initials, tfmt } from '../lib/util.ts'
-import { S, byId, chName, isClosed, isLive, phaseOf, rvState, stepOf, tplOf } from '../model/world.ts'
+import { S, byId, chName, goesBack, isClosed, isLive, phaseOf, rvState, stepOf, tplOf } from '../model/world.ts'
 import { actOf } from '../model/home.ts'
+import { sentBefore } from '../model/transitions.ts'
 import type { Flow, Job, Step } from '../model/types.ts'
 import { waitsFor } from '../actions/blockers.tsx'
 import { closeDrawer, go } from '../actions/nav.tsx'
@@ -69,13 +70,15 @@ function ReviewSec({ j, f }: P) {
 function TplSec({ j, s, f }: P) {
   const T = tplOf(j, s.id)
   if (!T.length) return null
-  const live = !isClosed(j) && isLive(f)
+  const live = !isClosed(j) && isLive(f), before = sentBefore(j, s.id)
   return (
     <section className="sec"><div className="eyebrow">Messages</div>{T.map(([k, lbl, t], i) => {
-      const sent = f.sent[i]
+      const sent = f.sent[i], old = sent ? undefined : before.find((m) => m.i === i)
       return (
         <div key={i} className={'tplm' + (sent ? ' sent' : '')}>
           <div className="ch"><Ic n={k === 'work' ? 'file' : 'message'} sm />{chName(j, k, lbl)}{sent ? ` · sent ${/T/.test(sent.at) ? hm(new Date(sent.at)) : sent.at}` : ''}</div>
+          {old ? <p className="hint" style={{ margin: '4px 0' }}>Sent in round {old.n} · {tfmt(old.at)}: <i>{old.t}</i><br />
+            It goes out again: say what changed since then ({old.why.join('; ')}).</p> : null}
           <div className="body">{sent ? sent.t : <FillT j={j} t={t} />}</div>
           {!sent && live ? <div className="row"><button className="btn sm pri" onClick={() => tplSend(j.id, s.id, i)}><Ic n="send" sm />Review and send…</button></div> : null}
         </div>
@@ -140,7 +143,9 @@ function ConsoleSec({ j, s, f }: P) {
 function StepActs({ j, s, f }: P) {
   if (isClosed(j)) return <span className="why">The job is closed. Reopen it to change steps.</span>
   if (f.run) return <button className="btn" onClick={llmCancel}><Ic n="x" sm />Cancel the LLM run</button>
-  if (!isLive(f)) return <button className="btn" onClick={stepReopen}><Ic n="retry" sm />Reopen step</button>
+  if (!isLive(f)) return goesBack(j, s.id)
+    ? <button className="btn" title="The steps after it start again; this pass is kept as a round" onClick={stepReopen}><Ic n="retry" sm />Go back to this step…</button>
+    : <button className="btn" onClick={stepReopen}><Ic n="retry" sm />Reopen step</button>
   const llmFirst = s.m === 'llm' && !f.dr
   const done = <button key="done" className={'btn' + (llmFirst || f.dr ? '' : ' pri')} onClick={stepDoneHere}><Ic n="check" sm />Mark done</button>
   const ask = <button key="ask" className={'btn' + (llmFirst ? ' pri' : '')} onClick={() => askLlm(j, s.id)}><Ic n="bot" sm />{f.dr ? 'Ask again…' : 'Ask LLM…'}</button>

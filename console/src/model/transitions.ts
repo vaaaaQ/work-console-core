@@ -287,6 +287,29 @@ function returnTo(x: Ctx, j: Job, sid: string, why: string) {
     `work on “${all[ti].t}”.`, by(x), 'cur')
 }
 
+/** reopening sid starts a new round: it is passed and a later step was already reached */
+export function reopenGoesBack(x: Ctx, j: Job, sid: string) {
+  const all = stepsOf(x, j), i = all.findIndex((s) => s.id === sid), f = j.flow[sid]
+  if (i < 0 || !f || isLive(f)) return false
+  return all.slice(i + 1).some((s) => { const g = j.flow[s.id]; return !!g && !ahead(g) })
+}
+
+/** a message a past round sent: i = its index, n = the round, why = why the job went back since then, oldest first */
+export interface SentBefore { i: number; n: number; at: string; t: string; why: string[] }
+/** the step's planned messages not yet sent in this pass that the latest round to send each did send:
+    the new one is a resend that says what changed */
+export function sentBefore(j: Job, sid: string): SentBefore[] {
+  const rounds = j.rounds ?? [], now = j.flow[sid]?.sent ?? {}, out: SentBefore[] = []
+  const idx = new Set(rounds.flatMap((r) => Object.keys(r.flow[sid]?.sent ?? {}).map(Number)))
+  for (const i of [...idx].sort((a, b) => a - b)) {
+    if (now[i]) continue
+    const k = rounds.findLastIndex((r) => !!r.flow[sid]?.sent?.[i])
+    const r = rounds[k], m = r.flow[sid].sent[i]
+    out.push({ i, n: r.n, at: m.at, t: m.t, why: rounds.slice(k).map((q) => q.why) })
+  }
+  return out
+}
+
 /* ===== the job's own steps ===== */
 const STARTS: readonly Start[] = ['hand', 'self', 'auto']
 /** the first change to a job's steps copies its playbook's steps and their planned messages into it */
@@ -563,6 +586,8 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       jr(x, j, `Skipped “${S.t}”.`, 'step skipped.', nextTxt(x, j, nx), by(x), 'off')
       break
     case 'stepReopen':
+      // later steps were built on this one: they start again in a new round, or the flow would jump over them
+      if (reopenGoesBack(x, j, sid)) { returnTo(x, j, sid, line(typeof cmd.why === 'string' ? cmd.why : '', 300) || `reopened “${S.t}”`); nx = sid; break }
       F.s = 'cur'; F.nw = 1; settle(F); nx = sid
       jr(x, j, `Reopened “${S.t}”.`, 'step back in progress.', `finish “${S.t}” again.`, by(x), 'cur'); syncStatus(x, j)
       break

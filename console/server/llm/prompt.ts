@@ -50,28 +50,44 @@ function parts(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn) {
     ...(s?.a?.length ? [`Expected artifacts: ${s.a.join(', ')}`] : []),
     ...(o.workDir ? [`Work dir: ${o.workDir}${o.branch ? ` (a git worktree on branch ${o.branch}, yours alone; commit there)` : ''}`] : []),
   ].join('\n')
-  const bl = blockersText(j.flow[step])
+  const bl = blockersText(j.flow[step]), rs = resent(x, j, step)
   const data = [
     job,
     contextSection(j.ws, ctx.filter((r) => r.k !== 'note')).trimEnd(),
     notes.length ? `## Knowledge\n${notes.join('\n\n')}` : '',
     bl ? `## Blockers\n${bl}` : '',
     outs.length ? `## Earlier outputs\n${outs.join('\n\n')}` : '',
+    rs.section,
     block(`## Journal (oldest first${j.jr.length > JR_MAX ? `; the latest ${JR_MAX} of ${j.jr.length}` : ''})`, jr),
   ]
   const user = [
     j.d ? `## Description (from ${who(o)})\n${j.d}` : '',
     `## Instruction (from ${who(o)})\n${q}`,
   ]
-  return { data, user }
+  return { data, user, resend: rs.rule }
 }
 
 const join = (bs: string[]) => bs.filter(Boolean).join('\n\n')
 
-/** the steps whose planned messages carry this step's accepted draft, by title */
-const sentBy = (x: T.Ctx, j: Job, step: string) => {
+/** the steps whose planned messages carry this step's accepted draft */
+const senders = (x: T.Ctx, j: Job, step: string) => {
   const v = T.stepOf(x, j, step)?.out
-  return v ? T.stepsOf(x, j).filter((t) => T.tplOf(x, j, t.id).some((m) => m[2].includes(`{${v}}`))).map((t) => `"${t.t}"`) : []
+  return v ? T.stepsOf(x, j).filter((t) => T.tplOf(x, j, t.id).some((m) => m[2].includes(`{${v}}`))) : []
+}
+/** the same, by title */
+const sentBy = (x: T.Ctx, j: Job, step: string) => senders(x, j, step).map((t) => `"${t.t}"`)
+
+/** the messages of this step, or of the steps that send its draft, that went out in an earlier round and go out again now */
+function resent(x: T.Ctx, j: Job, step: string) {
+  const own = T.stepOf(x, j, step), ss = [...(own ? [own] : []), ...senders(x, j, step).filter((t) => t.id !== step)]
+  const rows = ss.flatMap((t) => T.sentBefore(j, t.id).map((m) => ({ ...m, s: t })))
+  if (!rows.length) return { section: '', rule: '' }
+  const why = [...new Set(rows.flatMap((r) => r.why))]
+  return {
+    section: `## Sent in an earlier round\n${rows.map((r) => `### ${r.s.t}, message ${r.i + 1}\nSent in round ${r.n} on ${r.at}: ${r.t}`).join('\n\n')}`,
+    rule: `- A message this step's draft goes into went out in an earlier round (Sent in an earlier round above). The new one is a resend: write it so it says briefly what changed since then, `
+      + `that is why the job went back (${why.join('; ')}) and what is new, rather than repeating the old text.`,
+  }
 }
 /** draft = how the session names what it hands in; remarks = where notes to the user go instead */
 const messageAlone = (by: string[], w: string, draft: string, remarks: string) =>
@@ -93,6 +109,7 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: Prompt
       `- Save files the step expects with add_artifact(name, content), or with add_artifact_file(path) for a file already under your working dir; images show on the page.`,
       `- Finish by calling submit_draft(text) exactly once with the draft for ${w} to review. Without it the run counts as failed.`,
       ...(by.length ? [messageAlone(by, w, 'submit_draft', 'in journal()')] : []),
+      ...(p.resend ? [p.resend] : []),
     ]),
     ...p.user,
   ])
@@ -110,6 +127,7 @@ export function manualText(x: T.Ctx, j: Job, step: string, q: string, o: PromptI
       `- You never send anything to a source (no chat posts, mails, votes, comments or state changes): ${w} sends after review.`,
       `- Finish by calling submit_draft {id: "${j.id}", step: "${step}", output} on the work-console MCP server exactly once, with the draft for ${w} to review; files the step expects go in its artifacts as {name, content}.`,
       ...(by.length ? [messageAlone(by, w, "submit_draft's output", 'in this session, not in the draft')] : []),
+      ...(p.resend ? [p.resend] : []),
     ]),
     ...p.user,
   ])

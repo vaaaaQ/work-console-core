@@ -28,12 +28,14 @@ test('the changes that move a job onto a step make it current: Start, Mark done,
   assert.deepEqual(made(start, { op: 'stepSkip', step: 'tr' }), ['dr'])
   assert.deepEqual(made(start, ...draft, { op: 'acceptDraft', step: 'tr' }), ['dr'])
   assert.deepEqual(made(start, { op: 'stepDone', step: 'tr' }, { op: 'returnTo', step: 'tr', why: 'the request changed' }), ['tr'])
+  assert.deepEqual(made(start, { op: 'stepDone', step: 'tr' }, { op: 'stepReopen', step: 'tr' }), ['tr'], 'reopening a passed step with a later one reached is a return')
 })
 
 test('a step that stays or comes back current is not made current: Reject, run end, Reopen step, Resume, job reopen, a new period', () => {
   assert.deepEqual(made(start, ...draft, { op: 'rejectDraft', step: 'tr' }), [])
   assert.deepEqual(made(start, { op: 'runStart', step: 'tr', q: 'q', id: 'r1' }, { op: 'runEnd', step: 'tr', why: 'cancelled' }), [])
-  assert.deepEqual(made(start, { op: 'stepDone', step: 'tr' }, { op: 'stepReopen', step: 'tr' }), [])
+  const allDone = [start, { op: 'stepDone', step: 'tr' }, { op: 'stepDone', step: 'dr' }, { op: 'stepDone', step: 'sn' }] as Cmd[]
+  assert.deepEqual(made(...allDone, { op: 'stepReopen', step: 'sn' }), [], 'the last step reopened alone')
   assert.deepEqual(made(start, { op: 'stepWait', step: 'tr', m: 'asked' }, { op: 'stepResume', step: 'tr' }), [])
   assert.deepEqual(made(start, { op: 'stepSkip', step: 'tr' }, { op: 'close', st: 'cancelled' }, { op: 'reopen' }), [])
   const monthly: Cmd = { op: 'schedule', due: '2026-11-02T12:00:00.000Z', every: 'month' }

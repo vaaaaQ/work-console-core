@@ -106,7 +106,9 @@ export type Cmd =
   | { op: 'start' } | { op: 'close'; st: 'done' | 'cancelled'; note?: string } | { op: 'reopen' }
   /** force = done although blockers are open; they are removed */
   | { op: 'stepDone'; step: string; force?: boolean }
-  | { op: 'stepSkip' | 'stepResume' | 'stepReopen'; step: string }
+  | { op: 'stepSkip' | 'stepResume'; step: string }
+  /** a passed step with steps reached after it goes back like returnTo: why = the round's reason, optional */
+  | { op: 'stepReopen'; step: string; why?: string }
   /** why = the reason; with one the backend redoes the step in a fresh session */
   | { op: 'rejectDraft'; step: string; why?: string }
   | { op: 'stepWait'; step: string; m: string }
