@@ -259,6 +259,43 @@ test('returnTo refuses a step not yet passed, a run in flight, no reason and an 
   assert.equal(back.rounds![0].st, 'done')
 })
 
+test('reopening a passed design and finishing it again goes through Build, never straight to the PR', () => {
+  const j = find((j) => j.id === 'J-0412'), all = steps(X, j.pb).map((s) => s.id)
+  assert.ok(all.indexOf(atOf(X, j)!) > all.indexOf('pr1'), 'the demo job is past Build')
+  const r = apply(X, j, { op: 'stepReopen', step: 'td1' })
+  const k = r.job
+  assert.equal(r.nx, 'td1')
+  assert.equal(atOf(X, k), 'td1')
+  assert.equal(k.rounds!.length, 1, 'the old pass is kept as a round')
+  assert.equal(k.rf, 'td1')
+  assert.equal(k.rounds![0].why, 'reopened “Technical design”')
+  assert.equal(k.rounds![0].flow.im1.s, 'done')
+  for (const id of all.slice(all.indexOf('td2'))) assert.ok(['fut', 'tpl'].includes(k.flow[id].s), `${id} starts again`)
+  assert.match(k.jr[0].o, /^Returned to “Technical design”: reopened “Technical design”$/)
+  let n = apply(X, k, { op: 'stepDone', step: 'td1' })
+  assert.equal(n.nx, 'td2')
+  n = apply(X, n.job, { op: 'stepDone', step: 'td2' })
+  assert.equal(n.nx, 'im1')
+  assert.equal(n.job.flow.pr1.s, 'fut')
+  // the same through an LLM draft that is accepted
+  let d = apply(X, k, { op: 'runStart', step: 'td1', q: 'redo the design', id: 'r1' }).job
+  d = apply(X, d, { op: 'runDraft', step: 'td1', t: 'design v2' }).job
+  assert.equal(apply(X, d, { op: 'acceptDraft', step: 'td1' }).nx, 'td2')
+})
+
+test('stepReopen takes an optional reason; a step with nothing reached after it reopens alone; a run in flight refuses the return', () => {
+  const j = find((j) => j.id === 'J-0412')
+  const k = apply(X, j, { op: 'stepReopen', step: 'td1', why: ' new requirements ' }).job
+  assert.equal(k.rounds![0].why, 'new requirements')
+  const running = apply(X, apply(X, j, { op: 'stepResume', step: 'pr3' }).job, { op: 'runStart', step: 'pr3', q: 'q', id: 'r1' }).job
+  code(() => apply(X, running, { op: 'stepReopen', step: 'td1' }), 'bad_state')
+  // the last step done, nothing after it: it reopens as before, no round
+  const done = find((j) => j.st === 'done'), back = apply(X, apply(X, done, { op: 'reopen' }).job, { op: 'stepReopen', step: 'qa3' })
+  assert.equal(back.job.flow.qa3.s, 'cur')
+  assert.equal(back.job.rounds, undefined)
+  assert.match(back.job.jr[0].o, /^Reopened “Close the issue”\.$/)
+})
+
 test('schedule sets a due date; the job needs you from home-zone midnight of due minus lead', () => {
   const j = find((j) => !isClosed(j) && !needsYou(X, j))
   const at = (iso: string): Ctx => ({ ...X, now: () => new Date(iso) })
