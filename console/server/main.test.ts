@@ -224,6 +224,9 @@ test("a managed workspace has an agent behind /api/ws/<id>/agent and in /api/sta
     assert.deepEqual(prompts.map((p) => p.split('\n').at(-1)), ['hi'], 'the words come last, after the context')
     assert.equal((await call('/api/ws/beta2/agent/grants', { accept: true })).json.error.code, 'no_pending')
     assert.equal((await call('/api/ws/beta2/agent/stop', {})).json.error.code, 'idle')
+    // a folder outside git has no agent worktree: nothing waits unapplied, and there is nothing to discard
+    assert.deepEqual((await call('/api/ws/beta2/agent/unapplied')).json, { files: [] })
+    assert.deepEqual((await call('/api/ws/beta2/agent/discard', {})).json, { files: [] })
     assert.equal(restarts, 0)
     assert.equal((await call('/api/state')).json.ws.beta2.agent.id, rec.id)
   } finally { await m.close() }
@@ -260,6 +263,8 @@ test('the agent routes take job and conv; grants and undo are not_managed in an 
     for (const p of ['grants', 'undo', 'reintegrate']) assert.equal((await call(`/api/ws/acme/agent/${p}`, {})).json.error.code, 'not_managed', p)
     const general = await call('/api/ws/acme/agent', { text: 'and in general?' })
     assert.equal(general.json.agent.job, undefined)
+    // the turn starts after the answer, once it has read the jobs
+    await until(() => prompts.length === 2)
     assert.deepEqual(prompts.map((p) => p.split('\n').at(-1)), ['what is left?', 'and in general?'])
     assert.match(prompts[0], /^# The job now: A-\d+ “Look”/)
     assert.doesNotMatch(prompts[1], /# The job now/)
@@ -320,5 +325,33 @@ test('a failed core update shows in /api/state; a managed workspace reintegrates
     assert.equal((await call('/api/update/apply', {})).json.error.code, 'no_update')
     assert.equal((await call('/api/ws/beta2/agent', { text: 'and now?' })).json.error.code, 'update_closed')
     assert.equal(restarts, 0)
+  } finally { await m.close() }
+})
+
+test('at its start the console moves what an agent left uncommitted in the live folder to that agent’s worktree, and says so', async () => {
+  const home = tempDir('main'), root = tempDir('root')
+  const git = (...a: string[]) => execFileSync('git', a, { cwd: root, encoding: 'utf8' }).trim()
+  mkdirSync(join(root, 'workspaces', 'beta2'), { recursive: true })
+  writeFileSync(join(root, '.gitignore'), 'node_modules/\ndist/\n')
+  writeFileSync(join(root, 'workspaces', 'beta2', 'grants.json'), JSON.stringify({ packs: ['p'] }))
+  writeFileSync(join(root, 'workspaces', 'beta2', 'page.ts'), 'export const A = 1\n')
+  git('init', '-q'); git('config', 'user.name', 't'); git('config', 'user.email', 't@x'); git('config', 'core.autocrlf', 'false')
+  git('add', '-A'); git('commit', '-qm', 'init')
+  // as on 2026-10-09: the agent's apply failed and its files stayed in the live folder
+  writeFileSync(join(root, 'workspaces', 'beta2', 'page.ts'), 'export const A = 2\r\n')
+  writeFileSync(join(root, 'workspaces', 'beta2', 'crlf-probe.txt'), 'x\r\n')
+  const head = git('rev-parse', 'HEAD')
+  const cfg = { ...loadConfig({ WORK_CONSOLE_HOME: home, WORK_CONSOLE_FAKE_GATEWAY: '1' }), loopbackPort: 0 }
+  const m = await main({ cfg, sdk: unused, workspaces: [acmeServer, beta2], root, restart: () => {} })
+  try {
+    assert.equal(git('status', '--porcelain', '--untracked-files=all'), '')
+    assert.equal(git('rev-parse', 'HEAD'), head)
+    const tree = join(`${home}-agents`, 'beta2')
+    assert.equal(readFileSync(join(tree, 'workspaces', 'beta2', 'page.ts'), 'utf8'), 'export const A = 2\r\n')
+    assert.equal(readFileSync(join(tree, 'workspaces', 'beta2', 'crlf-probe.txt'), 'utf8'), 'x\r\n')
+    const r = await fetch(`http://127.0.0.1:${m.loopbackPort}/api/ws/beta2/agent/unapplied`)
+    assert.deepEqual(await r.json(), { files: ['workspaces/beta2/crlf-probe.txt', 'workspaces/beta2/page.ts'] })
+    const a = await (await fetch(`http://127.0.0.1:${m.loopbackPort}/api/ws/beta2/agent`)).json() as { agent: { turns: { t: string }[] } }
+    assert.match(a.agent.turns.at(-1)!.t, /Moved 2 files the agent had left uncommitted in the live folder to its worktree/)
   } finally { await m.close() }
 })

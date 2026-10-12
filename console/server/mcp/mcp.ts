@@ -12,6 +12,7 @@ import type { Cmd, Job, RunIntent, RunRec } from '../../src/model/types.ts'
 import { GatewayError } from '../bridge/wire.ts'
 import { HttpError } from '../events.ts'
 import { safeName } from '../llm/runner.ts'
+import { OUTCOME_HELP, reportOf } from '../llm/sdk.ts'
 import type { Space, Spaces } from '../spaces.ts'
 
 /* Job tools for the user's own sessions (Claude Code, Cursor, …): an MCP server (streamable HTTP, JSON replies only)
@@ -214,11 +215,14 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
       name: 'submit_draft',
       description: 'Hand in the draft of a step taken up by hand: it waits in Approvals for the user to accept, reply to or reject, as an LLM run\'s draft does. '
         + 'artifacts: files the step expects, as {name, content}, at most 10 of 5 MB each. Refused busy while an LLM run of the step is queued or running, '
-        + 'and draft_waiting while a draft waits (reply to it with draft_reply, or reject it with job_command, first). Undo takes it back.',
+        + 'and draft_waiting while a draft waits (reply to it with draft_reply, or reject it with job_command, first). Undo takes it back. ' + OUTCOME_HELP,
       inputSchema: {
         type: 'object', required: ['id', 'step', 'output'],
         properties: {
           id: { type: 'string' }, step: { type: 'string', description: 'step id or exact title' }, output: { type: 'string' },
+          outcome: { type: 'string', enum: ['done', 'not_done', 'failed'], description: 'done (the default), not_done or failed' },
+          return_to: { type: 'string', description: 'with not_done or failed: the earlier step the job goes back to on accept, id or exact title' },
+          why: { type: 'string', description: 'why the step is not done, in one line' },
           artifacts: { type: 'array', maxItems: ARTS_MAX, items: { type: 'object', required: ['name', 'content'], properties: { name: { type: 'string' }, content: { type: 'string' } } } },
         },
       },
@@ -234,7 +238,7 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
         const busy = (await sp.runner.all()).some((r) => r.job === j.id && r.step === step && (r.state === 'queued' || r.state === 'running'))
         if (busy || j.flow[step]?.run) throw new HttpError(409, 'busy', 'an LLM run of this step is queued or running; wait for it or cancel it')
         if (j.flow[step]?.dr) throw new HttpError(409, 'draft_waiting', 'a draft of this step waits; reply to it with draft_reply or reject it first')
-        const out = await command(s, j.id, { op: 'draftIn', step, t: str(a.output, 'output') })
+        const out = await command(s, j.id, { op: 'draftIn', step, t: str(a.output, 'output'), ...reportOf(a) })
         for (const f of files) await sp.runner.keepArtifact(j.id, step, f.name, (p) => writeFile(p, f.content, 'utf8'))
         // undo takes back the draft and its artifact links together
         const u = s.undo.at(-1)

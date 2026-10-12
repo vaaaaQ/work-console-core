@@ -11,29 +11,35 @@ export { PACKS_DIR }
 const NAME = /^[a-z][a-z0-9-]{0,40}$/
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]'])
 
-/** acts: the actions a person may run here; absent = every action a granted pack declares */
-export type PackGrants = { packs: string[]; hosts: string[]; config: Record<string, Record<string, unknown>>; acts?: string[] }
+/** acts: the actions a person may run here; absent = every action a granted pack declares;
+    scopes: the ids each scoped pack serves; a scoped pack absent from it serves none */
+export type PackGrants = { packs: string[]; hosts: string[]; config: Record<string, Record<string, unknown>>; acts?: string[]; scopes?: Record<string, string[]> }
 export type GrantsFn = (cfg: WsConfig) => PackGrants
 
 const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
-/** the grants from the workspace config: packs, hosts, packConfig.<pack> and acts */
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
+/** the grants from the workspace config: packs, hosts, packConfig.<pack>, acts and scopes */
 export const configGrants: GrantsFn = (cfg) => {
   const pc = cfg.packConfig
-  const g: PackGrants = { packs: strings(cfg.packs), hosts: strings(cfg.hosts), config: pc && typeof pc === 'object' && !Array.isArray(pc) ? pc as PackGrants['config'] : {} }
+  const g: PackGrants = { packs: strings(cfg.packs), hosts: strings(cfg.hosts), config: isObj(pc) ? pc as PackGrants['config'] : {} }
   if (Array.isArray(cfg.acts)) g.acts = strings(cfg.acts)
+  if (isObj(cfg.scopes)) g.scopes = Object.fromEntries(Object.entries(cfg.scopes).map(([p, ids]) => [p, strings(ids)]))
   return g
 }
 
-/** a managed workspace's: packs, hosts and acts from its grants.json, each pack's settings from its config */
-export const grantsFrom = (g: { packs: readonly string[]; hosts: readonly string[]; acts: readonly string[] }): GrantsFn =>
-  (cfg) => ({ packs: [...g.packs], hosts: [...g.hosts], acts: [...g.acts], config: configGrants(cfg).config })
+/** a managed workspace's: packs, hosts, acts and scopes from its grants.json, each pack's settings from its config */
+export const grantsFrom = (g: { packs: readonly string[]; hosts: readonly string[]; acts: readonly string[]; scopes?: Readonly<Record<string, readonly string[]>> }): GrantsFn =>
+  (cfg) => ({
+    packs: [...g.packs], hosts: [...g.hosts], acts: [...g.acts], config: configGrants(cfg).config,
+    ...(g.scopes ? { scopes: Object.fromEntries(Object.entries(g.scopes).map(([p, ids]) => [p, [...ids]])) } : {}),
+  })
 
 export type LoadedPack = {
   name: string; zone: string; script: string; config: PackConfig
   tabs: Record<string, { match: RegExp; open: string; host: string }>
   hosts: string[]
-  concepts: Record<string, { tab: string; interval: number; cap: number }>
-  actions: Record<string, { tab: string; concept: string }>
+  concepts: Record<string, { tab: string; interval: number; cap: number; scope?: string }>
+  actions: Record<string, { tab: string; concept: string; scope?: string }>
 }
 
 function loadOne(name: string, g: PackGrants, dir: string, schemas: string): LoadedPack {

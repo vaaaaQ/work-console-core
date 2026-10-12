@@ -11,9 +11,14 @@ import { importCheck } from './imports.ts'
 import { agentLimits, canWrite, lockedFiles, linksUnder, relPath, writeAreas } from './limits.ts'
 import { addRegistry, newWorkspaceIssue, render, TEMPLATE, TEMPLATE_FILES } from './template.ts'
 import type { NewWorkspace } from './template.ts'
+import type { AgentTrees } from './trees.ts'
 
 /* What the agent's console tools do, over git and an injectable exec: check, apply (check, build, commit, restart),
-   undo one of its commits, delete one of its files, write accepted grants and add a workspace. One at a time; a failed step leaves no commit and the served build. */
+   undo one of its commits, delete one of its files, write accepted grants and add a workspace. One at a time; a failed step leaves no commit and the served build.
+   With trees, the agent works in a worktree of its own: check, remove and apply act there, and apply commits there,
+   rebases onto the live HEAD, checks and builds, then fast-forwards the live folder. A failure takes the commit back
+   and leaves the files in the worktree, so the live folder changes only by a commit that passed. Undo, grants and a
+   new workspace are the person's and still commit on the live folder; the worktree takes them up at its next rebase. */
 
 /** env = variables set over the server's own; out = all it printed, stdout = its standard output alone, which git's answers are read from */
 export type Exec = (cmd: string, args: string[], o: { cwd: string; timeoutMs?: number; env?: Record<string, string> }) => Promise<{ code: number; out: string; stdout: string }>
@@ -69,10 +74,12 @@ export class Ops {
   private home: string
   private fake: boolean
   private template: string
+  private trees?: AgentTrees
   private queue: Promise<unknown> = Promise.resolve()
 
-  /** home = where config.json is; fake = the workspaces run on fake gateways, so a new one needs no database */
-  constructor(o: { root?: string; exec?: Exec; stage?: string; dist?: string; restart?: () => void; home?: string; fake?: boolean; template?: string } = {}) {
+  /** home = where config.json is; fake = the workspaces run on fake gateways, so a new one needs no database;
+      trees = each workspace's agent works in its own worktree, not in root */
+  constructor(o: { root?: string; exec?: Exec; stage?: string; dist?: string; restart?: () => void; home?: string; fake?: boolean; template?: string; trees?: AgentTrees } = {}) {
     this.root = o.root ?? CONSOLE
     this.exec = o.exec ?? realExec
     this.stage = o.stage ?? join(this.root, 'node_modules', '.cache', 'work-console', 'dist')
@@ -81,7 +88,30 @@ export class Ops {
     this.home = o.home ?? (process.env.WORK_CONSOLE_HOME || join(homedir(), '.work-console'))
     this.fake = o.fake ?? false
     this.template = o.template ?? TEMPLATE
+    this.trees = o.trees
   }
+
+  /** ops on another folder of the same console (the agent's worktree): same exec and staging dir, no restart, no trees */
+  private at(dir: string): Ops {
+    return new Ops({ root: dir, exec: this.exec, stage: this.stage, dist: join(dir, 'dist'), home: this.home, fake: this.fake, template: this.template })
+  }
+
+  /** the folder ws's agent works in: its worktree, made if need be and brought to the live HEAD when it holds nothing;
+      pending = what it changed there and did not apply. Without trees, the live folder */
+  workDir(ws: string): Promise<{ dir: string; pending: string[] }> {
+    return this.lock(async () => {
+      if (!this.trees) return { dir: this.root, pending: [] }
+      const dir = await this.trees.dir(ws)
+      await this.trees.sync(ws)
+      return { dir, pending: await this.trees.pending(ws) }
+    })
+  }
+
+  /** what ws's agent changed in its worktree and did not apply */
+  unapplied(ws: string): Promise<string[]> { return this.trees ? this.trees.pending(ws) : Promise.resolve([]) }
+
+  /** the person drops what ws's agent did not apply; the files dropped */
+  discard(ws: string): Promise<string[]> { return this.lock(async () => this.trees ? this.trees.discard(ws) : []) }
 
   private lock<T>(f: () => Promise<T>): Promise<T> {
     const r = this.queue.then(f, f)
@@ -174,12 +204,18 @@ export class Ops {
   }
 
   /** with apply's refusals, so a passed check is one apply takes */
-  check(ws: string): Promise<Checked> { return this.lock(async () => this.checkIn(ws, await this.changed(ws))) }
+  check(ws: string): Promise<Checked> {
+    return this.lock(async () => {
+      const w = this.trees ? this.at(await this.trees.dir(ws)) : this
+      return w.checkIn(ws, await w.changed(ws))
+    })
+  }
 
   apply(ws: string, summary: string): Promise<Applied> {
     return this.lock(async () => {
       const s = oneLine(summary)
       if (!s) return fail('a summary is needed')
+      if (this.trees) return this.applyFrom(ws, s, this.at(await this.trees.dir(ws)))
       const files = await this.changed(ws)
       if (!files.length) return fail(`nothing to apply: no changes under workspaces/${ws} or tools`)
       const why = this.refused(ws, files)
@@ -204,8 +240,63 @@ export class Ops {
     })
   }
 
-  /** one file under ws's areas deleted, as the agent may write it; apply commits the deletion */
+  /** apply through the agent's worktree w: commit there, rebase onto the live HEAD, check and build there, then
+      fast-forward the live folder; any failure takes the commit back and leaves the files in w */
+  private async applyFrom(ws: string, s: string, w: Ops): Promise<Applied> {
+    const onto = (await this.git('rev-parse', 'HEAD')).trim()
+    // a commit of the agent's the live folder never took (an apply cut off midway) is uncommitted work again
+    const mb = (await w.git('merge-base', 'HEAD', onto)).trim()
+    if ((await w.git('rev-parse', 'HEAD')).trim() !== mb) await w.git('reset', '-q', mb)
+    const areas = writeAreas(ws), files = await w.changed(ws)
+    if (!files.length) return fail(`nothing to apply: no changes under workspaces/${ws} or tools`)
+    const why = w.refused(ws, files)
+    if (why) return fail(why)
+    const links = linksUnder(w.root, areas)
+    if (links.length) return fail('the check failed', links.map((p) => `${p}: a symlink or junction; the agent areas hold plain files only`))
+    try { await w.commit(areas.filter((a) => files.some((f) => f.startsWith(`${a}/`))), `${ws}: ${s}`) } catch (e) { return fail((e as Error).message) }
+    const back = async (error: string, failures?: string[]) => {
+      rmSync(this.stage, { recursive: true, force: true })
+      await w.git('reset', '-q', 'HEAD~1')
+      return fail(error, failures)
+    }
+    try { return await this.land(ws, s, w, onto, back) } catch (e) { return back((e as Error).message) }
+  }
+
+  /** applyFrom once committed in w: rebase, check, build, then the live folder's fast-forward; back takes the commit back */
+  private async land(ws: string, s: string, w: Ops, onto: string, back: (error: string, failures?: string[]) => Promise<Applied>): Promise<Applied> {
+    const areas = writeAreas(ws)
+    if ((await w.git('rev-parse', 'HEAD~1')).trim() !== onto) {
+      const rb = await w.run('git', ['rebase', '-q', onto])
+      if (rb.code !== 0) {
+        const clash = w.z((await w.run('git', ['diff', '--name-only', '-z', '--relative', '--diff-filter=U'])).stdout)
+        await w.run('git', ['rebase', '--abort'])
+        return back(`the change conflicts with what the console committed since in ${clash.join(', ') || 'its files'}: take their version in, then apply again`,
+          tail(rb.out, 10))
+      }
+    }
+    const before = await w.outside(areas)
+    const c = await w.checkIn(ws)
+    if (!c.ok) return back('the check failed', c.failures)
+    const b = await w.build()
+    if (b && !b.ok) return back(b.error, b.failures)
+    const moved = w.moved(before, await w.outside(areas)), links2 = linksUnder(w.root, areas)
+    if (moved.length) return back(`changed outside workspaces/${ws} and tools while it was checked: ${moved.join(', ')}`)
+    if (links2.length) return back(`a symlink or junction appeared while it was checked: ${links2.join(', ')}`)
+    // the live folder lands only on the HEAD that was checked, and only where nothing of the agent's waits uncommitted
+    if ((await this.git('rev-parse', 'HEAD')).trim() !== onto) return back('the console moved while it was checked; apply again')
+    const dirty = await this.changed(ws)
+    if (dirty.length) return back(`uncommitted changes in the live folder: ${dirty.join(', ')}; commit or drop them, then apply again`)
+    const sha = (await w.git('rev-parse', 'HEAD')).trim()
+    const swap = await swapDist(this.stage, this.dist)
+    const m = await this.run('git', ['merge', '-q', '--ff-only', sha])
+    if (m.code !== 0) { await swap.back(); return back(`the console could not fast-forward: ${tail(m.out, 3).join(' ')}; apply again`) }
+    swap.done(); this.restart?.()
+    return { ok: true, sha, files: this.z(await this.git('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', '--relative', sha)), summary: s }
+  }
+
+  /** one file under ws's areas deleted, as the agent may write it, in its worktree when it has one; apply commits the deletion */
   remove(ws: string, path: string): Promise<Removed> {
+    if (this.trees) { const t = this.trees; return this.lock(async () => this.at(await t.dir(ws)).remove(ws, path)) }
     return this.lock(async () => {
       const l = agentLimits(this.root, ws), rel = relPath(this.root, path, l.fold)
       if (rel === null || !canWrite(l, path)) return { ok: false, error: `${path} is not yours to delete: only ${l.write.join(', ')}, less ${l.deny.join(', ')}` }

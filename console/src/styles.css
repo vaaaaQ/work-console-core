@@ -131,6 +131,7 @@ kbd{font:500 11px/1 var(--mono);padding:3px 5px;border:1px solid var(--line);bor
 .s-skip{border:1px dashed var(--line);color:var(--faint);text-decoration:line-through}
 .flag{display:inline-flex;align-items:center;gap:3px;margin-left:12px;font:600 11px var(--mono)}
 .flag.q{color:var(--wait)}.flag.p{color:var(--bad)}
+.why.rep{color:var(--bad);font-weight:600}
 
 /* job page */
 .jh{display:grid;gap:8px;margin-bottom:14px}

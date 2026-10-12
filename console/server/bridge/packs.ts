@@ -14,15 +14,17 @@ export interface PackManifest {
   /** every host the script may call, `{key}` templates allowed */
   hosts?: string[]
   tabs: Record<string, { match: string; open: string }>
-  concepts: Record<string, { tab: string; interval: number; cap: number }>
-  actions?: Record<string, { tab: string; concept: string }>
+  /** scope: the item field a workspace's scopes list; a scoped concept serves only the listed ids */
+  concepts: Record<string, { tab: string; interval: number; cap: number; scope?: string }>
+  /** scope: the arg that names the target; a scoped action runs only on a listed id */
+  actions?: Record<string, { tab: string; concept: string; scope?: string }>
 }
 export type PackConfig = Record<string, string | string[]>
 export interface RenderedPack { tabs: Record<string, { match: RegExp; open: string }>; hosts: string[] }
 
 const TEMPLATE = /\{([a-zA-Z][a-zA-Z0-9]*)\}/g
 const HOST = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/
-const ACTION = /^[a-z]+\.[a-zA-Z]+$/
+const ACTION = /^[a-z]+\.[a-zA-Z]+$/, FIELD = /^[a-zA-Z][a-zA-Z0-9]*$/
 const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v)
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
 
@@ -66,12 +68,14 @@ export function checkPack(p: unknown, hasSchema: (key: string) => boolean = () =
     if (!(typeof c.interval === 'number' && c.interval > 0)) out.push(`concepts.${n}: interval is not a positive number`)
     if (!(Number.isInteger(c.cap) && c.cap > 0)) out.push(`concepts.${n}: cap is not a positive integer`)
     if (!hasSchema(`${n}.item`)) out.push(`concepts.${n}: no schema ${n}.item`)
+    if (c.scope !== undefined && (typeof c.scope !== 'string' || !FIELD.test(c.scope))) out.push(`concepts.${n}: scope is not a field name`)
   }
   for (const [n, a] of Object.entries(isObj(p.actions) ? p.actions : {})) {
     if (!ACTION.test(n)) out.push(`actions.${n}: not an action name`)
     if (!isObj(a)) { out.push(`actions.${n}: not an object`); continue }
     if (!(a.tab in tabs)) out.push(`actions.${n}: no tab ${a.tab}`)
     if (!(a.concept in concepts)) out.push(`actions.${n}: no concept ${a.concept}`)
+    if (a.scope !== undefined && (typeof a.scope !== 'string' || !FIELD.test(a.scope))) out.push(`actions.${n}: scope is not an arg name`)
   }
   return out
 }

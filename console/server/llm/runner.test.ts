@@ -10,7 +10,7 @@ import { Jobs } from '../jobs/jobs.ts'
 import { fileStore } from '../store/file.ts'
 import { demoCtx, demoSeed, fakeSdk } from '../testkit.ts'
 import { GatewayError } from '../bridge/wire.ts'
-import type { ConceptReply } from '../bridge/wire.ts'
+import type { ActReq, ActRes, ConceptReply } from '../bridge/wire.ts'
 import { notesStore } from '../knowledge/notes.ts'
 import { resolveContext } from './context.ts'
 import { buildPrompt } from './prompt.ts'
@@ -408,6 +408,7 @@ const PROMPT = [
   '- Write progress with the run tool journal(observed, changed, next) at meaningful points.',
   '- Save files the step expects with add_artifact(name, content), or with add_artifact_file(path) for a file already under your working dir; images show on the page.',
   '- Finish by calling submit_draft(text) exactly once with the draft for the user to review. Without it the run counts as failed.',
+  '- If the step is not finished, or a check or a test failed, call submit_draft with outcome not_done or failed, and name in return_to the earlier step the job should go back to, if any (id or exact title), with why: accepting such a draft never marks the step done.',
   '',
   '## Instruction (from the user)',
   'Draft the reply.',
@@ -432,7 +433,8 @@ test("the user's part comes last, the description before the instruction; the jo
   j.d = 'Sam asked twice.\n\n- keep it short'
   j.jr = Array.from({ length: 25 }, (_, i) => ({ ts: `2026-10-01T09:${String(24 - i).padStart(2, '0')}:00.000Z`, a: 'you', o: `entry ${24 - i}`, c: '-', n: '-' }))
   const p = buildPrompt(x, j, 'sn', 'Draft the reply.')
-  assert.ok(p.endsWith('submit_draft(text) exactly once with the draft for the user to review. Without it the run counts as failed.\n\n'
+  assert.ok(p.endsWith('submit_draft(text) exactly once with the draft for the user to review. Without it the run counts as failed.\n'
+    + '- If the step is not finished, or a check or a test failed, call submit_draft with outcome not_done or failed, and name in return_to the earlier step the job should go back to, if any (id or exact title), with why: accepting such a draft never marks the step done.\n\n'
     + '## Description (from the user)\nSam asked twice.\n\n- keep it short\n\n## Instruction (from the user)\nDraft the reply.'), p.slice(-400))
   assert.match(p, /## Journal \(oldest first; the latest 20 of 25\)\n- 2026-10-01T09:05:00\.000Z you: entry 5 → - Next: -\n/)
   assert.ok(p.indexOf('entry 5 ') < p.indexOf('entry 24 '))
@@ -635,6 +637,66 @@ test('job tools create jobs in the run\'s workspace and start them; at most 5 a 
   assert.equal(plain.sessions[0].tools.startJob, undefined)
 })
 
+/** a runner whose runs may call the given acts on a fake source that answers from `answer` and records each call */
+async function actRun(allowed: string[], answer: (a: ActReq) => ActRes = () => ({ status: 'ok' })) {
+  const s = setup(), [t] = await targets(s.jobs, 1), calls: ActReq[] = []
+  const runner = new Runner({ store: s.store, jobs: s.jobs, bus: s.bus, sdk: fakeSdk(s.sessions).sdk, cwd: s.dir, gate: () => true, artifactsDir: join(s.dir, 'arts'), ctx: demoCtx,
+    acts: { allowed, act: async (a) => { calls.push(a); return answer(a) } } })
+  await runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  const badges = async () => (await s.jobs.get(t.job))!.flow[t.step].b.filter((b) => b.k === 'p' && b.o)
+  return { s, t, calls, tools: s.sessions[0].tools, badges }
+}
+
+test('act: a run calls an act its workspace lets runs call, with a fresh action id each time, and no step is flagged', async () => {
+  const { calls, tools, badges } = await actRun(['chat.post'])
+  assert.match(await tools.act!('chat.post', { chat: '-100', text: 'hi' }), /^sent chat.post/)
+  await tools.act!('chat.post', { chat: '-100', text: 'again' })
+  assert.deepEqual(calls.map((c) => [c.action, c.args]), [['chat.post', { chat: '-100', text: 'hi' }], ['chat.post', { chat: '-100', text: 'again' }]])
+  assert.ok(calls[0].actionId && calls[0].actionId !== calls[1].actionId)
+  assert.deepEqual(await badges(), [])
+})
+
+test('act: an act runs may not call is refused before the source, and the step shows what was not sent and why', async () => {
+  const { calls, tools, badges } = await actRun(['chat.post'])
+  await assert.rejects(tools.act!('mail.send', { to: ['x@y.example'], text: 'hello there' }), /mail\.send is not an act runs may call here/)
+  assert.deepEqual(calls, [])
+  const [b] = await badges()
+  assert.match(b.t, /^Not sent \(mail\.send\)/); assert.match(b.t, /not an act runs may call/); assert.match(b.t, /hello there/)
+})
+
+test('act: a target out of the scope is refused by the source; the run sees why and the step is flagged with the text', async () => {
+  const { calls, tools, badges } = await actRun(['chat.post'], (a) => (a.args.chat === '-100' ? { status: 'ok' } : { status: 'error', error: { code: 'out_of_scope', message: 'chat "-200" is not in scope' } }))
+  await assert.rejects(tools.act!('chat.post', { chat: '-200', text: 'to the wrong chat' }), /out_of_scope: chat "-200" is not in scope/)
+  assert.equal(calls.length, 1)
+  const [b] = await badges()
+  assert.match(b.t, /^Not sent \(chat.post\)/); assert.match(b.t, /out_of_scope/); assert.match(b.t, /to the wrong chat/)
+})
+
+test('act: an unknown outcome is flagged as maybe sent, never retried', async () => {
+  const { calls, tools, badges } = await actRun(['chat.post'], () => ({ status: 'outcome_unknown', error: { code: 'outcome_unknown', message: 'no server confirmation' } }))
+  await assert.rejects(tools.act!('chat.post', { chat: '-100', text: 'x' }), /may or may not have been sent/)
+  assert.equal(calls.length, 1)
+  assert.match((await badges())[0].t, /may or may not have been sent/)
+})
+
+test('act: at most 10 a run; the 11th is refused and flagged', async () => {
+  const { calls, tools, badges } = await actRun(['chat.post'])
+  for (let i = 0; i < 10; i++) await tools.act!('chat.post', { chat: '-100', text: `m${i}` })
+  await assert.rejects(tools.act!('chat.post', { chat: '-100', text: 'm10' }), /already called 10 acts/)
+  assert.equal(calls.length, 10)
+  assert.equal((await badges()).length, 1)
+})
+
+test('act: a workspace that lets runs call no act gives them no act tool', async () => {
+  const none = await actRun([])
+  assert.equal(none.tools.act, undefined)
+  const s = setup(), [t] = await targets(s.jobs, 1)
+  await s.runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  assert.equal(s.sessions[0].tools.act, undefined)
+})
+
 /** a started job whose first step holds a draft from a run with session S1 */
 async function withDraft(s: ReturnType<typeof setup>) {
   const j = await started(s.jobs), step = T.atOf(demoCtx(), j)!
@@ -700,6 +762,29 @@ test("an accept reply revises, then accepts on the replier's word", async () => 
   const e = j.jr.find((x) => /as said in the reply/.test(x.o))!
   assert.equal(e.a, 'Claude Code')
   assert.ok(j.jr.some((x) => /Replied to the LLM draft/.test(x.o) && x.a === 'Claude Code'))
+})
+
+test('submit_draft with an outcome stores it; a bad return_to is refused and the run may hand in again', async () => {
+  const { runner, sessions, jobs } = setup(), j = await started(jobs), step = T.atOf(demoCtx(), j)!
+  const r = await runner.ask(j.id, step, 'deploy')
+  await until(() => sessions.length === 1)
+  await assert.rejects(sessions[0].tools.submitDraft('The step is not done.', { o: 'not_done', rt: step }), /not been passed/)
+  await sessions[0].tools.submitDraft('The step is not done.', { o: 'not_done', why: 'the build broke' })
+  sessions[0].end()
+  await until(async () => (await runner.get(r.id))?.ended != null)
+  const f = (await jobs.get(j.id))!.flow[step]
+  assert.deepEqual([f.dr!.o, f.dr!.why], ['not_done', 'the build broke'])
+  assert.equal(await state(runner, r.id), 'draft')
+})
+
+test('an accept reply whose new draft reports failed does not close the step', async () => {
+  const s = setup(), d = await withDraft(s)
+  const r = await s.runner.reply(d.job, d.step, 'run the smoke test and accept', 'accept', { via: 'session' })
+  await until(() => s.sessions.length === 2)
+  await s.sessions[1].tools.submitDraft('The smoke test failed.', { o: 'failed' }); s.sessions[1].end()
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  const f = (await s.jobs.get(d.job))!.flow[d.step]
+  assert.equal(f.s, 'cur'); assert.equal(f.m, 'reported failed'); assert.equal(f.out, 'The smoke test failed.')
 })
 
 test('an accept reply accepts as soon as its draft is in, while the session still winds down', async () => {

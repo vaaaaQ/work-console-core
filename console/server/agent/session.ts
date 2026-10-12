@@ -25,7 +25,8 @@ import { agentTools, reintegrateTools } from './tools.ts'
    agent with its next prompt. Only a managed workspace's general conversations change code. A reintegration is a
    conversation rooted at a failed core update's worktree; update.mjs runs once its turn ends. */
 
-export type SessionOps = Pick<Ops, 'check' | 'apply' | 'undo' | 'createWorkspace' | 'acceptGrants' | 'remove'>
+/** workDir = the folder a code turn works in, the agent's worktree, and what it holds unapplied; none = the live folder */
+export type SessionOps = Pick<Ops, 'check' | 'apply' | 'undo' | 'createWorkspace' | 'acceptGrants' | 'remove'> & Partial<Pick<Ops, 'workDir' | 'unapplied' | 'discard'>>
 /** how a run of update.mjs ended: updated = the folder is on the new core; failed = the record it left */
 export interface UpdateEnd { code: number; output: string; updated: boolean; failed: FailedUpdate | null }
 /** the console's failed core update, for reintegrate conversations */
@@ -185,6 +186,30 @@ export class AgentSession {
     return clone(rec)
   }
 
+  /** the console moved what an earlier agent left uncommitted in the live folder to the worktree, at its start */
+  async adopted(files: string[]): Promise<void> {
+    const rec = await this.last()
+    this.note(rec, `Moved ${files.length} file${files.length > 1 ? 's' : ''} the agent had left uncommitted in the live folder to its worktree: ${files.join(', ')}.`)
+    this.tell(rec, `The console moved your unapplied changes from the live folder to your worktree, where you work now: ${files.join(', ')}. Apply them, or the person discards them.`)
+    await this.persist(rec)
+  }
+
+  /** what the agent changed in its worktree and did not apply */
+  async unapplied(): Promise<string[]> { return this.o.ops.unapplied ? this.o.ops.unapplied(this.o.ws) : [] }
+
+  /** the person drops what the agent did not apply, from its worktree; never while a code turn may be writing there */
+  async discard(): Promise<string[]> {
+    if (this.generalBusy()) throw new HttpError(409, 'busy', 'a turn is running: wait, or stop it, then discard')
+    const files = this.o.ops.discard ? await this.o.ops.discard(this.o.ws) : []
+    if (files.length) {
+      const rec = await this.last()
+      this.note(rec, `Discarded ${files.length} file${files.length > 1 ? 's' : ''} not applied: ${files.join(', ')}.`)
+      this.tell(rec, `The person discarded your changes that were not applied: ${files.join(', ')}.`)
+      await this.persist(rec)
+    }
+    return files
+  }
+
   /** the person's answer to the waiting grants change: accepted, it is committed and the console restarts;
       rejected, the reason goes back to the agent at once, or after its turn */
   async decide(accept: boolean, reason: string): Promise<AgentRec> {
@@ -334,7 +359,11 @@ export class AgentSession {
     if (got) try {
       const ri = rec.reintegrate, code = this.o.managed && !rec.job
       const st = f ? { text: '', title: '' } : await this.state(rec)
-      const prompt = [...said.heard, st.text, said.text].filter(Boolean).join('\n\n')
+      // a code turn works in the agent's own worktree; its changes reach the live folder only through apply
+      const work = code && !f && this.o.ops.workDir ? await this.o.ops.workDir(this.o.ws) : null
+      const left = work?.pending.length ? `Your worktree holds changes not applied yet, from an earlier turn: ${work.pending.join(', ')}. `
+        + 'They stay there until you apply them; the person can discard them on the page.' : ''
+      const prompt = [...said.heard, st.text, left, said.text].filter(Boolean).join('\n\n')
       const jt = this.o.job && !f ? jobAgentTools({ ws: this.o.ws, conv: rec.id, d: this.o.job }) : []
       const tools = f && ri ? reintegrateTools({
         ws: this.o.ws, branch: ri.branch, ops: this.o.reintegration!.opsAt(f.dir),
@@ -357,7 +386,7 @@ export class AgentSession {
       const system = f && ri ? reintegrateSystem({ ws: this.o.ws, title: this.o.title, core: ri.core, from: ri.from, branch: ri.branch })
         : rec.job ? jobSystem({ ws: this.o.ws, title: this.o.title, job: { id: rec.job, t: st.title } })
         : agentSystem({ ws: this.o.ws, title: this.o.title, interview: rec.interview === true, grants: this.grants(), managed: code })
-      const limits = f ? agentLimits(f.dir, this.o.ws) : code ? agentLimits(this.root, this.o.ws) : readOnly(this.root)
+      const limits = f ? agentLimits(f.dir, this.o.ws) : code ? agentLimits(work?.dir ?? this.root, this.o.ws) : readOnly(this.root)
       const events = sdk.agent!({ prompt, resume: rec.session, limits, tools, system, abort })
       for await (const e of events) {
         if (e.k === 'session') { rec.session = e.id; continue }

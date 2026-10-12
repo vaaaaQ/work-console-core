@@ -31,7 +31,10 @@ test('the run\'s tools as the CLI sees them: listed with JSON schemas, called wi
     assert.equal((await post(s, 'mcp', { jsonrpc: '2.0', method: 'notifications/initialized' })).status, 202)
     const list = (await post(s, 'mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' })).body.result.tools
     assert.deepEqual(list.map((x: { name: string }) => x.name), ['submit_draft', 'add_artifact', 'add_artifact_file', 'journal'])
-    assert.deepEqual(list[0].inputSchema, { type: 'object', properties: { text: { type: 'string', minLength: 1 } }, required: ['text'] })
+    assert.deepEqual(list[0].inputSchema, { type: 'object', properties: {
+      text: { type: 'string', minLength: 1 }, outcome: { type: 'string', enum: ['done', 'not_done', 'failed'] },
+      return_to: { type: 'string', minLength: 1 }, why: { type: 'string' },
+    }, required: ['text'] })
     assert.deepEqual((await call(s, 'submit_draft', { text: 'done' })).body.result, { content: [{ type: 'text', text: 'draft submitted' }] })
     const bad = (await call(s, 'submit_draft', { text: '' })).body.result
     assert.equal(bad.isError, true)

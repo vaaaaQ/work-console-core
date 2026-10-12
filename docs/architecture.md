@@ -197,7 +197,8 @@ works in that session while the site keeps it. It runs headless; a window shows 
 | Piece | What |
 |---|---|
 | Tools | Playwright MCP (`@playwright/mcp`, pinned in `package.json`) as the run's MCP server `browser`, attached to the browser over CDP. A run gets its tools by name (`BROWSER_TOOLS`): navigate, snapshot, find, click, hover, drag, type, fill_form, press_key, select_option, handle_dialog, evaluate, take_screenshot, tabs, wait_for, resize, close, console_messages, network_requests, emulate_media. Denied by name (`WITHHELD`): run_code_unsafe (raw Playwright in the server's process), file_upload and drop (the PC's files), network_request (a request's headers carry its cookies and tokens) and every cookie and storage tool; the server is started without `--caps`. Only the Claude provider runs it so far |
-| Modes | every request goes through the console's own proxy on loopback, loopback included (`--proxy-bypass-list=<-loopback>`). Open mode lets any site through; allowlist mode only the listed hosts (exact or `*.domain`), every hop of a redirect included, since each is a new request. In both modes it refuses the console's own ports on this PC (`ports` of `makeSpace`: the loopback and LAN ports), because the console's page trusts loopback and a run there could act or accept its own grants |
+| Modes | every request goes through the console's own proxy on loopback, loopback included (`--proxy-bypass-list=<-loopback>`). Open mode lets any site through; allowlist mode only the listed hosts (exact or `*.domain`), every hop of a redirect included, since each is a new request. In both modes it refuses the console's own ports on this PC (`ports` of `makeSpace`: the loopback and LAN ports), because the console's page trusts loopback and a run there could act or accept its own grants. "This PC" is decided by structure (`selfAddress`), not by spelling: loopback in any form, mapped (`::ffff:7f00:1`), compatible (`::7f00:1`) and expanded IPv6 included, the unspecified addresses, and every address on the PC's own interfaces, where the LAN port answers. A name is resolved once and every address it resolves to is checked |
+| Accepted risks | decided 2026-10-11 (AD-0004). **evaluate stays in both modes**: it runs any JavaScript in the page, so it can read `localStorage`, `sessionStorage` and the non-HttpOnly cookies of a signed-in site, and in open mode a hostile page may steer a run to read them and send them out; a narrower evaluate would be no boundary. **Only the two console ports are refused**: the console's other local ports (the bridges, fake gateways, the runs' browser's own CDP port) stay reachable on loopback. A test pins both lists, so a change to either is the cue to review the decision |
 | Sign-in | a run that finds a site signed out calls `signin_needed {site, url}`: the run ends on a draft that says so, and its record keeps `signin`. The step shows **Sign in**, which calls `POST /api/ws/<id>/run-browser/signin {url}`: the browser opens again on the same profile with a window on that page. **Done** (`POST /run-browser/done`) closes it; the user replies on the step and the run goes on in its session |
 | Browser | Edge unless the settings name Chrome (`runBrowser` in `<home>/providers.json`); `browserPath` in the workspace config wins over both. A restart leaves the browser running for the next console to reattach, with the proxy on the same port; one launched otherwise (another proxy port, a window) is closed and launched again |
 | Not there | a browser that will not start leaves the run without the `browser` server, and its feed says why |
@@ -228,23 +229,32 @@ its panel.
 flowchart LR
   you[Agent panel] -->|message| s[AgentSession]
   s -->|turn, resume by session id| p[auto provider]
-  p -->|edits| area["workspaces/#lt;id#gt;/ · tools/"]
-  p -->|apply| ops[Ops: check · build to stage · commit]
+  p -->|edits| area["its worktree: workspaces/#lt;id#gt;/ · tools/"]
+  p -->|apply| ops[Ops: commit · rebase · check · build · fast-forward]
   ops -->|after the turn| r[exit 75]
   p -->|propose_grants| ap[Approvals] -->|accept| g[(grants.json commit)] --> r
   ap -->|reject + reason| s
 ```
-*The agent edits files; the console checks, builds, commits and restarts. Grants change only through a
-person's approval.*
+*The agent edits files in its own worktree; the console commits, checks and builds them there, fast-forwards the
+live folder and restarts. Grants change only through a person's approval.*
 
 | Piece | What |
 |---|---|
 | Session | `server/agent/session.ts`; records of kind `agent` in the workspace's store (a JSON file under `<home>/agent/` when the store keeps none). One turn at a time, 60 minutes at most; Stop ends it idle. A turn left running when the console stopped reads back as failed |
-| Limits | `server/agent/limits.ts`, provider-neutral. cwd = the console's folder; Read, Glob and Grep anywhere; Edit and Write only under `workspaces/<id>/**` and `tools/**`. Denied: its `grants.json`, the two registries, `core.lock.json` and every core file it lists, Bash, PowerShell. A path is matched after its links resolve and case-folded where the disk ignores case. The Claude provider maps them to `dontAsk` rules plus a PreToolUse guard, with `settingSources: ['project']`; the Cursor provider to its CLI's denies, a preToolUse hook and its answers to permission requests (`server/llm/cursor/policy.ts`) |
+| Worktree | `server/agent/trees.ts`. A code turn works in its workspace's own git worktree, `<home>-agents/<id>` on branch `agent/<id>`, beside `update.mjs`'s `<home>-updates`; `node_modules` there is a junction to the live one. It is made at the first code turn and kept; a turn starts by fast-forwarding a clean one to the live HEAD, and is told what an earlier turn left there unapplied. Job and read-only turns stay on the live folder. The page shows the unapplied files under the agent panel with **Discard** (`GET /agent/unapplied`, `POST /agent/discard`). At its start the console moves what an agent left uncommitted in the live folder (as before this) into that agent's clean worktree, and says so in its conversation. A console folder outside git has no worktree |
+| Limits | `server/agent/limits.ts`, provider-neutral. cwd = the agent's worktree for a code turn, else the console's folder; Read, Glob and Grep anywhere; Edit and Write only under `workspaces/<id>/**` and `tools/**`. Denied: its `grants.json`, the two registries, `core.lock.json` and every core file it lists, Bash, PowerShell. A path is matched after its links resolve and case-folded where the disk ignores case. The Claude provider maps them to `dontAsk` rules plus a PreToolUse guard, with `settingSources: ['project']`; the Cursor provider to its CLI's denies, a preToolUse hook and its answers to permission requests (`server/llm/cursor/policy.ts`) |
 | Tools | `check`, `apply {summary}`, `undo {sha}`, `delete {path}` (one file it may change, so a provider without a delete of its own can drop one), `propose_grants {change, reason}`, `create_workspace {id, prefix, title}` (`server/agent/tools.ts`) |
 | First conversation | of a workspace whose grants are still empty: the agent interviews the person, one question at a time, then proposes grants and sets up the board and playbooks |
 | Template | `consumer/workspace-template/`, on the local browser. Install renders it as `home` with empty grants; `create_workspace` copies it, adds both registry lines and the workspace's database settings in `config.json`, and commits it with empty grants |
 
+- **Apply through the worktree.** `apply` commits the agent's changes on `agent/<id>`, rebases the commit onto the
+  live HEAD, checks and builds in the worktree as below, then lands: the live HEAD must still be the one rebased
+  onto and the live areas clean, the live folder runs `git merge --ff-only`, the build is swapped in and the console
+  restarts. A conflict, a failed check or build, or a live folder that moved meanwhile takes the commit back
+  (`reset HEAD~1`) and leaves the files uncommitted in the worktree; the live folder is untouched. So a failed apply,
+  a stopped turn or a crash never leave the agent's files in the live folder, and `update.mjs` is never blocked by
+  them. `undo`, accepted grants and a new workspace still commit on the live folder; the worktree takes them in at
+  its next rebase.
 - **Apply.** `server/agent/ops.ts`, one op at a time: refuse staged paths outside the two areas and any
   `grants.json`; refuse symlinks and junctions there; the static import check; `npm run typecheck`; the tests
   under the two areas with the drift test and the registry's start checks (`server/registry.test.ts`), never Edge
@@ -307,6 +317,7 @@ carry it, and the page shows it in a banner.
   Images show on the page; html and svg are served as text.
 - It never reads the console home: the deny list covers `.work-console` for Read, Bash and PowerShell.
 - The run hands back its draft with `submit_draft`. The page shows the draft, and a person sends it.
+- A draft can report that its step is not done: `submit_draft` takes `outcome` (`done` by default, `not_done`, `failed`), `return_to` (an earlier step, by id or exact title, checked when the draft is handed in) and `why`. Accepting such a draft keeps it as the step's output and never marks the step done: with `return_to` the job goes back there as `returnTo` does, without it the step stays open. On the page, Accept asks: **Return to** the step, **Keep the step open** (`stay`), or **Mark done anyway** (`asDone`, refused from anything but the page). An auto step holds such a draft back for the person, and a reply that accepts never closes it. Nothing is read from the draft's words.
 - The gateway serves the run's read tools as MCP at `{gateway}/mcp` with the `llm` token. The fake
   gateway does not serve `/mcp`, so a demo run uses the fake SDK in tests.
 
@@ -507,7 +518,7 @@ only one workspace is registered.
   blocker, `holds`, the steps of other jobs that wait for it; `holds` is read from every job of the workspace.
 - Every change is signed with the client's name from `initialize` (`clientInfo.name`), Claude Code when it gives none.
 - `step_context {id, step}` returns what a run of the step would be told, pictures included, with How to work told for a session opened by hand.
-- `submit_draft {id, step, output, artifacts?}` hands that session's draft in (`draftIn`): it waits in Approvals like a run's. It is `busy` while a run of the step is queued or running, and `draft_waiting` while a draft waits. Undo takes back the draft and its artifact links.
+- `submit_draft {id, step, output, outcome?, return_to?, why?, artifacts?}` hands that session's draft in (`draftIn`): it waits in Approvals like a run's. It is `busy` while a run of the step is queued or running, and `draft_waiting` while a draft waits. Undo takes back the draft and its artifact links.
 
 ## Notifications
 

@@ -557,6 +557,21 @@ test('submit_draft hands a draft in for review, signed by the client; undo takes
   assert.equal(back.flow[at].dr, null); assert.ok(!back.flow[at].arts.some((a) => a.n === 'notes.md'))
 })
 
+test('submit_draft carries an outcome and return_to; a return_to not yet passed is refused while the session can still fix it', async (t) => {
+  const s = await setup(t), j = await openJob(s.jobs), at = T.atOf(demoCtx(), j)!, all = T.stepsOf(demoCtx(), j)
+  const bad = await s.call('submit_draft', { id: j.id, step: at, output: 'the deploy failed', outcome: 'failed', return_to: at })
+  assert.equal(bad.err, true); assert.match(bad.text, /^bad_step/)
+  assert.equal((await s.jobs.get(j.id))!.flow[at].dr, null)
+  const odd = await s.call('submit_draft', { id: j.id, step: at, output: 'x', outcome: 'meh' })
+  assert.equal(odd.err, true); assert.match(odd.text, /^bad_args/)
+  const r = await s.call('submit_draft', { id: j.id, step: at, output: 'the deploy failed', outcome: 'failed', return_to: all[0].t, why: 'smoke red' })
+  assert.equal(r.err, false, r.text)
+  const dr = (await s.jobs.get(j.id))!.flow[at].dr!
+  assert.deepEqual([dr.o, dr.rt, dr.why], ['failed', all[0].id, 'smoke red'])
+  const d = ((await s.rpc('tools/list')).result.tools as { name: string; inputSchema: { properties: Record<string, unknown> } }[]).find((x) => x.name === 'submit_draft')!
+  for (const k of ['outcome', 'return_to', 'why']) assert.ok(d.inputSchema.properties[k], k)
+})
+
 test('submit_draft is busy while a run of the step is queued or running; a session without clientInfo signs Claude Code', async (t) => {
   const s = await setup(t, { client: null }), j = await openJob(s.jobs), at = T.atOf(demoCtx(), j)!
   await s.runner.ask(j.id, at, 'go')

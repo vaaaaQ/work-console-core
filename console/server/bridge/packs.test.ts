@@ -51,6 +51,18 @@ test('a pack names each broken part', () => {
     assert.ok(problems.some((m) => want.test(m)), `${want} in ${problems.join('; ')}`)
 })
 
+test('a scope names an item field on a concept and an arg on an action; anything else is a problem', () => {
+  const p = sound() as any
+  p.concepts.work.scope = 'id'
+  p.actions['work.comment'].scope = 'id'
+  assert.deepEqual(checkPack(p, all), [])
+  p.concepts.work.scope = ''
+  p.actions['work.comment'].scope = 7
+  const problems = checkPack(p, all)
+  for (const want of [/concepts\.work: scope is not a field name/, /actions\.work\.comment: scope is not an arg name/])
+    assert.ok(problems.some((m) => want.test(m)), `${want} in ${problems.join('; ')}`)
+})
+
 test('a pack without its script does not load', () => {
   assert.throws(() => readPack(packDir(sound(), false), all), /tracker\.js: missing/)
 })

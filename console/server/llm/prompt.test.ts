@@ -73,3 +73,12 @@ test('a hand-made session on a step whose draft a later step sends is told to su
   assert.doesNotMatch(t, /journal\(\)/)
   assert.doesNotMatch(manualText(x, j, 'tr', 'go', {}), /word for word/)
 })
+
+test('a run and a hand-made session are told to report a step that is not done, with return_to, instead of a draft that only says so', () => {
+  const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
+  for (const t of [buildPrompt(x, j, 'tr', 'go', {}), manualText(x, j, 'tr', 'go', {})]) {
+    assert.match(t, /If the step is not finished, or a check or a test failed, .*outcome not_done or failed/)
+    assert.match(t, /return_to/)
+    assert.match(t, /never marks the step done/)
+  }
+})

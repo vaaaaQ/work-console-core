@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { realExec, Ops } from './ops.ts'
+import { AgentTrees } from './trees.ts'
 import type { Exec } from './ops.ts'
 import { RESTART_EXIT } from '../restart.ts'
 import { EMPTY_GRANTS } from '../grants.ts'
@@ -12,7 +13,7 @@ import { tempDir } from '../testdirs.ts'
 /** a consumer folder under git: w1 with its grants, the registries, a core file, tools/ and a served build */
 function repo() {
   const r = tempDir('ops')
-  const put = (p: string, t: string) => { mkdirSync(dirname(join(r, p)), { recursive: true }); writeFileSync(join(r, p), t) }
+  const put = (p: string, t: string | Buffer) => { mkdirSync(dirname(join(r, p)), { recursive: true }); writeFileSync(join(r, p), t) }
   put('.gitignore', 'node_modules/\ndist/\ndist.old/\n')
   put('workspaces/w1/page.ts', 'export const A = 1\n')
   put('workspaces/w1/grants.json', '{}\n')
@@ -31,9 +32,10 @@ function repo() {
 
 /** npm, node --test and vite faked by name, git real; fail names the steps that exit 1; tests = the files of each test run */
 function fakeExec(o: { fail?: string[]; failOnce?: string[]; during?: (step: string) => void } = {}) {
-  const calls: string[] = [], tests: string[][] = []
+  const calls: string[] = [], tests: string[][] = [], where: string[] = []
   const exec: Exec = async (cmd, args, opt) => {
     if (cmd === 'git') return realExec(cmd, args, opt)
+    where.push(opt.cwd)
     const step = cmd === 'npm' ? (args[0] === 'run' ? args[1] : args[0])
       : args.includes('--test') ? 'tests' : args.includes('build') ? 'build' : `${cmd} ${args.join(' ')}`
     calls.push(step)
@@ -47,7 +49,7 @@ function fakeExec(o: { fail?: string[]; failOnce?: string[]; during?: (step: str
     }
     return { code: 0, out: 'fine', stdout: 'fine' }
   }
-  return { exec, calls, tests }
+  return { exec, calls, tests, where }
 }
 
 function ops(r: string, f: ReturnType<typeof fakeExec>) {
@@ -363,4 +365,221 @@ test('undo commits its own files only: the agent\'s other edits stay uncommitted
   assert.ok(u.ok, JSON.stringify(u))
   assert.deepEqual(git('show', '--name-only', '--format=', 'HEAD').split('\n'), ['workspaces/w1/page.ts'])
   assert.equal(git('status', '--porcelain'), '?? workspaces/w1/other.ts')
+})
+
+/* ===== the agent's worktree: it works there, and its changes reach the live folder only by a fast-forward ===== */
+
+/** ops whose agent works in a worktree per workspace under a base of its own */
+function treeOps(r: string, f: ReturnType<typeof fakeExec>) {
+  let restarts = 0
+  const trees = new AgentTrees({ live: r, base: join(tempDir('agents'), 'agents') })
+  const o = new Ops({ root: r, exec: f.exec, restart: () => { restarts++ }, trees })
+  const at = (dir: string) => ({
+    git: (...a: string[]) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim(),
+    put: (p: string, t: string | Buffer) => { mkdirSync(dirname(join(dir, p)), { recursive: true }); writeFileSync(join(dir, p), t) },
+    bytes: (p: string) => readFileSync(join(dir, p)),
+  })
+  return { o, trees, at, restarts: () => restarts }
+}
+/** the live folder as git sees it: HEAD and every change */
+const liveState = (git: (...a: string[]) => string) => ({ head: git('rev-parse', 'HEAD'), status: git('status', '--porcelain', '--untracked-files=all') })
+const CRLF = Buffer.from('export const C = 1\r\nexport const D = 2\r\n')
+
+test('a worktree per workspace on agent/<ws>, made once, its node_modules joined to the live one; a clean one follows the live HEAD', async () => {
+  const { r, put, git } = repo(), { trees, at } = treeOps(r, fakeExec())
+  put('node_modules/vite/package.json', '{"name":"vite"}\n')
+  const d = await trees.dir('w1')
+  assert.equal(await trees.dir('w1'), d, 'made once')
+  assert.notEqual(d, r)
+  assert.ok(!d.startsWith(r), 'outside the live folder')
+  const w = at(d)
+  assert.equal(w.git('rev-parse', '--abbrev-ref', 'HEAD'), 'agent/w1')
+  assert.equal(w.git('rev-parse', 'HEAD'), git('rev-parse', 'HEAD'))
+  assert.equal(readFileSync(join(d, 'node_modules/vite/package.json'), 'utf8'), '{"name":"vite"}\n')
+  assert.equal(w.git('status', '--porcelain'), '', 'node_modules is ignored there too')
+  assert.equal(git('status', '--porcelain'), '', 'the live folder does not see the worktree')
+  assert.notEqual(await trees.dir('w2'), d)
+  put('server/main.ts', 'core 2\n'); git('commit', '-qam', 'core moves')
+  assert.equal(await trees.sync('w1'), true)
+  assert.equal(w.git('rev-parse', 'HEAD'), git('rev-parse', 'HEAD'))
+  // uncommitted work stays where it is; the rebase waits for apply
+  w.put('workspaces/w1/page.ts', 'export const A = 9\n')
+  put('server/main.ts', 'core 3\n'); git('commit', '-qam', 'core moves again')
+  assert.equal(await trees.sync('w1'), false)
+  assert.notEqual(w.git('rev-parse', 'HEAD'), git('rev-parse', 'HEAD'))
+  assert.deepEqual(await trees.pending('w1'), ['workspaces/w1/page.ts'])
+  assert.deepEqual(await trees.pending('w2'), [])
+  assert.deepEqual(await trees.pending('w3'), [], 'no worktree yet is nothing pending, and makes none')
+  assert.equal(trees.has('w3'), null)
+})
+
+test('a failed apply leaves the live folder’s git status and HEAD as they were, and every change in the worktree byte for byte', async () => {
+  const { r, put, git, read } = repo(), f = fakeExec({ fail: ['tests'] }), { o, trees, at, restarts } = treeOps(r, f)
+  put('workspaces/w1/old.ts', 'export const O = 1\n'); git('add', '-A'); git('commit', '-qm', 'old')
+  put('notes.txt', 'the person’s own, not the agent’s\n')
+  const before = liveState(git), d = await trees.dir('w1'), w = at(d)
+  w.put('workspaces/w1/page.ts', 'export const A = 2\n'); w.put('workspaces/w1/new/x.ts', 'export const X = 1\n')
+  unlinkSync(join(d, 'workspaces/w1/old.ts')); w.put('tools/crlf.ts', CRLF)
+  const a = await o.apply('w1', 'show the counter')
+  assert.equal(a.ok, false, JSON.stringify(a))
+  assert.deepEqual(liveState(git), before)
+  assert.equal(read('dist/index.html'), 'old build\n')
+  assert.equal(restarts(), 0)
+  assert.equal(w.bytes('workspaces/w1/page.ts').toString(), 'export const A = 2\n')
+  assert.equal(w.bytes('workspaces/w1/new/x.ts').toString(), 'export const X = 1\n')
+  assert.ok(!existsSync(join(d, 'workspaces/w1/old.ts')))
+  assert.deepEqual(w.bytes('tools/crlf.ts'), CRLF)
+  assert.equal(w.git('rev-parse', 'HEAD'), before.head, 'its commit is taken back')
+  assert.deepEqual(await trees.pending('w1'), ['tools/crlf.ts', 'workspaces/w1/new/x.ts', 'workspaces/w1/old.ts', 'workspaces/w1/page.ts'])
+  assert.ok(f.where.length)
+  for (const c of f.where) assert.equal(c, d, 'the check ran in the worktree')
+})
+
+test('a passing apply commits in the worktree and fast-forwards the live folder to it, then swaps the build and restarts', async () => {
+  const { r, git, read, put } = repo(), f = fakeExec(), { o, trees, at, restarts } = treeOps(r, f)
+  put('notes.txt', 'mine\n')
+  const d = await trees.dir('w1'), w = at(d)
+  w.put('workspaces/w1/page.ts', 'export const A = 2\n'); w.put('tools/crlf.ts', CRLF)
+  const a = await o.apply('w1', 'show the counter')
+  assert.ok(a.ok, JSON.stringify(a))
+  assert.deepEqual(f.calls, ['typecheck', 'tests', 'build'])
+  assert.equal(git('rev-parse', 'HEAD'), a.sha)
+  assert.equal(git('log', '-1', '--format=%B'), 'w1: show the counter')
+  assert.deepEqual(a.files.sort(), ['tools/crlf.ts', 'workspaces/w1/page.ts'])
+  assert.equal(read('workspaces/w1/page.ts'), 'export const A = 2\n')
+  assert.deepEqual(readFileSync(join(r, 'tools/crlf.ts')), CRLF)
+  assert.equal(git('status', '--porcelain'), '?? notes.txt')
+  assert.equal(w.git('rev-parse', 'HEAD'), a.sha); assert.equal(w.git('status', '--porcelain'), '')
+  assert.equal(read('dist/index.html'), 'new build\n')
+  assert.equal(restarts(), 1)
+  assert.deepEqual(await trees.pending('w1'), [])
+})
+
+test('the live HEAD moved during the turn (a grants commit): apply rebases onto it and lands on top', async () => {
+  const { r, git } = repo(), { o, trees, at } = treeOps(r, fakeExec())
+  const d = await trees.dir('w1'), w = at(d)
+  w.put('workspaces/w1/page.ts', 'export const A = 2\n')
+  const g = await o.acceptGrants('w1', { ...EMPTY_GRANTS, runTools: ['Bash(git status)'] } as never, 'git status')
+  assert.ok(g.ok, JSON.stringify(g))
+  const a = await o.apply('w1', 'two')
+  assert.ok(a.ok, JSON.stringify(a))
+  assert.equal(git('rev-parse', 'HEAD~1'), g.sha)
+  assert.equal(git('rev-parse', 'HEAD'), a.sha)
+  assert.equal(git('status', '--porcelain'), '')
+})
+
+test('a rebase conflict in a shared tools/ file fails the apply, leaves the live folder alone and the files in the worktree', async () => {
+  const { r, put, git } = repo(), f = fakeExec(), { o, trees, at } = treeOps(r, f)
+  const d = await trees.dir('w1'), w = at(d)
+  w.put('tools/shared.ts', 'mine\n'); w.put('workspaces/w1/page.ts', 'export const A = 2\n')
+  // another workspace's agent landed the same new file first
+  put('tools/shared.ts', 'theirs\n'); git('add', '-A'); git('commit', '-qm', 'w2: theirs')
+  const before = liveState(git)
+  const a = await o.apply('w1', 'mine')
+  assert.equal(a.ok, false)
+  assert.match((a as { error: string }).error, /conflicts.*tools\/shared\.ts/)
+  assert.deepEqual(f.calls, [], 'nothing was checked')
+  assert.deepEqual(liveState(git), before)
+  assert.equal(w.bytes('tools/shared.ts').toString(), 'mine\n')
+  assert.equal(w.bytes('workspaces/w1/page.ts').toString(), 'export const A = 2\n')
+  assert.ok(!existsSync(w.git('rev-parse', '--path-format=absolute', '--git-path', 'rebase-merge')), 'no rebase left open')
+  assert.ok(!existsSync(w.git('rev-parse', '--path-format=absolute', '--git-path', 'rebase-apply')), 'no rebase left open')
+  assert.deepEqual(await trees.pending('w1'), ['tools/shared.ts', 'workspaces/w1/page.ts'])
+})
+
+test('the live HEAD moving between the check and the landing refuses the fast-forward; the build stays and the files stay in the worktree', async () => {
+  const { r, put, git, read } = repo()
+  let once = true
+  const f = fakeExec({ during: (s) => { if (s === 'build' && once) { once = false; put('server/main.ts', 'core 2\n'); git('commit', '-qam', 'core moved') } } })
+  const { o, trees, at, restarts } = treeOps(r, f), d = await trees.dir('w1'), w = at(d)
+  w.put('workspaces/w1/page.ts', 'export const A = 2\n')
+  const a = await o.apply('w1', 'two')
+  assert.equal(a.ok, false)
+  assert.match((a as { error: string }).error, /moved while it was checked; apply again/)
+  assert.equal(git('log', '-1', '--format=%s'), 'core moved')
+  assert.equal(read('dist/index.html'), 'old build\n'); assert.equal(restarts(), 0)
+  assert.equal(w.bytes('workspaces/w1/page.ts').toString(), 'export const A = 2\n')
+  assert.deepEqual(await trees.pending('w1'), ['workspaces/w1/page.ts'])
+  // applied again, it lands on the new HEAD
+  const b = await o.apply('w1', 'two')
+  assert.ok(b.ok, JSON.stringify(b))
+  assert.equal(git('log', '-2', '--format=%s'), 'w1: two\ncore moved')
+})
+
+test('a commit an apply left on agent/<ws> (a crash in the middle) is taken up by the next apply, not lost as nothing to apply', async () => {
+  const { r, git } = repo(), { o, trees, at } = treeOps(r, fakeExec())
+  const d = await trees.dir('w1'), w = at(d)
+  w.put('workspaces/w1/page.ts', 'export const A = 2\n')
+  w.git('add', '-A'); w.git('commit', '-qm', 'w1: left by a crash')
+  const a = await o.apply('w1', 'two')
+  assert.ok(a.ok, JSON.stringify(a))
+  assert.equal(git('log', '-1', '--format=%s'), 'w1: two')
+  assert.equal(git('rev-list', '--count', 'HEAD'), '2', 'one commit on top of init, not two')
+})
+
+test('a throw after the worktree commit (the build cannot be swapped in) fails the apply and takes the commit back', async () => {
+  const { r, git } = repo(), trees = new AgentTrees({ live: r, base: join(tempDir('agents'), 'agents') })
+  const o = new Ops({ root: r, exec: fakeExec().exec, dist: join(r, 'no', 'such', 'dist'), trees })
+  const d = await trees.dir('w1')
+  mkdirSync(join(d, 'workspaces', 'w1'), { recursive: true }); writeFileSync(join(d, 'workspaces', 'w1', 'page.ts'), 'export const A = 2\n')
+  const before = liveState(git), a = await o.apply('w1', 'two')
+  assert.equal(a.ok, false, JSON.stringify(a))
+  assert.deepEqual(liveState(git), before)
+  assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: d, encoding: 'utf8' }).trim(), before.head)
+  assert.deepEqual(await trees.pending('w1'), ['workspaces/w1/page.ts'])
+})
+
+test('uncommitted changes in the live folder under the agent’s areas refuse the landing', async () => {
+  const { r, put, git } = repo(), { o, trees, at, restarts } = treeOps(r, fakeExec())
+  const w = at(await trees.dir('w1'))
+  w.put('workspaces/w1/page.ts', 'export const A = 2\n')
+  put('workspaces/w1/page.ts', 'export const A = 7\n')
+  const before = liveState(git), a = await o.apply('w1', 'two')
+  assert.equal(a.ok, false)
+  assert.match((a as { error: string }).error, /uncommitted changes in the live folder: workspaces\/w1\/page\.ts/)
+  assert.deepEqual(liveState(git), before); assert.equal(restarts(), 0)
+  assert.deepEqual(await trees.pending('w1'), ['workspaces/w1/page.ts'])
+})
+
+test('check and remove act in the worktree; discard drops what is not applied there and nothing in the live folder', async () => {
+  const { r, put, git } = repo(), f = fakeExec(), { o, trees, at } = treeOps(r, f)
+  put('workspaces/w1/old.ts', 'export const O = 1\n'); git('add', '-A'); git('commit', '-qm', 'old')
+  const d = await trees.dir('w1'), w = at(d)
+  w.put('workspaces/w1/page.ts', 'export const A = 2\n')
+  assert.deepEqual(await o.check('w1'), { ok: true, failures: [] })
+  assert.ok(f.where.length && f.where.every((c) => c === d))
+  assert.deepEqual(await o.remove('w1', 'workspaces/w1/old.ts'), { ok: true, path: 'workspaces/w1/old.ts' })
+  assert.ok(existsSync(join(r, 'workspaces/w1/old.ts')), 'the live file stays')
+  assert.ok(!existsSync(join(d, 'workspaces/w1/old.ts')))
+  w.put('tools/new.ts', 'x\n')
+  assert.deepEqual(await o.unapplied('w1'), ['tools/new.ts', 'workspaces/w1/old.ts', 'workspaces/w1/page.ts'])
+  assert.deepEqual(await o.discard('w1'), ['tools/new.ts', 'workspaces/w1/old.ts', 'workspaces/w1/page.ts'])
+  assert.deepEqual(await o.unapplied('w1'), [])
+  assert.equal(w.git('status', '--porcelain'), '')
+  assert.equal(git('status', '--porcelain'), '')
+})
+
+test('the one-time move takes the live leftovers of a workspace into its clean worktree and leaves the live folder clean', async () => {
+  const { r, put, git } = repo(), { trees, at } = treeOps(r, fakeExec())
+  put('workspaces/w1/old.ts', 'export const O = 1\n'); git('add', '-A'); git('commit', '-qm', 'old')
+  const head = git('rev-parse', 'HEAD')
+  // as on 2026-10-09: an apply that failed left the agent's files in the live folder
+  put('workspaces/w1/page.ts', 'export const A = 2\n'); put('workspaces/w1/knowledge/n.md', '# n\n'); put('tools/crlf.ts', CRLF)
+  unlinkSync(join(r, 'workspaces/w1/old.ts')); put('notes.txt', 'the person’s own\n'); put('workspaces/w2/page.ts', 'export const B = 2\n')
+  const m = await trees.adopt('w1')
+  assert.deepEqual(m, { moved: ['tools/crlf.ts', 'workspaces/w1/knowledge/n.md', 'workspaces/w1/old.ts', 'workspaces/w1/page.ts'] })
+  assert.equal(git('rev-parse', 'HEAD'), head)
+  assert.equal(git('status', '--porcelain', '--untracked-files=all'), 'M workspaces/w2/page.ts\n?? notes.txt', 'only what is not its own stays')
+  const d = await trees.dir('w1'), w = at(d)
+  assert.equal(w.bytes('workspaces/w1/page.ts').toString(), 'export const A = 2\n')
+  assert.equal(w.bytes('workspaces/w1/knowledge/n.md').toString(), '# n\n')
+  assert.deepEqual(w.bytes('tools/crlf.ts'), CRLF)
+  assert.ok(!existsSync(join(d, 'workspaces/w1/old.ts')))
+  assert.deepEqual(await trees.adopt('w1'), { moved: [] }, 'nothing left to move')
+  // a worktree that holds work of its own is left alone, and so are the live files
+  put('workspaces/w1/page.ts', 'export const A = 3\n')
+  const s = await trees.adopt('w1')
+  assert.ok('skipped' in s && /not applied/.test(s.skipped), JSON.stringify(s))
+  assert.equal(readFileSync(join(r, 'workspaces/w1/page.ts'), 'utf8'), 'export const A = 3\n')
+  assert.equal(w.bytes('workspaces/w1/page.ts').toString(), 'export const A = 2\n')
 })

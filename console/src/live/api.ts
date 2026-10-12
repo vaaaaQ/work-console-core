@@ -259,6 +259,9 @@ export const agentReintegrate = async (ws: string) => (await wsCall<AgentRes>(ws
 export const updateRun = async (kind: UpdateKind) => (await call<{ update: UpdateView | null }>('POST', `/api/update/${kind}`)).update
 // an undo checks and builds the console again: minutes, not seconds
 export const agentUndo = async (ws: string, sha: string) => (await wsCall<AgentRes>(ws, 'POST', '/agent/undo', { sha }, 20 * 60_000)).agent
+/** what the agent changed in its worktree and did not apply, and the person's Discard of it */
+export const agentUnapplied = async (ws: string) => (await wsCall<{ files: string[] }>(ws, 'GET', '/agent/unapplied')).files
+export const agentDiscard = async (ws: string) => (await wsCall<{ files: string[] }>(ws, 'POST', '/agent/discard', undefined, 60_000)).files
 export const agentGrants = async (ws: string, accept: boolean, reason?: string) => (await wsCall<AgentRes>(ws, 'POST', '/agent/grants', { accept, reason }, 60_000)).agent
 export const settings = () => call<{ settings: ProviderSettings; providers: ProviderInfo[] }>('GET', '/api/settings')
 /** b = the keys to change; a path of '' drops it */

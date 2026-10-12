@@ -50,7 +50,13 @@ export interface Art extends New { n: string; ok: boolean; link?: string }
 export interface Badge extends New { k: BadgeKind; t: string; r?: string; o?: 1 | 0 }
 export interface Vote extends New { n: string; v: number }
 export interface Review { v: Vote[]; need: number }
-export interface Draft extends New { t: string; at: string; q?: string }
+/** what a draft reports about its step: done (the default, not stored), not finished, or a check that failed */
+export type Outcome = 'done' | 'not_done' | 'failed'
+export const OUTCOMES: readonly Outcome[] = ['done', 'not_done', 'failed']
+/** a draft's report: o = not finished or failed, rt = the step (already passed) the job goes back to on accept, why = the reason */
+export interface DraftReport { o?: Outcome; rt?: string; why?: string }
+/** o, rt, why: the draft's report, set only when it did not finish */
+export interface Draft extends New { t: string; at: string; q?: string; o?: Exclude<Outcome, 'done'>; rt?: string; why?: string }
 /** id = the backend's run record; absent in the demo; reply = it continues the draft's session, so the draft stays */
 export interface Run { q: string; at: number; id?: string; reply?: 1 }
 export interface Sent { at: string; t: string }
@@ -112,8 +118,10 @@ export type Cmd =
   /** why = the reason; with one the backend redoes the step in a fresh session */
   | { op: 'rejectDraft'; step: string; why?: string }
   | { op: 'stepWait'; step: string; m: string }
-  /** said = accepted on the replier's word, by an accept reply; force as for stepDone; auto = by the console, on an auto step */
-  | { op: 'acceptDraft'; step: string; text?: string; said?: boolean; force?: boolean; auto?: true }
+  /** said = accepted on the replier's word, by an accept reply; force as for stepDone; auto = by the console, on an auto step;
+      asDone = the person marks a draft that reports not done or failed done anyway (the page only; said and auto never);
+      stay = such a draft keeps its step open even when it names a step to go back to */
+  | { op: 'acceptDraft'; step: string; text?: string; said?: boolean; force?: boolean; auto?: true; asDone?: true; stay?: true }
   | { op: 'noteAdd'; step: string; k: BadgeKind; t: string }
   | { op: 'noteAnswer'; step: string; i: number; r: string } | { op: 'noteReopen'; step: string; i: number }
   /** ch = the chat or the mail replied to, rto = a new mail's addresses: where an ask step's reply comes from */
@@ -125,9 +133,9 @@ export type Cmd =
   | { op: 'runStart'; step: string; q: string; id: string; resumed?: boolean; auto?: boolean }
   /** a reply to the draft in its own session; the draft stays until it is revised */
   | { op: 'runReply'; step: string; q: string; id: string; intent: RunIntent; resumed?: boolean }
-  | { op: 'runDraft'; step: string; t: string }
+  | ({ op: 'runDraft'; step: string; t: string } & DraftReport)
   /** a draft a session made by hand hands in through the console's MCP; it waits for review as a run's does */
-  | { op: 'draftIn'; step: string; t: string }
+  | ({ op: 'draftIn'; step: string; t: string } & DraftReport)
   /** an ask reply's answer: the run ends, the draft stays */
   | { op: 'runAnswer'; step: string; a: string }
   /** due = an interrupted run that resumes by itself */

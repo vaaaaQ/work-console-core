@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { copyFile, mkdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -6,9 +6,10 @@ import { openOf, waitsM } from '../../src/model/blockers.ts'
 import * as T from '../../src/model/transitions.ts'
 import { thread } from '../../src/model/thread.ts'
 import { INTENTS } from '../../src/model/types.ts'
-import type { Cmd, Job, RunIntent, RunRec, Ws } from '../../src/model/types.ts'
+import type { Cmd, DraftReport, Job, RunIntent, RunRec, Ws } from '../../src/model/types.ts'
 import { HttpError, downError } from '../events.ts'
 import type { Bus, Via } from '../events.ts'
+import type { ActReq, ActRes } from '../bridge/wire.ts'
 import type { Jobs } from '../jobs/jobs.ts'
 import type { Notes } from '../knowledge/notes.ts'
 import type { Store } from '../store/port.ts'
@@ -29,7 +30,9 @@ const FEED_MAX = 200
 /** the biggest file a run may keep as an artifact */
 const FILE_MAX = 20 << 20
 /** the most jobs one run may create */
-const JOBS_MAX = 5
+const JOBS_MAX = 5, ACTS_MAX = 10
+/** the acts a workspace lets its runs call themselves, and the source that runs them under its grants and scopes */
+export type RunActs = { allowed: readonly string[]; act(a: ActReq): Promise<ActRes> }
 /** the most of an ask reply's answer a record keeps */
 const ANSWER_MAX = 4000
 /** started: the record says running; until then cancel and interruptAll leave settling to run() */
@@ -67,7 +70,8 @@ export class Runner {
   private notes?: Notes
   private autoResume: boolean
   private browser: boolean
-  /** reply = the reply's text has not reached its session yet */
+  private acts?: RunActs
+  /** reply =the reply's text has not reached its session yet */
   private queue: { id: string; resume?: string; reply?: boolean }[] = []
   private live = new Map<string, Live>()
   private feeds = new Map<string, string[]>()
@@ -89,10 +93,13 @@ export class Runner {
     autoResume?: boolean
     /** runs have the runs' browser, so they get signin_needed */
     browser?: boolean
+    /** acts runs may call themselves; none or an empty list = no act tool */
+    acts?: RunActs
   }) {
     this.store = o.store; this.jobs = o.jobs; this.bus = o.bus; this.pick = pickOf(o.sdk); this.cwd = o.cwd
     this.max = o.max ?? 3; this.gate = o.gate; this.via = o.via; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => ({ ctx: [], images: [] })); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot; this.jobTools = o.jobTools; this.notes = o.notes
     this.autoResume = !!o.autoResume; this.browser = !!o.browser
+    if (o.acts?.allowed.length) this.acts = o.acts
   }
 
   /** draft ready, answered, failed or interrupted: the moments worth a push */
@@ -372,12 +379,18 @@ export class Runner {
       if (!rel || rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error(`${p} is outside the work dir`)
       return real
     }
-    const shot = this.screenshot, jt = this.jobTools, kn = this.notes
+    const shot = this.screenshot, jt = this.jobTools, kn = this.notes, ra = this.acts
     const input = (j: Job) => this.input(j, cwd)
-    let made = 0
-    const submitDraft = async (t: string) => {
+    let made = 0, acted = 0
+    // a send that did not go out shows on the step with its text, so the user can send it by hand
+    const notSent = async (action: string, args: Record<string, unknown>, why: string): Promise<never> => {
+      const text = typeof args.text === 'string' ? `\n\n${args.text}` : ''
+      await this.jobCmd(rec, { op: 'noteAdd', step: rec.step, k: 'p', t: `Not sent (${action}): ${why}${text}` })
+      throw new Error(why)
+    }
+    const submitDraft = async (t: string, rep: DraftReport = {}) => {
       if (l.drafted) throw new Error('a draft was already submitted for this run')
-      await this.jobs.cmd(rec.job, { op: 'runDraft', step: rec.step, t }, undefined, 'runner')
+      await this.jobs.cmd(rec.job, { op: 'runDraft', step: rec.step, t, ...rep }, undefined, 'runner')
       l.drafted = true
       r = { ...r!, state: 'draft' }
       // an accept turn accepts at once, before anyone can act on the draft; it pushes only if that fails
@@ -421,6 +434,17 @@ export class Runner {
         startJob: async (id: string) => {
           if (!id.startsWith(jt.prefix + '-')) throw new Error(`${id} is not a job of this workspace`)
           await this.jobs.cmd(id, { op: 'start' }, undefined, 'run')
+        },
+      } : {}),
+      ...(ra ? {
+        act: async (action: string, args: Record<string, unknown>) => {
+          if (!ra.allowed.includes(action)) return notSent(action, args, `${action} is not an act runs may call here; they may call ${ra.allowed.join(', ')}`)
+          if (acted >= ACTS_MAX) return notSent(action, args, `this run already called ${ACTS_MAX} acts`)
+          acted++
+          const res = await ra.act({ action, actionId: randomUUID(), args: { ...args } }).catch((e): ActRes => ({ status: 'outcome_unknown', error: { code: 'outcome_unknown', message: (e as Error).message } }))
+          if (res.status === 'outcome_unknown') return notSent(action, args, `${res.error?.message ?? 'no answer'}; it may or may not have been sent, so it is not retried`)
+          if (res.status !== 'ok') return notSent(action, args, `${res.error?.code ?? 'error'}: ${res.error?.message ?? 'refused'}`)
+          return `sent ${action}${res.result != null ? `: ${JSON.stringify(res.result)}` : ''}`
         },
       } : {}),
       ...(kn ? {

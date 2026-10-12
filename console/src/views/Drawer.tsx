@@ -3,7 +3,7 @@ import { BK, EXEC, MODES } from '../data/core.ts'
 import { PRI } from '../data/demo.ts'
 import { PACKS } from '../data/packs.ts'
 import { hm, initials, tfmt } from '../lib/util.ts'
-import { S, byId, chName, goesBack, isClosed, isLive, phaseOf, rvState, stepOf, tplOf } from '../model/world.ts'
+import { S, byId, chName, draftReport, goesBack, isClosed, isLive, phaseOf, rvState, stepOf, tplOf } from '../model/world.ts'
 import { actOf } from '../model/home.ts'
 import { sentBefore } from '../model/transitions.ts'
 import type { Flow, Job, Step } from '../model/types.ts'
@@ -37,7 +37,7 @@ function LlmSec({ j, s, f }: P) {
   )
   if (f.dr) return (
     <section className="sec"><div className="eyebrow">LLM draft</div><div className="llmr pending">
-      <div className="hd"><Ic n="bot" sm /><b>Waiting for your review</b><span>· {tfmt(f.dr.at)}</span><OutSeg /></div><OutText t={f.dr.t} />
+      <div className="hd"><Ic n="bot" sm /><b>Waiting for your review</b><span>· {tfmt(f.dr.at)}</span><OutSeg /></div>{draftReport(j, f.dr) && <div className="why rep">{draftReport(j, f.dr)}</div>}<OutText t={f.dr.t} />
       <div className="row"><button className="btn sm pri" disabled={!!f.run} onClick={() => acceptDraft(j.id, s.id)}><Ic n="check" sm />Accept</button>
         <button className="btn sm" disabled={!!f.run} onClick={() => editDraft(j.id, s.id)}><Ic n="pen" sm />Edit…</button>
         <button className="btn sm" disabled={!!f.run} onClick={() => rejectDraft(j.id, s.id)}><Ic n="x" sm />Reject…</button></div>

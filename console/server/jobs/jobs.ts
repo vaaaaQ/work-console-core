@@ -66,6 +66,8 @@ export class Jobs {
       if (!c || !ok.has(c.op)) throw new HttpError(400, 'bad_args', `the ${who} cannot send ${c?.op}`)
       this.open()
     }
+    // marking a draft that reports a failure done anyway is the person's, on the page, behind a confirm
+    if (c?.op === 'acceptDraft' && c.asDone && who !== 'page') throw new HttpError(400, 'bad_args', `the ${who} cannot accept a draft as done anyway; only the page can`)
     for (let n = 0; ; n++) {
       const cur = await this.get(id)
       if (!cur) throw new HttpError(404, 'not_found', `no job ${id}`)

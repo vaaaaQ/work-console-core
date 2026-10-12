@@ -34,7 +34,7 @@ const failedAt = (root: string, o: Partial<FailedUpdate> = {}): FailedUpdate => 
     output: "workspaces/w1/page.ts(3,7): error TS2353: 'needDb' does not exist in type 'LocalOpts'", at: new Date().toISOString(), ...o }
 }
 
-function setup(o: { grants?: Partial<Grants>; script?: Script[]; recs?: AgentRec[]; update?: Partial<FailedUpdate>; ends?: ((f: FailedUpdate) => FailedUpdate | null)[]; managed?: boolean; max?: number; noAgent?: boolean; job?: JobDeps } = {}) {
+function setup(o: { grants?: Partial<Grants>; script?: Script[]; recs?: AgentRec[]; update?: Partial<FailedUpdate>; ends?: ((f: FailedUpdate) => FailedUpdate | null)[]; managed?: boolean; max?: number; noAgent?: boolean; job?: JobDeps; work?: (root: string) => { dir: string; pending: string[] } } = {}) {
   const root = tempDir('session')
   mkdirSync(join(root, 'workspaces', 'w1'), { recursive: true })
   if (o.grants) writeFileSync(join(root, 'workspaces', 'w1', 'grants.json'), JSON.stringify(o.grants))
@@ -50,6 +50,8 @@ function setup(o: { grants?: Partial<Grants>; script?: Script[]; recs?: AgentRec
     createWorkspace: async () => ({ ok: false, error: 'no' }),
     remove: async (_ws, p) => ({ ok: true, path: p }),
     acceptGrants: async (ws, g, reason) => { calls.push(['grants', ws, g, reason]); restarter.want(); return ok('c'.repeat(40), `grants — ${reason}`, ['workspaces/w1/grants.json']) },
+    ...(o.work ? { workDir: async (ws: string) => { calls.push(['workDir', ws]); return o.work!(root) } } : {}),
+    ...(o.work ? { unapplied: async () => o.work!(root).pending, discard: async (ws: string) => { calls.push(['discard', ws]); return o.work!(root).pending } } : {}),
   }
   const sdk: Sdk = {
     start: () => { throw new Error('not here') },
@@ -460,4 +462,31 @@ test("a job conversation's turn reads the job between the heard lines and the te
   assert.ok(g.prompt.startsWith('# Open jobs (newest first)') && g.prompt.includes(j.id) && g.prompt.endsWith(`${NL}${NL}hello`), g.prompt)
   assert.deepEqual(g.tools.map((y) => y.name).slice(0, 4), ['list_jobs', 'get_job', 'step_output', 'propose'])
   assert.deepEqual(codeTools(g), CODE_TOOLS)
+})
+
+test('a code turn works in the agent’s worktree and is told what it left there unapplied; a job’s turn reads the live folder', async () => {
+  const x = setup({ grants: {}, work: (root) => ({ dir: join(root, 'agents', 'w1', 'console'), pending: ['workspaces/w1/page.ts', 'tools/t.ts'] }),
+    script: [() => reply('ok'), () => reply('hi')] })
+  await (await x.s.send('change the page')).done
+  const t = x.turns[0]
+  assert.equal(t.limits.cwd, join(x.root, 'agents', 'w1', 'console'), 'the turn writes in the worktree')
+  assert.deepEqual(t.limits.write, ['workspaces/w1/**', 'tools/**'])
+  assert.match(t.prompt, /not applied yet.*workspaces\/w1\/page\.ts, tools\/t\.ts/s)
+  assert.deepEqual(x.calls.filter((c) => c[0] === 'workDir'), [['workDir', 'w1']])
+  await (await x.s.send('look', { job: 'J-1' })).done
+  assert.deepEqual([x.turns[1].limits.cwd, x.turns[1].limits.write], [x.root, []], 'a job turn reads the live folder')
+  assert.equal(x.calls.filter((c) => c[0] === 'workDir').length, 1, 'and makes no worktree')
+})
+
+test('the person sees what the agent did not apply and discards it, though not while a code turn runs', async () => {
+  const h = held('done')
+  const x = setup({ grants: {}, work: (root) => ({ dir: join(root, 'agents', 'w1', 'console'), pending: ['workspaces/w1/page.ts'] }), script: [h.f] })
+  assert.deepEqual(await x.s.unapplied(), ['workspaces/w1/page.ts'])
+  const t = await x.s.send('change it')
+  await until(() => x.turns.length === 1)
+  await assert.rejects(x.s.discard(), /a turn is running/)
+  h.go(); await t.done
+  assert.deepEqual(await x.s.discard(), ['workspaces/w1/page.ts'])
+  assert.deepEqual(x.calls.filter((c) => c[0] === 'discard'), [['discard', 'w1']])
+  assert.match((await x.s.current())!.turns.at(-1)!.t, /Discarded 1 file not applied: workspaces\/w1\/page\.ts/)
 })

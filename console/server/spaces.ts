@@ -213,6 +213,8 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     screenshot: w.llm?.screenshot ? (s) => shoot({ ...s, browserPath: cfg.browserPath }) : undefined,
     jobTools: w.llm?.jobTools ? { ws: id, pb: w.page.board.start, prj: w.page.pack.prj, prefix: w.jobPrefix } : undefined, notes,
     autoResume: cfg.autoAsk === true, browser: !!runBr,
+    // runs call only what grants.llmActs names and the source would run; the source checks the scopes
+    acts: grants?.llmActs ? { allowed: grants.llmActs.filter((a) => acts.has(a)), act: (a) => source.act(a) } : undefined,
   })
   const offAuto = autoAsk({ jobs, runner, ctx, on: cfg.autoAsk === true, delay: o.askDelay })
   // a workspace without a gateway gives the builder no sources to read

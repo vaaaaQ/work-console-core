@@ -5,9 +5,9 @@ import { fromWall, midnight, offsetAt } from '../lib/zone.ts'
 import { openOf, reaches, settled, waitsM } from './blockers.ts'
 import { KINDS, ctxDefaults, ctxLabel, ctxOf, ctxUnit, parseWorkId } from './context.ts'
 import type { Kind } from './context.ts'
-import { PP_OPS } from './types.ts'
+import { OUTCOMES, PP_OPS } from './types.ts'
 import type {
-  BadgeKind, Cmd, CtxItem, CtxKind, Flow, Job, JobStatus, JournalEntry, Lamp, NewStep, NodeState, Phase, Playbook, Round, Start, Step, StepOverride, Tpl, Ws,
+  BadgeKind, Cmd, Draft, DraftReport, CtxItem, CtxKind, Flow, Job, JobStatus, JournalEntry, Lamp, NewStep, NodeState, Phase, Playbook, Round, Start, Step, StepOverride, Tpl, Ws,
 } from './types.ts'
 
 /* The one place for job transitions: the page (demo and live) and the backend run the same code.
@@ -310,6 +310,32 @@ export function sentBefore(j: Job, sid: string): SentBefore[] {
   return out
 }
 
+/** a draft's report, checked as it is handed in so a bad one is refused while the run can still fix it:
+    an outcome it knows, and return_to (by id or exact title) a step before the drafting one, which returnTo would accept */
+function report(x: Ctx, j: Job, sid: string, r: DraftReport): Pick<Draft, 'o' | 'rt' | 'why'> {
+  if (r.o !== undefined && !OUTCOMES.includes(r.o)) throw new CmdError('bad_args', `outcome is one of ${OUTCOMES.join(', ')}`)
+  const why = typeof r.why === 'string' ? line(r.why, 300) : ''
+  if (!r.o || r.o === 'done') {
+    if (r.rt) throw new CmdError('bad_args', 'return_to goes with outcome not_done or failed')
+    return {}
+  }
+  if (!r.rt) return { o: r.o, ...(why ? { why } : {}) }
+  const all = stepsOf(x, j), want = r.rt.trim().toLowerCase()
+  let ti = all.findIndex((s) => s.id === r.rt)
+  if (ti < 0) ti = all.findIndex((s) => s.t.toLowerCase() === want)
+  if (ti < 0) throw new CmdError('bad_step', `return_to: ${j.id} has no step ${r.rt}`)
+  if (ti >= all.findIndex((s) => s.id === sid)) throw new CmdError('bad_step', `return_to: “${all[ti].t}” has not been passed yet; name a step before this one`)
+  return { o: r.o, rt: all[ti].id, ...(why ? { why } : {}) }
+}
+/** the line the page shows on a draft that reports it did not finish, or null */
+export function reportText(x: Ctx, j: Job, dr: Draft): string | null {
+  if (!dr.o) return null
+  const where = dr.rt ? `returns to “${stepOf(x, j, dr.rt)?.t ?? dr.rt}” on accept` : 'the step stays open on accept'
+  return `reports ${dr.o === 'failed' ? 'failed' : 'not done'} → ${where}${dr.why ? `: ${dr.why}` : ''}`
+}
+const reportTxt = (x: Ctx, j: Job, r: Pick<Draft, 'o' | 'rt'>) =>
+  r.o ? `; it reports ${r.o === 'failed' ? 'failed' : 'not done'}${r.rt ? ` and goes back to “${stepOf(x, j, r.rt)!.t}” on accept` : ''}` : ''
+
 /* ===== the job's own steps ===== */
 const STARTS: readonly Start[] = ['hand', 'self', 'auto']
 /** the first change to a job's steps copies its playbook's steps and their planned messages into it */
@@ -606,11 +632,27 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     case 'acceptDraft': {
       needDraft(); noRun()
       if (ahead(F)) throw new CmdError('bad_state', `“${S.t}” is not reached yet; its draft waits until it is`)
-      noBlockers(cmd.force)
       const dr = F.dr!, edited = cmd.text != null && cmd.text !== dr.t
+      const how = `${edited ? ' with edits' : ''}${cmd.said ? ' as said in the reply' : ''}${cmd.auto ? ' automatically' : ''}`
+      // a draft that reports it did not finish never closes its step, unless the person says so on the page
+      const anyway = !!cmd.asDone && !cmd.said && !cmd.auto
+      if (dr.o && !anyway) {
+        const rep = dr.o === 'failed' ? 'reported failed' : 'reported not done'
+        F.out = edited ? cmd.text! : dr.t; F.m = rep; F.dr = null; F.s = 'cur'; settle(F)
+        if (dr.rt && !cmd.stay) {
+          jr(x, j, `Accepted the LLM draft for “${S.t}”${how}; it ${rep}.`, 'the step is not done; the job goes back.', `work on “${stepOf(x, j, dr.rt)!.t}”.`, by(x), 'bad')
+          returnTo(x, j, dr.rt, dr.why || line(F.out.split('\n')[0], 300)); nx = dr.rt
+        } else {
+          jr(x, j, `Accepted the LLM draft for “${S.t}”${how}; it ${rep}.`, 'the step stays open with the draft as its output.', `finish “${S.t}”, or ask again.`, by(x), 'bad')
+          syncStatus(x, j)
+        }
+        break
+      }
+      noBlockers(cmd.force)
       F.out = edited ? cmd.text! : dr.t; F.m = edited ? 'accepted with your edits' : 'draft accepted'
       nx = advance(x, j, sid, 'done')
-      jr(x, j, `Accepted the LLM draft for “${S.t}”${edited ? ' with edits' : ''}${cmd.said ? ' as said in the reply' : ''}${cmd.auto ? ' automatically' : ''}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')
+      const although = dr.o ? `, although it reported ${dr.o === 'failed' ? 'failed' : 'not done'}` : ''
+      jr(x, j, `Accepted the LLM draft for “${S.t}”${how}${dr.o ? ' as done' : ''}${although}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')
       break
     }
     case 'rejectDraft': {
@@ -694,8 +736,9 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     case 'runDraft': {
       if (!F.run) throw new CmdError('bad_state', `“${S.t}” has no LLM run`)
       const re = !!F.run.reply
-      F.run = null; F.dr = { t: cmd.t, at: nowOf(x).toISOString(), nw: 1 }; F.s = 'wait'; F.m = re ? 'LLM draft revised' : 'LLM draft ready'; F.nw = 1
-      jr(x, j, re ? `Draft for “${S.t}” revised.` : `Draft for “${S.t}” is ready.`, 'waiting for your review.', 'accept, edit or reject it.', 'LLM', 'wait'); syncStatus(x, j)
+      const rep = report(x, j, sid, cmd)
+      F.run = null; F.dr = { t: cmd.t, at: nowOf(x).toISOString(), nw: 1, ...rep }; F.s = 'wait'; F.m = re ? 'LLM draft revised' : 'LLM draft ready'; F.nw = 1
+      jr(x, j, `${re ? `Draft for “${S.t}” revised` : `Draft for “${S.t}” is ready`}${reportTxt(x, j, rep)}.`, 'waiting for your review.', 'accept, edit or reject it.', 'LLM', 'wait'); syncStatus(x, j)
       break
     }
     case 'draftIn': {
@@ -704,8 +747,9 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       if (!isLive(F)) throw new CmdError('bad_state', `“${S.t}” is not open; reopen it first`)
       const t = (cmd.t || '').trim()
       if (!t) throw new CmdError('bad_args', 'the draft is empty')
-      F.dr = { t, at: nowOf(x).toISOString(), nw: 1 }; F.s = 'wait'; F.m = 'draft handed in'; F.nw = 1
-      jr(x, j, `Draft for “${S.t}” handed in.`, 'waiting for your review.', 'accept, edit or reject it.', by(x), 'wait'); syncStatus(x, j)
+      const rep = report(x, j, sid, cmd)
+      F.dr = { t, at: nowOf(x).toISOString(), nw: 1, ...rep }; F.s = 'wait'; F.m = 'draft handed in'; F.nw = 1
+      jr(x, j, `Draft for “${S.t}” handed in${reportTxt(x, j, rep)}.`, 'waiting for your review.', 'accept, edit or reject it.', by(x), 'wait'); syncStatus(x, j)
       break
     }
     case 'runAnswer':

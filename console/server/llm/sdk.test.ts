@@ -85,6 +85,18 @@ test('the run server has its own four tools, and screenshot only when the run ca
   for (const d of runToolDefs({ ...base, screenshot: none })) assert.ok(ALLOW.includes(`mcp__run__${d.name}`), d.name)
 })
 
+test('submit_draft takes an optional outcome, return_to and why and hands them on', async () => {
+  const none = async () => {}, got: unknown[] = []
+  const base: RunTools = { submitDraft: async (t, r) => { got.push([t, r]) }, addArtifact: none, addArtifactFile: none, journal: none }
+  const d = runToolDefs(base).find((x) => x.name === 'submit_draft')!
+  assert.match(d.description, /outcome/)
+  const call = d.handler as (a: unknown, x: unknown) => Promise<{ isError?: boolean }>
+  await call({ text: 'done it' }, {})
+  await call({ text: 'smoke red', outcome: 'failed', return_to: 'Run the deploy', why: 'the smoke test failed' }, {})
+  assert.deepEqual(got, [['done it', {}], ['smoke red', { o: 'failed', rt: 'Run the deploy', why: 'the smoke test failed' }]])
+  for (const k of ['outcome', 'return_to', 'why']) assert.ok(k in (d.inputSchema as Record<string, unknown>), k)
+})
+
 test('context only when the run carries it; it answers with each picture after its label, then the text', async () => {
   const none = async () => {}
   const base: RunTools = { submitDraft: none, addArtifact: none, addArtifactFile: none, journal: none }

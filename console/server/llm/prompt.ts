@@ -108,12 +108,17 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: Prompt
       `- Write progress with the run tool journal(observed, changed, next) at meaningful points.`,
       `- Save files the step expects with add_artifact(name, content), or with add_artifact_file(path) for a file already under your working dir; images show on the page.`,
       `- Finish by calling submit_draft(text) exactly once with the draft for ${w} to review. Without it the run counts as failed.`,
+      NOT_DONE_LINE,
       ...(by.length ? [messageAlone(by, w, 'submit_draft', 'in journal()')] : []),
       ...(p.resend ? [p.resend] : []),
     ]),
     ...p.user,
   ])
 }
+
+/** a draft that only says in words that the step is not done is accepted as done; the outcome is what the console reads */
+const NOT_DONE_LINE = '- If the step is not finished, or a check or a test failed, call submit_draft with outcome not_done or failed, '
+  + 'and name in return_to the earlier step the job should go back to, if any (id or exact title), with why: accepting such a draft never marks the step done.'
 
 /** what a session taken up by hand reads through the console MCP's step_context: a run's prompt, how to work told for that session */
 export function manualText(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn = {}): string {
@@ -126,6 +131,7 @@ export function manualText(x: T.Ctx, j: Job, step: string, q: string, o: PromptI
       ...(o.images ? [`- [image N] in the text is the picture labelled [image N] before this text.`] : []),
       `- You never send anything to a source (no chat posts, mails, votes, comments or state changes): ${w} sends after review.`,
       `- Finish by calling submit_draft {id: "${j.id}", step: "${step}", output} on the work-console MCP server exactly once, with the draft for ${w} to review; files the step expects go in its artifacts as {name, content}.`,
+      NOT_DONE_LINE,
       ...(by.length ? [messageAlone(by, w, "submit_draft's output", 'in this session, not in the draft')] : []),
       ...(p.resend ? [p.resend] : []),
     ]),

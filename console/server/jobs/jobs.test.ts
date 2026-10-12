@@ -216,6 +216,23 @@ test('a duplicate replyIn writes nothing and fires no listener', async () => {
   assert.equal(evs.length, n)
 })
 
+test('only the page may accept a reported failure as done: asDone from a session, the console or a run is refused', async () => {
+  const { jobs } = setup(), j = await jobs.create({ t: 'Deploy', key: 'K-1', pb: 'action', prj: 'p', ws: 'acme' })
+  await jobs.cmd(j.id, { op: 'start' })
+  await jobs.cmd(j.id, { op: 'runStart', step: 'tr', q: 'q', id: 'r1' }, undefined, 'runner')
+  await jobs.cmd(j.id, { op: 'runDraft', step: 'tr', t: 'The step is not done.', o: 'not_done' }, undefined, 'runner')
+  for (const who of ['session', 'console'] as const)
+    await assert.rejects(jobs.cmd(j.id, { op: 'acceptDraft', step: 'tr', asDone: true }, undefined, who), code(400, 'bad_args'), who)
+  // a session's plain accept leaves it open
+  const s = await jobs.cmd(j.id, { op: 'acceptDraft', step: 'tr' }, undefined, 'session')
+  assert.equal(s.job.flow.tr.s, 'cur')
+  assert.equal(s.job.flow.tr.m, 'reported not done')
+  await jobs.cmd(j.id, { op: 'runStart', step: 'tr', q: 'q', id: 'r2' }, undefined, 'runner')
+  await jobs.cmd(j.id, { op: 'runDraft', step: 'tr', t: 'Still not done.', o: 'not_done' }, undefined, 'runner')
+  const p = await jobs.cmd(j.id, { op: 'acceptDraft', step: 'tr', asDone: true })
+  assert.equal(p.job.flow.tr.s, 'done')
+})
+
 test('the console\'s acceptDraft on a step that is not auto is refused', async () => {
   const { jobs } = setup(), j = await jobs.create({ t: 'Reply', key: 'K-1', pb: 'action', prj: 'p', ws: 'acme' })
   await jobs.cmd(j.id, { op: 'start' })

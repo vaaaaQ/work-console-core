@@ -9,7 +9,7 @@ import type { AgentCommit, AgentRec, AgentTurn } from '../model/agent.ts'
 import { JOBS, S, W, byId } from '../model/world.ts'
 import { commit } from '../store.ts'
 import { go } from '../actions/nav.tsx'
-import { agentFresh, agentRetry, agentSend, agentStop, agentUndo, closeAgent, openAgent } from '../actions/agent.tsx'
+import { agentDiscard, agentFresh, agentRetry, agentSend, agentStop, agentUndo, closeAgent, openAgent } from '../actions/agent.tsx'
 import { Ic } from '../ui/Icon.tsx'
 import { VoiceField } from '../ui/VoiceField.tsx'
 import { ProposalCard } from './Proposal.tsx'
@@ -67,6 +67,18 @@ function fetchOnce(ws: string, w: Where, key: string) {
   void api.agentGet(ws, w).then((a) => { if (a) showAgent(ws, a) }, () => { asked.delete(key) })
 }
 
+/** how many files the agent changed in its worktree and did not apply, with Discard; at = when to ask again */
+function Unapplied({ ws, busy, at }: { ws: string; busy: boolean; at: string }) {
+  const [files, setFiles] = React.useState<string[]>([])
+  const [n, setN] = React.useState(0)
+  React.useEffect(() => { let live = true; void api.agentUnapplied(ws).then((f) => { if (live) setFiles(f) }, () => {}); return () => { live = false } }, [ws, at, n])
+  if (!files.length) return null
+  return <div className="why ag-unapplied" title={files.join('\n')}>
+    {files.length} file{files.length === 1 ? '' : 's'} in the agent's worktree not applied
+    <button className="btn sm ghost" disabled={busy} title={busy ? 'Wait for the agent to finish its turn' : undefined} onClick={() => agentDiscard(ws, files, () => setN(n + 1))}><Ic n="x" sm />Discard…</button>
+  </div>
+}
+
 export function AgentPanel() {
   const ws = S.ws, open = LIVE.on && S.agentOpen
   const w = whereNow(), key = `${ws}|${w.conv ?? ''}|${w.job ?? ''}`
@@ -116,6 +128,7 @@ export function AgentPanel() {
         {running ? <div className="why ag-run"><span className="spin" />The agent is answering…</div> : null}
         {a?.status === 'failed' ? <div className="errs">The last turn failed: {a.error || 'no reason given'}
           <div className="row"><button className="btn sm" onClick={() => void agentRetry(ws, a.id)}><Ic n="retry" sm />Retry</button></div></div> : null}
+        {general && l.managed ? <Unapplied ws={ws} busy={running} at={`${a?.id ?? ''}|${a?.turns.length ?? 0}|${a?.status ?? ''}`} /> : null}
         {general && l.managed && a?.commits.length ? <section className="sec"><h3>Changes</h3>
           <ul className="al">{[...a.commits].reverse().map((c) => <Change key={c.sha} ws={ws} c={c} busy={running} />)}</ul></section> : null}
       </div>

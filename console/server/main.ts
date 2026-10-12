@@ -10,6 +10,7 @@ import type { Job } from '../src/model/types.ts'
 import { install } from '../src/workspace.ts'
 import { SERVERS } from '../workspaces/server.ts'
 import { Ops } from './agent/ops.ts'
+import { AgentTrees, agentsDir, inGit } from './agent/trees.ts'
 import { keepBrowsers } from './browser/launcher.ts'
 import { buildId } from './build.ts'
 import type { FakeGateway } from './bridge/fake.ts'
@@ -78,8 +79,10 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
     home: cfg.home, root, emit: (update) => bus.emit({ kind: 'update', update }),
     idle: () => restarter.idle(), restart: () => restarter.want(),
   })
+  // the agents work in worktrees of their own beside the live folder; a folder outside git (a test's) has none
+  const trees = inGit(root) ? new AgentTrees({ live: root, base: agentsDir(cfg.home) }) : undefined
   const agent = {
-    ops: new Ops({ root, home: cfg.home, fake: cfg.fakeGateway, restart: () => restarter.want() }),
+    ops: new Ops({ root, home: cfg.home, fake: cfg.fakeGateway, restart: () => restarter.want(), trees }),
     hold: () => restarter.hold(),
     taken: () => ({ ids: workspaces.map((w) => w.page.id), prefixes: workspaces.map((w) => w.jobPrefix) }),
     reintegration: updates,
@@ -89,6 +92,15 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
     for (const w of workspaces) list.push(await makeSpace(w, { cfg: cfgs[w.page.id], home: cfg.home, artifactsDir, sdk: o.sdk, fake: cfg.fakeGateway, push, root, agent, ports: [cfg.loopbackPort, cfg.lanPort] }))
   } catch (e) { for (const s of list) await s.close(); throw e }
   const spaces = new Spaces(list), unhub = hub(list, bus)
+  // what an earlier console's agent left uncommitted in the live folder moves to its worktree, once
+  if (trees) for (const s of list) {
+    if (!s.agent) continue
+    try {
+      const a = await trees.adopt(s.id)
+      if ('skipped' in a) console.log(`${s.id}: ${a.skipped}`)
+      else if (a.moved.length) { console.log(`${s.id}: moved the agent's leftovers to its worktree: ${a.moved.join(', ')}`); await s.agent.adopted(a.moved) }
+    } catch (e) { console.error(`${s.id}: the agent's leftovers stay in the live folder:`, (e as Error).message) }
+  }
   const allKnown = function* () { for (const s of list) yield* s.known.values() }
 
   // before any source starts, so the runs a restart interrupted are pushed too

@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { canWrite } from '../agent/limits.ts'
 import type { Limits } from '../agent/limits.ts'
 import type { Hit, Note, ProposalIn } from '../knowledge/notes.ts'
+import type { DraftReport, Outcome } from '../../src/model/types.ts'
 import type { PromptImage } from './context.ts'
 import { BROWSER, BROWSER_TOOLS, WITHHELD } from './runBrowser.ts'
 import type { StdioServer } from './runBrowser.ts'
@@ -20,7 +21,8 @@ import type { Shot } from './shot.ts'
    token and writes only through the run's own tools. */
 
 export interface RunTools {
-  submitDraft(t: string): Promise<void>
+  /** r = the draft's report: not finished or failed, and the step to go back to */
+  submitDraft(t: string, r?: DraftReport): Promise<void>
   addArtifact(n: string, content: string): Promise<void>
   /** a file already under the run's dir (a screenshot, a build output), path relative to it */
   addArtifactFile(path: string, name?: string): Promise<void>
@@ -40,6 +42,8 @@ export interface RunTools {
   knowledgePropose?(p: KnowledgeIn): Promise<string>
   /** the runs' browser lost a site's session: the run ends on a draft asking the user to sign in there; only where the workspace has the browser */
   signinNeeded?(o: { site: string; url: string }): Promise<void>
+  /** runs one of the acts the workspace lets runs call (grants.llmActs), under its scopes; what it answered, or throws why it was not sent */
+  act?(action: string, args: Record<string, unknown>): Promise<string>
   /** a reply run only: keeps what the user asked on the step for the blocker builder, and ends the run */
   openBlocker?(say: string): Promise<void>
 }
@@ -62,7 +66,7 @@ export interface Sdk {
 
 const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status']
 export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__context', 'mcp__run__screenshot', 'mcp__run__create_job', 'mcp__run__start_job',
-  'mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose', 'mcp__run__open_blocker', 'mcp__run__signin_needed', ...BRIDGE]
+  'mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose', 'mcp__run__open_blocker', 'mcp__run__signin_needed', 'mcp__run__act', ...BRIDGE]
 export const DENY = [
   'mcp__bridge__bridge_act', 'mcp__work-console',
   'Read(~/.bridge/**)', 'Read(~/.work-console/**)', 'Read(**/.work-console/**)',
@@ -163,11 +167,30 @@ export function mcpServers(o: { gatewayUrl: string; llmToken: () => string; mcp?
   }
 }
 
+/** how a draft says the step is not finished: the same words in every submit_draft */
+export const OUTCOME_HELP = 'If the step is not finished, or a check or a test failed, say so with outcome not_done or failed '
+  + '(accepting such a draft never marks the step done) and name in return_to the earlier step the job should go back to, if any, '
+  + 'by its id or exact title; why says why in one line. Leave outcome out, or done, when the step is done.'
+const REPORT_SCHEMA = {
+  outcome: z.enum(['done', 'not_done', 'failed']).optional(),
+  return_to: z.string().min(1).optional(),
+  why: z.string().optional(),
+}
+/** the tool's arguments as a draft's report; only what was given */
+export function reportOf(a: { outcome?: unknown; return_to?: unknown; why?: unknown }): DraftReport {
+  return {
+    ...(a.outcome !== undefined ? { o: a.outcome as Outcome } : {}),
+    ...(typeof a.return_to === 'string' && a.return_to ? { rt: a.return_to } : {}),
+    ...(typeof a.why === 'string' && a.why.trim() ? { why: a.why } : {}),
+  }
+}
+
 /** the run server's tools: always its own, then the ones this run's tools carry */
 export function runToolDefs(tools: RunTools) {
   return [
-    tool('submit_draft', 'Submit the draft for this step for the user to review. Call exactly once, at the end.', { text: z.string().min(1) },
-      (a) => wrap(() => tools.submitDraft(a.text), 'draft submitted')()),
+    tool('submit_draft', `Submit the draft for this step for the user to review. Call exactly once, at the end. ${OUTCOME_HELP}`,
+      { text: z.string().min(1), ...REPORT_SCHEMA },
+      (a) => wrap(() => tools.submitDraft(a.text, reportOf(a)), 'draft submitted')()),
     tool('add_artifact', 'Save a file this step produces (for example analysis.md). Same name replaces it.', { name: z.string().min(1), content: z.string() },
       (a) => wrap(() => tools.addArtifact(a.name, a.content), 'artifact saved')()),
     tool('add_artifact_file', 'Save a file already under your working dir (an image, a log, a build output), at most 20 MB. name defaults to the file name.',
@@ -199,6 +222,9 @@ export function runToolDefs(tools: RunTools) {
     ...(tools.signinNeeded ? [tool('signin_needed', "The runs' browser is signed out of a site this step needs (its sign-in page shows where the content should be). site = its name, url = the page to sign in on. It ends this run on a draft that asks the user to sign in; the user replies when done and you go on. Stop after it.",
       { site: z.string().min(1), url: z.string().min(1) },
       (a) => wrap(() => tools.signinNeeded!(a), 'the user is asked to sign in; stop here')())] : []),
+    ...(tools.act ? [tool('act', "Run an act this workspace lets runs call by themselves (for example a post into an allowed chat), at most 10 a run. It goes out at once, without the user's review; only the chats or targets the workspace allows are accepted. A refusal or failure is shown on the step with the text; do not retry it.",
+      { action: z.string().min(1), args: z.record(z.string(), z.unknown()) },
+      (a) => answer(() => tools.act!(a.action, a.args))())] : []),
   ]
 }
 
