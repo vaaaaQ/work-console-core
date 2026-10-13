@@ -63,7 +63,8 @@ Every endpoint except `/api/events` and `/api/snapshot` answers `200` with one r
 Actions the backend knows: `chat.open`, `chat.post`, `mail.send`, `review.vote`, `review.comment`,
 `work.setState`, `work.comment`, `work.start` and `time.fill`. `actionId` is unique per
 confirmation, and the gateway should drop a repeat. `mail.send` replies with `{replyTo, text}` or
-sends a new mail with `{to, cc?, subject, text}`, `to` and `cc` being lists of addresses.
+sends a new mail with `{to, cc?, subject, text}`, `to` and `cc` being lists of addresses. The
+`text` of `chat.post` and `mail.send` is the draft's Markdown, as written.
 `chat.open` takes `{to}`, a person's address or user id, and answers `{chat, name}`: the 1:1 with
 that person, the existing one when there is one. The chat list need not show it until a message is in it.
 

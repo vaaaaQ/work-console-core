@@ -69,12 +69,12 @@ test('mail get: the body as text and the attachment names', async () => {
   assert.equal(bad.requests.length, 0);
 });
 
-test('mail.send: a new mail and a reply through Graph', async () => {
+test('mail.send: a new mail as HTML and a reply through Graph', async () => {
   const sent = await run(act('mail.send', { to: ['sam.diaz@acme.example'], cc: ['lee.chan@acme.example'], subject: 'Notes', text: 'See below.' }, { config: cfg }),
     { ...graphTab, routes: [['POST', re(GRAPH + '/me/sendMail'), { status: 202 }]] });
   assert.deepEqual(ok(sent), { sent: true });
   assert.deepEqual(sent.requests[0].body, {
-    message: { subject: 'Notes', body: { contentType: 'Text', content: 'See below.' }, toRecipients: [{ emailAddress: { address: 'sam.diaz@acme.example' } }], ccRecipients: [{ emailAddress: { address: 'lee.chan@acme.example' } }] },
+    message: { subject: 'Notes', body: { contentType: 'HTML', content: '<p>See below.</p>' }, toRecipients: [{ emailAddress: { address: 'sam.diaz@acme.example' } }], ccRecipients: [{ emailAddress: { address: 'lee.chan@acme.example' } }] },
     saveToSentItems: true,
   });
   const reply = await run(act('mail.send', { replyTo: 'AAMkAD-m1', text: 'Thanks.' }, { config: cfg }),
@@ -88,13 +88,22 @@ test('mail.send: through Outlook REST with PascalCase bodies when only an Outloo
     { ...outlookTab, routes: [['POST', re(OUTLOOK + '/me/sendmail'), { status: 202 }]] });
   ok(sent);
   assert.deepEqual(sent.requests[0].body, {
-    Message: { Subject: 'Notes', Body: { ContentType: 'Text', Content: 'See below.' }, ToRecipients: [{ EmailAddress: { Address: 'sam.diaz@acme.example' } }], CcRecipients: [] },
+    Message: { Subject: 'Notes', Body: { ContentType: 'HTML', Content: '<p>See below.</p>' }, ToRecipients: [{ EmailAddress: { Address: 'sam.diaz@acme.example' } }], CcRecipients: [] },
     SaveToSentItems: true,
   });
   const reply = await run(act('mail.send', { replyTo: 'AAMkAD-m1', text: 'Thanks.' }, { config: cfg }),
     { ...outlookTab, routes: [['POST', re(OUTLOOK + '/me/messages/AAMkAD-m1/reply'), { status: 202 }]] });
   ok(reply);
   assert.deepEqual(reply.requests[0].body, { Comment: 'Thanks.' });
+});
+
+test('mail.send: the Markdown of a new mail goes as HTML, escaped, with backslashes as written', async () => {
+  const text = 'hi Sam,\nNotes:\n1. see [PR 7](https://dev.example/pr/7?a=1&b=2)\n2. **logs** at `\\\\files-01\\share`\n\na <b> & c';
+  const sent = await run(act('mail.send', { to: ['sam.diaz@acme.example'], subject: 'Notes', text }, { config: cfg }),
+    { ...graphTab, routes: [['POST', re(GRAPH + '/me/sendMail'), { status: 202 }]] });
+  ok(sent);
+  assert.deepEqual(sent.requests[0].body.message.body, { contentType: 'HTML',
+    content: '<p>hi Sam,<br>Notes:</p><ol><li>see <a href="https://dev.example/pr/7?a=1&amp;b=2">PR 7</a></li><li><b>logs</b> at <code>\\\\files-01\\share</code></li></ol><p>a &lt;b&gt; &amp; c</p>' });
 });
 
 test('mail.send: bad recipients or a missing subject are refused before any request; a lost answer is unknown', async () => {
