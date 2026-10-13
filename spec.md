@@ -1,57 +1,120 @@
-# AD-0005 — Restart Build after a design re-approval
+# AD-0012 — One Approve button on a draft that waits for commands
 
-## What happens today (reproduced)
+## Why
 
-The job is from the IAEA workspace (playbook `usie-dev-item`: Analysis → Tech design → **Build** (im1–im3) → Pull request (pr1 “Open the PR”…) → QA).
-The live IAEA console runs on iaea-pc, so its job record could not be read from here. The same playbook (same step ids) is the core's demo `dev-item`, and the bug reproduces there exactly:
+Some steps let a run prepare a command but not run it until the person says so. In the agents-dev
+playbook, Merge and push (ad6) and Deploy (ad7) say: *"run them only after an instruction approves that
+exact command; until then the draft is the command"*. AD-0009 is an example. Its draft was one
+`git push`, marked "Needs Valery's OK".
 
-```
-job at pr1 “Open the PR”
-stepReopen td1  → td1:cur td2:done im1:done im2:done im3:done pr1:cur   ← two live steps
-stepDone   td1  → nx pr1, journal: “step done; “Open the PR” is next.”
-```
-
-### Why
-
-- On the page, a passed step shows one button: **Reopen step** (`views/Drawer.tsx` `StepActs` → op `stepReopen`).
-- `stepReopen` (`src/model/transitions.ts`) only sets **that one step** back to `cur`. Every later step keeps its state: Build stays `done` and “Open the PR” stays `cur`.
-- When the design is done again, `advance()` moves to `atOf()`, the **first live step**. Build is done, so that is the still-current “Open the PR”. Nothing marks the old build as invalid.
-- The correct mechanism already exists: `returnTo`. It keeps the current pass as a round and restarts every step from the target step on as blank (AD-0001's round 2 went through Analysis → TDD again). But the page never offers it. Only sessions (MCP) and proposals can use it.
+Today the only way to approve is to type a reply in the draft's conversation that repeats each command
+word for word. That is slow, typos are easy, and nothing ties the approval to the commands the draft
+actually showed. The console reads nothing from the draft's words (architecture.md, LLM runs), so it
+cannot offer a button.
 
 ## What changes
 
-1. **Core, `stepReopen` on a passed step becomes a return.** When the step being reopened has a later step that was already reached (anything not `fut`/`tpl`), `stepReopen` does what `returnTo` does:
-   - the current pass is kept as a round (history, drafts and outputs are not lost);
-   - every step from the reopened one on starts blank. Build and PR come back as not reached, and open notes and live blockers carry over as `returnTo` already does;
-   - the journal says “Returned to “Technical design”: …, N steps from it on start again”.
-   - The reason: `stepReopen` gains an optional `why`. Without one it defaults to `reopened “<step>”`.
-   - A step with nothing reached after it (for example the last step, as when AD-0003 reopened Deploy) reopens exactly as it does today.
-2. **Page.** For a passed step that has reached steps after it, the button reads **Go back to this step…**. It asks for an optional reason and says that the later steps start again. For other steps it stays “Reopen step”.
-3. **MCP `command` description.** The `stepReopen` line notes that reopening a passed step restarts the steps after it.
-4. **A message sent in an earlier round is sent again and says what changed.** A restarted step's planned messages go out again in the new round, for example pr2 "Post in USIE DEV" for the new PR. No new stored field is needed. The earlier text comes from the latest kept round in which that step sent the message (`j.rounds[k].flow[sid].sent[i]`).
-   - **LLM run:** the prompt (`server/llm/prompt.ts`) gets a section "Sent in round N on <date>: <text>". Its rule: the new message is a resend, and it says briefly what changed since then. The cause is the reason the job went back (the round's `why`) and the new design.
-   - **Page:** the planned message in the step shows "Sent in round N" with the old text under it, and a hint to say what changed.
-   - A message that was never sent gets nothing extra.
-5. **Auto-ask.** `madeCurrent` already treats a step moved onto from `fut` as made current. So after the re-approval, “Branch from develop” / the TDD step becomes current and a `self`/`auto` LLM step there is asked by itself. `stepReopen` routed as a return is added to the same rule as `returnTo`, so a reopened `auto` step is asked as well.
+The draft names its commands in a structured field. The page shows them as a list with one **Approve**
+button. The backend turns that click into a reply that approves exactly those commands, in that order,
+in the draft's own session. Everything is generic core: no workplace, tool or host is named.
 
-Nothing else moves: `advance`, `atOf` and `returnTo` stay as they are. The rule depends only on step order, not on step names, so it covers “design” in any playbook, not only `usie-dev-item`.
+```
+run ── submit_draft {text, commands:[c1,c2]} ──▶ Flow.dr = {t, at, cm:[c1,c2]}
+                                                   │ page: list + [Approve] [Accept] [Edit…] [Reject…]
+person ── Approve ─▶ POST /api/runs/<id>/reply {intent:'approve', at}
+                                                   │ server builds q from dr.cm (never from the page)
+                                    runReply ─▶ same session: "run exactly c1, c2 …"
+run ── runs them, quotes output ── submit_draft {text}   (no commands) ─▶ normal draft, Accept
+```
+
+### 1. The draft carries its commands (model + run tools)
+
+- `DraftReport` and `Draft` gain `cm?: string[]`: the exact commands the draft waits to have approved.
+  - 1 to 10 commands. Each is trimmed and non-empty, at most 2000 characters, and may span lines.
+  - A bad list is `bad_args` while the run can still fix it, the same way a bad `return_to` is.
+- `runDraft` and `draftIn` store `cm`. A revised draft without commands clears it.
+- The journal line says "…is ready; waits for approval of N commands".
+- `submit_draft` in `server/llm/sdk.ts` gets `commands: z.array(z.string()).optional()`.
+  - `reportOf` hands it on.
+  - Cursor's run server uses the same `runToolDefs`, so it gets the field too.
+  - The tool text: *"commands: when the step's instruction says a command runs only after it is approved,
+    the exact commands, in order, that this draft waits to run. Leave it out otherwise. The text still
+    says what each one does."*
+- An auto step (`start: 'auto'`) never accepts a draft that has `cm`. It holds the draft for the
+  person, as it already does for `not_done`/`failed`.
+
+### 2. Approve: a fourth reply intent, built on the server
+
+- `RunIntent` gains `approve`. The page calls `POST /api/runs/<id>/reply {intent: 'approve', at}`. Any `t`
+  it sends is ignored.
+- `runner.reply` with `approve` checks:
+  - the step's draft has `cm`, otherwise 409 `no_commands`;
+  - `at` equals `dr.at`, otherwise 409 `stale`, so a draft revised after the page drew it is never
+    approved blind;
+  - the reply comes from the page. `via: 'session' | 'console'` gets 403 `not_yours`. An LLM, whether a
+    Claude Code session through MCP `draft_reply` or the console's own agent, never approves its own
+    commands. `draft_reply`'s intent enum leaves `approve` out.
+- `q` is built from `dr.cm`: `Approved, run exactly these commands, in this order:\n1. …\n2. …`. It is
+  the record of what was approved, and it shows in the conversation as "You · approve".
+- `REPLY_TAIL.approve` in `prompt.ts` reads: *"Run exactly these commands, in this order, and nothing else
+  that needs approval. Stop at the first that fails. Then call submit_draft with what each one printed.
+  If one failed, set outcome failed. A further command that needs approval goes in commands again."*
+- `runReply` journals `Approved N commands for "<step>": c1; c2`, then "LLM runs them", then "wait for it".
+- An `approve` turn does not auto-accept the next draft. The person reviews the output and accepts it.
+  The playbook says the step is not done until the command has run and its output is quoted.
+
+### 3. The page
+
+- The draft card in the step inspector (`Drawer.tsx`) and in Approvals (`ApCard`) show, when `dr.cm` is set:
+  - a "Waits for approval of N commands" heading and a numbered monospace list;
+  - **Approve** as the primary button. Accept becomes a secondary button and keeps its meaning: keep the
+    draft as the output without running anything.
+- Approve is hidden when the draft has no session to continue (the same condition as DraftTalk's box).
+  It is disabled while a run is on the step.
+- Approve is one click with no modal. The list right above it is what gets approved, and the server
+  takes the list from the stored draft, not from the page.
+- Live only, like the conversation. The demo draws the list but has no Approve.
+
+### 4. Docs
+
+- architecture.md, "Replies to a draft": an `approve` row, the three refusals, and `commands` beside
+  `outcome` in "LLM runs".
+- gateway-protocol.md: not touched. This is the console's own API, not the gateway.
+
+### Not in this job
+
+- **The agents-dev playbook text** lives in `D:\agents` (`ASK` in `workspaces/agents-dev/page.ts`) and
+  should say "list each in submit_draft's commands". That is a consumer change, a follow-up agents job
+  after the core sync. Until then runs learn the field only from the tool description.
+- **Partial approval** (tick some commands, not others) is left out. Reject with a reason, or a typed
+  reply, still covers it.
 
 ## How it will be proven
 
-- **Failing test first** (`transitions.test.ts`, demo `dev-item`): take the job to pr1, `stepReopen td1`, then `stepDone td1` (and the same through `runDraft` + `acceptDraft`). Expected: next step `td2`, then `im1`. Build steps are `fut`, `pr1` is not live, a round is kept, and `atOf` never jumps over Build. It fails today with `nx = pr1`.
-- Also tested: reopening the last step with nothing after it is unchanged; a run in flight refuses the reopen (`bad_state`, as `returnTo` does); `madeCurrent` for the reopened step; the Drawer label.
-- `npm test` and `npm run typecheck` green; `core-lock` is untouched in this repo.
-- **Live**: after merge, sync the core into `D:\agents\services\work-console` and run `update.ps1`, which Valery runs outside the console. On the deployed home console, a scratch job goes reopen design → done and lands on Build. A step that sent a message in round 1 shows "Sent in round 1". Screenshots of the button, the board column before and after, and the resend hint.
-
-Also tested for item 4: after a return, a step that sent a message in round 1 shows that text as "Sent in round 1", and its LLM prompt carries the text and the "say what changed" rule. A step that sent nothing gets neither.
-
-## Decisions (Valery, on the first draft)
-
-- **Q1, the reason for going back:** optional, with the default text.
-- **Q2, messages already sent:** they are sent again, and each one says what changed (item 4 above).
-- **Q3, the IAEA job:** Valery has already changed and restarted it by hand. The fix does not touch stored jobs.
-- **Q4, the live check:** on the home console (`D:\agents\services\work-console`).
+| Check | Where |
+|---|---|
+| `runDraft`/`draftIn` store `cm`, refuse 0, 11, empty, non-string and >2000-character commands, clear `cm` on a revision without commands, and journal the count | `src/model/transitions.test.ts` |
+| An auto step holds a draft with `cm` for the person | `transitions.test.ts` / `runner.test.ts` |
+| `submit_draft` takes `commands` and `reportOf` hands it on. Cursor's server lists the same schema | `server/llm/sdk.test.ts`, `cursor/serve.test.ts` |
+| `replyPrompt(q, 'approve')` ends with the approve tail | `server/llm/prompt.test.ts` |
+| `reply(..., 'approve')` builds `q` from the stored list, resumes the session and does not accept. It refuses `no_commands`, `stale` and via session/console | `server/llm/runner.test.ts` |
+| `POST /api/runs/:id/reply {intent:'approve', at}` works, ignores `t`, and gives 409 on a stale `at` | `server/http/app.test.ts` |
+| MCP `draft_reply` refuses `approve` | `server/mcp/mcp.test.ts` |
+| `npm test`, `npm run typecheck`, `npm run build && npm run smoke` all green | console |
+| **Live (Prove it live):** a console built from the job branch on a spare port, with a scripted SDK whose first turn submits a draft with two commands and whose reply turn submits their "output". Screenshots: the inspector card with the list and Approve, the same card in Approvals, the conversation after the click ("You · approve" plus the numbered list), and the journal line. Also quote the prompt the reply turn received | proof/ |
 
 ## Open questions (notes)
 
-- None.
+1. **One click, or a confirm modal?** The spec has one click, because that is what was asked and the list
+   sits right above the button. A modal would repeat the list. With one click there is no undo once the
+   run starts, only Cancel on the run.
+2. **Drafts handed in by hand** (MCP `submit_draft` from a Claude Code session) can carry `commands` too.
+   With no session for the console to continue, Approve stays hidden there, as DraftTalk's box does. Keep
+   the field on the MCP tool for symmetry, or leave it run-only for now? The spec keeps it, for symmetry.
+3. **Cap of 10 commands**, the same as `llmActs`' 10 acts a run. Is that enough for a deploy? (ad7 is
+   usually one or two.)
+4. **Push notification:** should a draft that waits for commands push "N commands wait for approval"
+   instead of the usual draft push? Left out unless wanted.
+5. **Run permissions:** Approve does not widen the run's tools. If the workspace's `llm` allowlist does
+   not allow `git push` or the deploy script, the run fails the command and says so in a `failed` draft.
+   That is correct, but it is worth knowing before the first live use on agents-dev.
