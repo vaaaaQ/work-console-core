@@ -30,4 +30,9 @@ in the tab per last message and stops after 2.5 s, so a slow Graph never stalls 
 
 | Action | Args | Token scope (any one) |
 |---|---|---|
-| `chat.post` | `{chat, text}` posts plain text | `Chat.ReadWrite`, `ChatMessage.Send` |
+| `chat.post` | `{chat, text}` posts the text as HTML | `Chat.ReadWrite`, `ChatMessage.Send` |
+
+A draft is Markdown, so `chat.post` turns it into HTML: `[label](url)` with an http(s) URL is a link,
+`**bold**` is bold, `` `code` `` is code, `1. ` and `- ` lines are lists, a blank line parts paragraphs
+and a single newline breaks the line. `&`, `<` and `>` are escaped and backslashes stay as written, so a
+UNC path survives. The 28 000 limit applies to the HTML too.

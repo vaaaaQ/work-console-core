@@ -46,6 +46,33 @@ async function (call, env) {
       ? (ENTITIES[e] ?? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)))
       : (ENTITIES[e.toLowerCase()] ?? m))
     .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  // a draft is Markdown: links, bold, code, lists and paragraphs go as HTML; backslashes stay as written
+  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const INLINE = /`([^`\n]+)`|\[([^\]\n]+)\]\((https?:\/\/(?:[^\s()]|\([^\s()]*\))+)\)|\*\*(?!\s)(.+?)(?<!\s)\*\*/g;
+  const inline = (s) => {
+    let out = '', at = 0;
+    for (const m of s.matchAll(INLINE)) {
+      out += esc(s.slice(at, m.index)) + (m[1] !== undefined ? '<code>' + esc(m[1]) + '</code>'
+        : m[2] !== undefined ? '<a href="' + esc(m[3]).replace(/"/g, '&quot;') + '">' + inline(m[2]) + '</a>'
+        : '<b>' + inline(m[4]) + '</b>');
+      at = m.index + m[0].length;
+    }
+    return out + esc(s.slice(at));
+  };
+  const LIST = /^(?:(\d{1,3})\.|-)[ \t]+(.*)$/;
+  const block = (b) => {
+    const runs = [];
+    for (const line of b.split('\n')) {
+      const m = LIST.exec(line), tag = m ? (m[1] ? 'ol' : 'ul') : 'p', last = runs[runs.length - 1];
+      // an indented line under an item goes on with that item
+      if (!m && last && last.tag !== 'p' && /^\s/.test(line)) last.items[last.items.length - 1] += '<br>' + inline(line.trim());
+      else if (last && last.tag === tag) last.items.push(inline((m ? m[2] : line).trim()));
+      else runs.push({ tag, start: m && m[1] ? +m[1] : 1, items: [inline((m ? m[2] : line).trim())] });
+    }
+    return runs.map((r) => (r.tag === 'p' ? '<p>' + r.items.join('<br>') + '</p>'
+      : '<' + r.tag + (r.start !== 1 ? ' start="' + r.start + '"' : '') + '>' + r.items.map((i) => '<li>' + i + '</li>').join('') + '</' + r.tag + '>')).join('');
+  };
+  const toHtml = (text) => String(text).replace(/\r\n?/g, '\n').trim().split(/\n(?:[ \t]*\n)+/).map(block).join('');
   const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
   const str = (v) => (v === null || v === undefined ? '' : String(v));
   const iso = (t) => {
@@ -213,9 +240,11 @@ async function (call, env) {
   };
 
   const chatPost = async (args) => {
-    const chat = chatId(args.chat, 'chat'), text = argStr(args, 'text', { max: MAX_TEXT });
+    const chat = chatId(args.chat, 'chat'), html = toHtml(argStr(args, 'text', { max: MAX_TEXT }));
+    // Teams' limit is on the posted HTML, which escaping makes longer than the text
+    if (html.length > MAX_TEXT) fail('bad_args', 'text is longer than ' + MAX_TEXT + ' as HTML');
     const t = token(SCOPES.post);
-    const res = await graph(t, 'POST', GRAPH + '/chats/' + encodeURIComponent(chat) + '/messages', { body: { contentType: 'text', content: text } });
+    const res = await graph(t, 'POST', GRAPH + '/chats/' + encodeURIComponent(chat) + '/messages', { body: { contentType: 'html', content: html } });
     return { messageId: res && res.id ? String(res.id) : null };
   };
 

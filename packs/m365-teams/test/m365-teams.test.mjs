@@ -81,10 +81,17 @@ test('chat get: a cursor to another host or another chat is refused before the t
   assert.equal(bad.requests.length, 0);
 });
 
-test('chat.post: plain text to the chat; a lost answer is unknown; a malformed chat id is refused', async () => {
+const posted = async (text) => {
+  const r = await run(act('chat.post', { chat: CHAT_2, text }, { config: cfg }), { ...tab, routes: [postRoute(CHAT_2, { status: 201, json: { id: 'm22' } })] });
+  ok(r);
+  assert.equal(r.requests[0].body.body.contentType, 'html');
+  return r.requests[0].body.body.content;
+};
+
+test('chat.post: the text goes as HTML to the chat; a lost answer is unknown; a malformed chat id is refused', async () => {
   const r = await run(act('chat.post', { chat: CHAT_2, text: 'On it.' }, { config: cfg }), { ...tab, routes: [postRoute(CHAT_2, { status: 201, json: { id: 'm22' } })] });
   assert.deepEqual(ok(r), { messageId: 'm22' });
-  assert.deepEqual(r.requests[0].body, { body: { contentType: 'text', content: 'On it.' } });
+  assert.deepEqual(r.requests[0].body, { body: { contentType: 'html', content: '<p>On it.</p>' } });
   const lost = await run(act('chat.post', { chat: CHAT_2, text: 'x' }, { config: cfg }), { ...tab, routes: [postRoute(CHAT_2, { status: 502 })] });
   assert.equal(lost.result.code, 'unknown');
   for (const chat of ['19:a/b', '../me', '']) {
@@ -92,6 +99,41 @@ test('chat.post: plain text to the chat; a lost answer is unknown; a malformed c
     assert.equal(bad.result.code, 'bad_args', chat);
     assert.equal(bad.requests.length, 0);
   }
+  const long = await run(act('chat.post', { chat: CHAT_2, text: '<'.repeat(8000) }, { config: cfg }), tab);
+  assert.equal(long.result.code, 'bad_args');
+  assert.match(long.result.message, /as HTML/);
+  assert.equal(long.requests.length, 0);
+});
+
+test('chat.post: blank lines part paragraphs, a single newline is a line break', async () => {
+  assert.equal(await posted('hi Sam,\r\nTwo things.\n\n \nThanks\n'), '<p>hi Sam,<br>Two things.</p><p>Thanks</p>');
+});
+
+test('chat.post: &, < and > in the text are escaped, so it never carries markup', async () => {
+  assert.equal(await posted('a <b>x</b> & <script>c</script> > d'), '<p>a &lt;b&gt;x&lt;/b&gt; &amp; &lt;script&gt;c&lt;/script&gt; &gt; d</p>');
+});
+
+test('chat.post: an http(s) link becomes an anchor with its URL escaped; any other scheme stays text', async () => {
+  assert.equal(await posted('See [PR 7](https://dev.example/pr/7?a=1&b="2") and [the page](http://wiki.example/A_(b)).'),
+    '<p>See <a href="https://dev.example/pr/7?a=1&amp;b=&quot;2&quot;">PR 7</a> and <a href="http://wiki.example/A_(b)">the page</a>.</p>');
+  assert.equal(await posted('[x](javascript:alert(1)) [y](ftp://h.example/f)'), '<p>[x](javascript:alert(1)) [y](ftp://h.example/f)</p>');
+});
+
+test('chat.post: **bold** and `code`; nothing inside code is formatted', async () => {
+  assert.equal(await posted('**Note:** run `a < b` then `**not bold**`, ** not bold ** either'),
+    '<p><b>Note:</b> run <code>a &lt; b</code> then <code>**not bold**</code>, ** not bold ** either</p>');
+  assert.equal(await posted('**see [PR 7](https://dev.example/pr/7)**'), '<p><b>see <a href="https://dev.example/pr/7">PR 7</a></b></p>');
+});
+
+test('chat.post: "1. " lines are a numbered list, "- " lines a bulleted one, an indented line goes on with its item', async () => {
+  assert.equal(await posted('Two questions:\n1. first\n2. second, **bold**\n\n- a\n- b\n  more of b\nThanks'),
+    '<p>Two questions:</p><ol><li>first</li><li>second, <b>bold</b></li></ol><ul><li>a</li><li>b<br>more of b</li></ul><p>Thanks</p>');
+  assert.equal(await posted('1. one\n\n3. three\n4. four'), '<ol><li>one</li></ol><ol start="3"><li>three</li><li>four</li></ol>');
+});
+
+test('chat.post: backslashes stay as written, so a UNC path survives', async () => {
+  assert.equal(await posted('Logs: \\\\files-01\\share\\logs, also `\\\\files-01\\share`'),
+    '<p>Logs: \\\\files-01\\share\\logs, also <code>\\\\files-01\\share</code></p>');
 });
 
 test('tokens: a read-only token cannot post; an expired one cannot read', async () => {
