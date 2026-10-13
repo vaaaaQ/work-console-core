@@ -27,6 +27,7 @@ export const adapt = {
     const o: Chat = { id: s(i.id), name: s(i.name), kind: s(i.kind), unread: Number(i.unread) || 0, sum: from ? `${from}: ${prev}` : prev, msgs: [], at: when(i.lastAt, now), link: s(i.link) }
     if (i.hidden === true) o.hidden = 1
     if (i.mentioned === true) o.mentioned = 1
+    if (i.kept === true) o.kept = 1
     return o
   },
   msg(m: Any, now?: Date): Msg {

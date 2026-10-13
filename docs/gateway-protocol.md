@@ -60,10 +60,16 @@ Every endpoint except `/api/events` and `/api/snapshot` answers `200` with one r
 | `POST /api/state/new-job-id` | none | `{id: 'J-0001'}`, always `J-NNNN`; a console renames it to its workspace's prefix and stores the job under that id, as `put` takes any id |
 | `GET /api/events` | | SSE: `status` and `delta` frames |
 
-Actions the backend knows: `chat.post`, `mail.send`, `review.vote`, `review.comment`,
+Actions the backend knows: `chat.open`, `chat.post`, `mail.send`, `review.vote`, `review.comment`,
 `work.setState`, `work.comment`, `work.start` and `time.fill`. `actionId` is unique per
 confirmation, and the gateway should drop a repeat. `mail.send` replies with `{replyTo, text}` or
 sends a new mail with `{to, cc?, subject, text}`, `to` and `cc` being lists of addresses.
+`chat.open` takes `{to}`, a person's address or user id, and answers `{chat, name}`: the 1:1 with
+that person, the existing one when there is one. The chat list need not show it until a message is in it.
+
+`people` is a get-only concept: `GET /api/items/people/{query}` answers `{src, people}`, at most 10
+people `{name, mail, title}` whose name or mail has the query in it, `src` being `directory` or
+`people` (those the source ranks from chats, mail and meetings). A query is 2 to 100 characters.
 
 A work get may list its pictures in `images`, at most 20, each `{ref, name, from}`. Its text names
 each one `[image N]`, N being its place in that list. The list puts the description's, the repro

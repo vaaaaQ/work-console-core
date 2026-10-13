@@ -40,8 +40,8 @@ test('resolveAct refuses an action outside the allowed set and takes one inside 
   assert.equal((await resolveAct({ action: 'mail.send', actionId: 'a1', args: { to: ['x@example.com'] } }, chats, allowed)).action, 'mail.send')
 })
 
-test('a gateway workspace keeps its eight actions', async () => {
-  assert.equal(GATEWAY_ACTIONS.size, 8)
+test('a gateway workspace keeps its nine actions', async () => {
+  assert.equal(GATEWAY_ACTIONS.size, 9)
   for (const action of GATEWAY_ACTIONS) assert.equal((await resolveAct({ action, args: { chatName: 'Team Dev' } }, chats)).action, action)
   await assert.rejects(resolveAct({ action: 'rm -rf', args: {} }, chats), refused('unknown_action'))
 })

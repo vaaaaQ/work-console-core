@@ -52,7 +52,7 @@ export function Chats() {
             return (
               <button key={x.id} className="li" aria-current={x.id === c?.id} onClick={() => pickChat(x.id)}>
                 <span className="r1"><span className="nm">{x.name}</span>{x.unread ? <span className="unr">{x.unread}</span> : null}<span className="ts">{l?.at || ''}</span></span>
-                <span className="sub">{x.hidden && x.mentioned ? <span className="tag">hidden · mentioned you</span> : null}{x.kind} · {l?.me ? 'You: ' : ''}{l?.t || ''}</span>
+                <span className="sub">{x.hidden && x.mentioned ? <span className="tag">hidden · mentioned you</span> : null}{x.kept && !x.at ? <span className="tag" title="Kept by the console; no recent messages">kept</span> : null}{x.kind}{l ? ` · ${l.me ? 'You: ' : ''}${l.t}` : ''}</span>
               </button>
             )
           })}</div>

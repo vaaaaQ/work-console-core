@@ -31,7 +31,7 @@ export interface FakeGateway {
   pushStatus(): void
 }
 
-const ACTIONS = new Set(['chat.post', 'mail.send', 'review.vote', 'review.comment', 'work.setState', 'work.comment', 'work.start', 'time.fill'])
+const ACTIONS = new Set(['chat.open', 'chat.post', 'mail.send', 'review.vote', 'review.comment', 'work.setState', 'work.comment', 'work.start', 'time.fill'])
 /** B's concepts */
 const STATE = ['jobs', 'runs', 'playbooks', 'marks']
 const CONSOLE_ONLY = new Set(['/api/act', '/api/state/put', '/api/state/new-job-id'])
@@ -39,6 +39,13 @@ const MAX_DOC = 256 * 1024
 
 /** the demo's one picture, a 32x20 png, for every image a demo work item lists */
 const PIC = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAUCAIAAABj86gYAAAAKElEQVR42mP4SmPAMGoBSRbcsTGiChq1YNSCUQtGLaDEgtHiekAsAAD8b2YsPCRrAwAAAABJRU5ErkJggg=='
+
+/** the directory the people get searches */
+const PEOPLE0 = [
+  { name: 'Sam Rivera', mail: 'sam.rivera@acme.example', title: 'Platform Engineer' },
+  { name: 'Priya Nair', mail: 'priya.nair@acme.example', title: 'Systems Administrator' },
+  { name: 'Lena Ortiz', mail: 'lena.ortiz@acme.example', title: null },
+]
 
 /** A's concepts; an empty one still answers, a seed may add more */
 const BASE = ['chat', 'mail', 'cal', 'work', 'review', 'board', 'time', 'ci']
@@ -57,6 +64,8 @@ export async function startFakeGateway(o: {
   for (const k of [...BASE, ...Object.keys(seed.concepts)]) cs[k] ??= { rev: 1, items: seed.concepts[k] ?? [] }
   for (const k of STATE) cs[k] = { rev: 1, items: [] }
   const acts: ActReq[] = [], streams = new Set<ServerResponse>()
+  // the 1:1s chat.open made: read by id, as the pack reads any chat, though the list does not show them
+  const opened = new Set<string>()
   let down = false, seq = 0
   const now = () => new Date().toISOString()
   const find = (concept: string, id: string) => cs[concept].items.find((i) => i.id === id)
@@ -160,6 +169,12 @@ export async function startFakeGateway(o: {
         const im = Object.values(WORK0).flatMap((d) => d.images ?? []).find((i) => i.ref === id)
         return json(200, im ? { status: 'ok', rev: 1, items: { name: im.name, mime: 'image/png', data: PIC, width: 32, height: 20 } } : { status: 'not_found', message: `no image ${id}` })
       }
+      // get-only: the people whose name or mail has the query in it
+      if (concept === 'people') {
+        const q = id.trim().toLowerCase()
+        if (q.length < 2) return json(200, { status: 'bad_args', message: 'the query needs 2 characters or more' })
+        return json(200, { status: 'ok', rev: 1, items: { src: 'directory', people: PEOPLE0.filter((p) => `${p.name} ${p.mail}`.toLowerCase().includes(q)) } })
+      }
       if (!c) return json(200, { status: 'source_error', message: `unknown concept ${concept}` })
       if (c.down) return json(200, { status: c.down, message: `${concept} is ${c.down}` })
       if (STATE.includes(concept)) {
@@ -168,6 +183,7 @@ export async function startFakeGateway(o: {
       }
       // a PR the demo knows reads as the pack's review get, listed or not
       if (concept === 'review' && Object.hasOwn(PRS0, id)) return json(200, { status: 'ok', rev: c.rev, items: { threads: [], pr: PRS0[id] } })
+      if (concept === 'chat' && opened.has(id)) return json(200, { status: 'ok', rev: c.rev, items: { messages: threads[id] || [] } })
       const it = c.items.find((i) => i.id === id)
       if (!it) return json(200, { status: 'source_error', message: `no ${concept} ${id}` })
       if (Object.hasOwn(gets, concept)) return json(200, { status: 'ok', rev: c.rev, items: gets[concept](id, it) })
@@ -186,6 +202,13 @@ export async function startFakeGateway(o: {
       acts.push(a)
       if (!ACTIONS.has(a.action)) return json(200, { status: 'unknown_action', message: `unknown action ${a.action}` })
       if (a.action === 'work.start') return json(200, start(String(a.args?.id ?? '')))
+      // as the pack: a 1:1 with the person, whom the chat list does not show until a message is in it
+      if (a.action === 'chat.open') {
+        const to = String(a.args?.to ?? '').trim().toLowerCase(), p = PEOPLE0.find((x) => x.mail === to)
+        if (!/^[^@\s]+@[^@\s]+$/.test(to)) return json(200, { status: 'bad_args', message: 'to is not an address' })
+        opened.add(`c-1on1-${to}`)
+        return json(200, { status: 'ok', rev: 0, items: { chat: `c-1on1-${to}`, name: p?.name ?? to } })
+      }
       if (a.action === 'time.fill') {
         // as the pack: the month's empty days get hours, the others come back skipped, and the concept changes
         const f = a.args as unknown as FillArgs, it = find('time', String(f.month))

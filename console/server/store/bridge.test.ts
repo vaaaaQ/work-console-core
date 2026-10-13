@@ -95,8 +95,9 @@ test('a chat mark hides its thread from the snapshot and its deletion brings it 
   const { fake, store, stop } = await setup()
   try {
     const chats = async () => ((await (await fetch(`${fake.url}/api/snapshot?concepts=chat`, { headers: { authorization: `Bearer ${fake.token}` } })).json()) as any).concepts.chat.items.map((c: { id: string }) => c.id)
-    await store.putMark('chat:c1', { hidden: true, name: 'Team Dev' })
-    assert.deepEqual((await store.marks())['chat:c1'], { hidden: true, name: 'Team Dev' })
+    await store.putMark('chat:c1', { kept: true, name: 'Team Dev' })
+    await store.putMark('chat:c1', { hidden: true })
+    assert.deepEqual((await store.marks())['chat:c1'], { hidden: true, kept: true, name: 'Team Dev' })
     assert.ok(!(await chats()).includes('c1'))
     await store.putMark('chat:c1', null)
     await store.putMark('chat:none', null)

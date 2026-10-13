@@ -4,18 +4,20 @@ import { PRI } from '../data/demo.ts'
 import { PACKS } from '../data/packs.ts'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
-import { down } from '../live/boot.ts'
+import { down, loadSources } from '../live/boot.ts'
 import { actFor, addrs, isAddr } from '../live/adapt.ts'
 import {
   S, allSent, applyLocal, byId, chName, chatOf, clearNew, ctxRows, draftReport, goesBack, isLive, jsteps, keyShort, llmText, plainT, postToChat, putJob,
   restore, rvState, snap, stepOf, tplOf,
 } from '../model/world.ts'
 import { openOf } from '../model/blockers.ts'
+import { ctxOf } from '../model/context.ts'
 import { askText } from '../model/transitions.ts'
 import type { BadgeKind, Cmd, Job, JobStatus, RunRec } from '../model/types.ts'
 import { commit } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
 import { CancelBtn, copy } from '../ui/bits.tsx'
+import { ChatTo } from '../ui/ChatTo.tsx'
 import { closeModal, modal } from '../ui/modal.tsx'
 import { toast } from '../ui/toasts.tsx'
 import { VoiceField } from '../ui/VoiceField.tsx'
@@ -289,22 +291,45 @@ export function editDraft(id: string, sid: string) {
 /** where a planned message goes: a chat by id (chatOf), the job's work item, or the mail it came from */
 const targetOf = (j: Job, k: string, lbl: string) => k === 'work' ? keyShort(j) : k === 'mail' ? j.mail || '' : k === 'chat' ? chatOf(j, lbl)?.id || '' : lbl
 
+/** the chat the To picked: a listed one as it is, a person's or an address's 1:1 opened first; it joins the job's
+    context, so the next message finds it and a reply in it is seen */
+async function chatTo(j: Job, fd: FormData): Promise<{ id: string; name: string } | null> {
+  const addr = String(fd.get('toAddr') || ''), name = String(fd.get('toName') || '')
+  let id = String(fd.get('toChat') || ''), nm = name
+  if (!id && !addr) { toast('Pick who it goes to first.'); return null }
+  if (!id && !LIVE.on) id = `c-1on1-${addr.toLowerCase()}`
+  else if (!id) {
+    const no = (why: string) => { toast(`No chat opened with ${addr}: ${why}. Nothing was sent.`); return null }
+    try {
+      const r = await api.act(j.ws, 'chat.open', { to: addr }, j.id), res = (r.result ?? {}) as { chat?: unknown; name?: unknown }
+      if (r.status !== 'ok' || typeof res.chat !== 'string') return no(r.error?.message || r.error?.code || 'the bridge named no chat')
+      id = res.chat
+      if (typeof res.name === 'string' && res.name) nm = res.name
+    } catch (e) { return no(failText(e)) }
+  }
+  if (!ctxOf(j).some((it) => it.k === 'chat' && it.id === id) && !(await doCmd(j.id, { op: 'ctxAdd', k: 'chat', id, name: nm }, null))) return null
+  return { id, name: nm }
+}
+
 export function tplSend(id: string, sid: string, i: number) {
   const j0 = byId(id)
   if (!j0) return
   const [k, lbl, t0, head] = tplOf(j0, sid)[i], txt = plainT(j0, t0), unk = [...txt.matchAll(/\{(\w+)\}/g)].map((m) => m[1])
   // a mail with To is a new mail: its head is checked and sent with it
   const nm = k === 'mail' && !!lbl
+  // a chat message whose label names no chat, in a job with no single chat of its own, asks who it goes to
+  const ask = k === 'chat' && !targetOf(j0, k, lbl)
   modal({
     title: 'Review and send', form: 'tpl',
     body: <>
       <div className="src"><Ic n={k === 'work' ? 'file' : k === 'mail' ? 'mail' : 'message'} sm /> {nm ? `${PACKS[j0.ws].src.mail?.n || 'mail'} · new mail` : chName(j0, k, lbl)}</div>
+      {ask ? <div className="field"><span>To</span><ChatTo ws={j0.ws} /></div> : null}
       {nm ? <>
         <label className="field"><span>To</span><input className="inp" name="to" required defaultValue={plainT(j0, lbl)} /></label>
         <label className="field"><span>CC</span><input className="inp" name="cc" defaultValue={plainT(j0, head?.cc || '')} /></label>
         <label className="field"><span>Subject</span><input className="inp" name="subject" required defaultValue={plainT(j0, head?.subject || '')} /></label>
       </> : null}
-      <label className="field"><span>Message</span><VoiceField name="t" target="people" rows={6} autoFocus defaultValue={txt} ctx={txt} /></label>
+      <label className="field"><span>Message</span><VoiceField name="t" target="people" rows={6} autoFocus={!ask} defaultValue={txt} ctx={txt} /></label>
       {unk.length ? <p className="why" style={{ margin: 0, color: 'var(--wait)' }}><Ic n="warn" sm /> Fill in {unk.map((u) => '{' + u + '}').join(', ')} before sending.</p> : null}
       <p className="hint" style={{ margin: 0 }}>{LIVE.on ? 'Sends through the bridge; recorded here once it went out.' : 'Demo: sending only records it here.'}</p>
     </>,
@@ -319,11 +344,18 @@ export function tplSend(id: string, sid: string, i: number) {
         if (!addrs(mail.to).length || !mail.subject) { toast('A new mail needs To and a subject.'); return }
         if (bad.length) { toast(`Not a mail address: ${bad.join(', ')}`); return }
       }
-      const to0 = targetOf(j, k, lbl)
-      if (k === 'chat' && !to0) { toast(`No chat to send to: no chat is named ${lbl}, and the job has no single chat of its own. Add one to its context.`); return }
+      let to0 = targetOf(j, k, lbl), via = ''
+      if (k === 'chat' && !to0) {
+        const c = await chatTo(j, fd)
+        if (!c) return
+        to0 = c.id; via = c.name
+      }
       if (!(await sendVia(k, to0, t, id, mail))) return
       closeModal()
-      const to = mail ? chName(j, k, addrs(mail.to).join(', ') + (addrs(mail.cc).length ? `; cc ${addrs(mail.cc).join(', ')}` : '')) : chName(j, k, lbl)
+      // a chat opened here is listed from now on
+      if (via && LIVE.on) void loadSources(j.ws, ['chat'])
+      const to = via ? `${PACKS[j.ws].src.chat?.n || 'chat'} · ${via}`
+        : mail ? chName(j, k, addrs(mail.to).join(', ') + (addrs(mail.cc).length ? `; cc ${addrs(mail.cc).join(', ')}` : '')) : chName(j, k, lbl)
       const r = await doCmd(id, { op: 'sent', step: sid, i, t, to, ch: nm ? '' : to0 ?? '', ...(mail ? { rto: addrs(mail.to).join(', ') } : {}) }, null)
       if (!r) return
       if (!LIVE.on) commit(() => postToChat(r.job, k, lbl, t))

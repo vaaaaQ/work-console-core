@@ -210,6 +210,10 @@ export const sources = (ws: string, concepts: string[]) =>
 export const front = (ws: string, host: string) => wsCall<{ ok: boolean }>(ws, 'POST', '/browser/front', { host })
 export const chatThread = async (ws: string, id: string) =>
   (await wsCall<{ item: { messages?: Msg[] } }>(ws, 'GET', `/sources/chat/${enc(id)}`)).item.messages || []
+export type Person = { name: string; mail: string; title: string | null }
+/** people whose name or mail has q in it: the directory's, or else those the source ranks from chats, mail and meetings */
+export const people = async (ws: string, q: string, signal?: AbortSignal) =>
+  (await wsCall<{ item: { people?: Person[] } }>(ws, 'GET', `/sources/people/${enc(q)}`, undefined, 20000, signal)).item.people || []
 export const mailItem = async (ws: string, id: string) =>
   (await wsCall<{ item: { body?: string } }>(ws, 'GET', `/sources/mail/${enc(id)}`)).item.body || ''
 export const markMail = (ws: string, id: string, m: { done?: boolean; job?: string }) => wsCall<object>(ws, 'POST', `/mail/${enc(id)}/mark`, m)

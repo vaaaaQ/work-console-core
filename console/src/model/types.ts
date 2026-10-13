@@ -191,8 +191,9 @@ export interface RunRec {
 /** at = time of day; ts = the journal entry's ISO time, which Home orders logs that span days by (the demo's seeded rows have none) */
 export interface LogEntry extends New { at: string; job: string; a: string; l: Lamp; t: string; ts?: string }
 export interface Msg extends New { who: string; me?: 1; bot?: 1; at: string; t: string }
-/** hidden + mentioned: a thread the console hides, listed while an unread message mentions me */
-export interface Chat { id: string; name: string; kind: string; unread: number; sum: string; msgs: Msg[]; at?: string; link?: string; hidden?: 1; mentioned?: 1 }
+/** hidden + mentioned: a thread the console hides, listed while an unread message mentions me; kept: one the console
+    found or used, listed after the source drops it (then with no at) */
+export interface Chat { id: string; name: string; kind: string; unread: number; sum: string; msgs: Msg[]; at?: string; link?: string; hidden?: 1; mentioned?: 1; kept?: 1 }
 export type MailCat = 'reply' | 'wait' | 'fyi' | 'auto'
 export interface Mail {
   id: string; cat: MailCat; from: string; subj: string; at: string; sum: string; body: string

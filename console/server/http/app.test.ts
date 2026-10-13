@@ -627,6 +627,53 @@ test('chats: a thread is hidden in B from the PC and unhidden from a paired devi
   } finally { await stop() }
 })
 
+test('chats: a person found in the directory gets a 1:1 that stays listed, takes a post by name and outlives hide and unhide', async () => {
+  const { lp, fakes, spaces, stop } = await setup({ one: true })
+  const store = spaces.get('acme').store, mark = async (id: string) => (await store.marks())[`chat:${id}`]
+  const chats = async () => (await call(lp, 'GET', '/api/ws/acme/sources?concepts=chat')).json.concepts.chat.items as { id: string; name: string; kept?: 1; at: string }[]
+  try {
+    const found = await call(lp, 'GET', '/api/ws/acme/sources/people/priya')
+    assert.equal(found.status, 200, found.text)
+    assert.deepEqual(found.json.item, { src: 'directory', people: [{ name: 'Priya Nair', mail: 'priya.nair@acme.example', title: 'Systems Administrator' }] })
+
+    const o = await call(lp, 'POST', '/api/ws/acme/act', { body: { action: 'chat.open', args: { to: 'priya.nair@acme.example' } } })
+    assert.equal(o.status, 200, o.text)
+    const id = o.json.result.chat
+    assert.deepEqual(o.json.result, { chat: id, name: 'Priya Nair' })
+    assert.deepEqual(await mark(id), { kept: true, name: 'Priya Nair' })
+    const listed = (await chats()).find((c) => c.id === id)
+    assert.deepEqual([listed?.name, listed?.kept, listed?.at], ['Priya Nair', 1, ''], 'listed although the source does not list it')
+    const thread = await call(lp, 'GET', `/api/ws/acme/sources/chat/${encodeURIComponent(id)}`)
+    assert.equal(thread.status, 200, 'its thread reads by id: ' + thread.text)
+
+    const p = await call(lp, 'POST', '/api/ws/acme/act', { body: { action: 'chat.post', args: { chatName: 'PRIYA NAIR', text: 'hi' } } })
+    assert.equal(p.json.status, 'ok', p.text)
+    assert.deepEqual(fakes.acme.acts.at(-1)?.args, { chat: id, text: 'hi' })
+
+    // a listed chat posted to is kept under the name the source gives it
+    const team = (await chats()).find((c) => !c.kept)!
+    await call(lp, 'POST', '/api/ws/acme/act', { body: { action: 'chat.post', args: { chatName: team.name, text: 'x' } } })
+    assert.deepEqual(await mark(team.id), { kept: true, name: team.name })
+
+    await call(lp, 'POST', `/api/ws/acme/chats/${encodeURIComponent(id)}/hide`, { body: { hidden: true } })
+    assert.deepEqual(await mark(id), { hidden: true, kept: true, name: 'Priya Nair' })
+    assert.ok(!(await chats()).some((c) => c.id === id))
+    await call(lp, 'POST', `/api/ws/acme/chats/${encodeURIComponent(id)}/hide`, { body: { hidden: false } })
+    assert.deepEqual(await mark(id), { kept: true, name: 'Priya Nair' })
+    assert.ok((await chats()).some((c) => c.id === id))
+  } finally { await stop() }
+})
+
+test('a chat a job adds to its context is kept', async () => {
+  const { lp, spaces, stop } = await setup({ one: true })
+  try {
+    const j = await call(lp, 'POST', '/api/jobs', { body: { t: 'Ask Lena', key: 'NEW', pb: 'action', prj: 'platform', ws: 'acme', ctx: [{ k: 'chat', id: 'c-lena', name: 'Lena Ortiz' }] } })
+    assert.equal(j.status, 200, j.text)
+    await until(async () => (await spaces.get('acme').store.marks())['chat:c-lena']?.kept === true)
+    assert.equal((await spaces.get('acme').store.marks())['chat:c-lena'].name, 'Lena Ortiz')
+  } finally { await stop() }
+})
+
 test('time months pass through as the bridge gives them; a fill hands its result to the page', async () => {
   const { lp, stop } = await setup()
   try {

@@ -464,6 +464,14 @@ p.cx-t{font-family:var(--font)}
 .pal li{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;cursor:pointer}
 .pal li[aria-selected="true"]{background:var(--sunken)}
 .pal li small{margin-left:auto;font:500 11px var(--mono);color:var(--faint);white-space:nowrap}
+/* a chat message's To: a chat, a person or an address */
+.to .inp{width:100%}
+.to-l{list-style:none;margin:4px 0 0;padding:4px;border:1px solid var(--line);border-radius:8px;max-height:220px;overflow-y:auto}
+.to-l li{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;min-width:0}
+.to-l li[aria-selected="true"]{background:var(--sunken)}
+.to-l li[aria-disabled="true"]{cursor:default}
+.to-l li small{margin-left:auto;font:500 11px var(--mono);color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%}
+.to-pick{display:flex;align-items:center;gap:8px;min-height:34px;flex-wrap:wrap}
 .pbc{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
 .pbc label{position:relative;display:grid;gap:3px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r);background:var(--raised);cursor:pointer}
 .pbc label small{color:var(--muted);font-size:12px}

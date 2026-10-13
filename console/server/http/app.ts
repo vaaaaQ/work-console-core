@@ -7,6 +7,7 @@ import type * as T from '../../src/model/transitions.ts'
 import type { UpdateKind, UpdateView } from '../../src/model/update.ts'
 import type { Cmd, Job, Playbook, RunIntent, RunRec, Tpl } from '../../src/model/types.ts'
 import { resolveAct } from '../bridge/actions.ts'
+import { keep, withKept, withKeptNames } from '../bridge/kept.ts'
 import { GatewayError, READY } from '../bridge/wire.ts'
 import type { ActRes, ConceptReply } from '../bridge/wire.ts'
 import { HttpError, downError } from '../events.ts'
@@ -278,13 +279,15 @@ export function createApp(d: Deps) {
       raw = Object.fromEntries(concepts.map((c) => [c, { status: 'unavailable', message }]))
     }
     const out: Record<string, ConceptReply> = {}
+    // a store that cannot answer leaves the source's chat list as it is
+    const marks = concepts.includes('chat') ? await s.store.marks().catch(() => ({})) : {}
     for (const c of concepts) {
       const r = raw[c] || { status: 'unavailable', message: 'the bridge did not answer for this concept' }
       if (!READY.has(r.status) || !Array.isArray(r.items)) { out[c] = { status: r.status === 'ok' ? 'unavailable' : r.status, message: r.message, ...(r.host ? { host: r.host } : {}) }; continue }
       const items = r.items as Record<string, unknown>[]
       out[c] = {
         status: 'ok', rev: r.rev,
-        items: c === 'chat' ? items.map((i) => adapt.chat(i))
+        items: c === 'chat' ? withKept(items, marks).map((i) => adapt.chat(i))
           : c === 'mail' ? items.map((i) => adapt.mail(i, { done: i.done === true || undefined, job: typeof i.job === 'string' ? i.job : undefined }))
             : c === 'cal' ? items.map((i) => ({ id: i.id, ...adapt.cal(i, s.cfg.teamTz ?? null) }))
               : items,
@@ -318,12 +321,24 @@ export function createApp(d: Deps) {
 
   async function act(s: Space, b: Record<string, unknown>) {
     if (!s.source.available()) throw downError(s.source.via, 'nothing was sent')
+    let listed: { id: string; name: string }[] = []
     const chats = async () => {
       const c = (await s.source.read(['chat'])).chat
-      return READY.has(c?.status) && Array.isArray(c.items) ? (c.items as { id: string; name: string }[]) : []
+      listed = withKeptNames(READY.has(c?.status) && Array.isArray(c.items) ? (c.items as { id: string; name: string }[]) : [],
+        await s.store.marks().catch(() => ({})))
+      return listed
     }
     const a = await resolveAct(b as { action: string; actionId?: string; args?: Record<string, unknown> }, chats, s.acts)
-    return { actionId: a.actionId, ...(await s.source.act(a)) }
+    const res = await s.source.act(a)
+    if (res.status === 'ok') await keptBy(s, a, res, listed).catch((e) => console.error(`keeping the chat of ${a.action}: ${(e as Error).message}`))
+    return { actionId: a.actionId, ...res }
+  }
+
+  /** a chat opened or posted to stays listed after the source drops it */
+  async function keptBy(s: Space, a: { action: string; args: Record<string, unknown> }, res: ActRes, listed: { id: string; name: string }[]) {
+    const r = (res.result ?? {}) as { chat?: unknown; name?: unknown }
+    if (a.action === 'chat.open' && typeof r.chat === 'string') await keep(s.store, r.chat, typeof r.name === 'string' ? r.name : undefined)
+    if (a.action === 'chat.post' && typeof a.args.chat === 'string') await keep(s.store, a.args.chat, listed.find((c) => c.id === a.args.chat)?.name)
   }
 
   /** plain text for the page's viewer, an image as itself; ?dl=1 = a download under the file's own name and type */
@@ -479,10 +494,12 @@ export function createApp(d: Deps) {
       await s.store.putMark(r.p[0], { done: b.done === true || undefined, job: typeof b.job === 'string' ? b.job : undefined })
       return { ok: true }
     }],
-    // hiding is the console's own mark in B, never the chat tool's; unhiding deletes the mark
+    // hiding is the console's own mark in B, never the chat tool's; unhiding deletes the mark, or only its hidden
+    // when the chat is kept
     ['POST', /^\/chats\/([^/]+)\/hide$/, async (r, s) => {
-      const b = await r.body()
-      await s.store.putMark(`chat:${r.p[0]}`, b.hidden === true ? { hidden: true, name: typeof b.name === 'string' ? b.name : r.p[0] } : null)
+      const b = await r.body(), id = `chat:${r.p[0]}`, cur = (await s.store.marks())[id]
+      await s.store.putMark(id, b.hidden === true ? { hidden: true, name: typeof b.name === 'string' ? b.name : cur?.name ?? r.p[0] }
+        : cur?.kept ? { hidden: false } : null)
       return { ok: true }
     }],
     ['GET', /^\/chats\/hidden$/, async (_r, s) => ({

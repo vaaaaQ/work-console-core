@@ -11,6 +11,7 @@ import type { Reintegration, SessionOps } from './agent/session.ts'
 import { BoardReturns } from './board/returns.ts'
 import { startItem } from './board/start.ts'
 import { GATEWAY_ACTIONS, grantedActs } from './bridge/actions.ts'
+import { keepJobChats } from './bridge/kept.ts'
 import { isLocal } from './bridge/local.ts'
 import { browserPlugin } from './browser/plugin.ts'
 import { grantsFrom } from './browser/packs.ts'
@@ -250,6 +251,11 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   const blockers = new Blockers({ jobs, ctx, push })
   // an ask step's answer, found in chat or mail as the source reports changes
   const replies = new Replies({ jobs, source, bus })
+  // a chat a job uses stays listed after the source drops it
+  const offKept = keepJobChats({
+    bus, store,
+    chats: async () => { const r = (await source.read(['chat'])).chat; return r && READY.has(r.status) && Array.isArray(r.items) ? (r.items as { id: string; name: string }[]) : [] },
+  })
   // the agent changes a job only by a proposal, which the person accepts or rejects
   const proposer = new Proposer({ jobs, ctx, push })
   // every workspace has an agent; only a managed one's general conversations change code
@@ -285,7 +291,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     onNeedsYou: (f) => jobs.onNeedsYou((j) => { if (!returns.handling(j.id) && !blockers.handling(j.id) && !proposer.handling(j.id)) f(j) }),
     // the source going away on close is no reason to interrupt the runs
     async close() {
-      stopLoading(); offInterrupt(); offAuto(); offReactor(); blockers.stop(); replies.stop(); agent?.close(); source.stop()
+      stopLoading(); offInterrupt(); offAuto(); offReactor(); offKept(); blockers.stop(); replies.stop(); agent?.close(); source.stop()
       await runBr?.stop().catch((e) => console.error(`stopping the runs' browser of ${id}:`, (e as Error).message))
       await fake?.close()
     },

@@ -6,7 +6,7 @@ import type { PackManifest } from './packs.ts'
 import type { ActReq } from './wire.ts'
 
 // what a gateway's pack serves; a workspace on loaded packs passes actionsOf instead
-export const GATEWAY_ACTIONS: ReadonlySet<string> = new Set(['chat.post', 'mail.send', 'review.vote', 'review.comment', 'work.setState', 'work.comment', 'work.start', 'time.fill'])
+export const GATEWAY_ACTIONS: ReadonlySet<string> = new Set(['chat.open', 'chat.post', 'mail.send', 'review.vote', 'review.comment', 'work.setState', 'work.comment', 'work.start', 'time.fill'])
 type Declares = Pick<PackManifest, 'name' | 'actions'>
 
 // acts undefined: every declared action; a list: only those granted that some pack declares

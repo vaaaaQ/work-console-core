@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bridge/people.get",
+  "title": "people matching a query: from the directory, or the ones my chats, mail and meetings rank",
+  "type": "object",
+  "properties": {
+    "src": {
+      "type": "string",
+      "enum": [
+        "directory",
+        "people"
+      ]
+    },
+    "people": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "mail": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "mail",
+          "title"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "src",
+    "people"
+  ],
+  "additionalProperties": false
+}

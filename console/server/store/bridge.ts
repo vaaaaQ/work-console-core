@@ -28,7 +28,8 @@ const asJob = (d: Doc): Job => { const { updated: _u, ...j } = d; return clone(j
 const asRun = (d: Doc): RunRec => { const { v: _v, updated: _u, ...r } = d; return clone(r) as unknown as RunRec }
 const asMark = (d: Doc | undefined): Mark => ({
   ...(d?.done === true ? { done: true } : {}), ...(typeof d?.job === 'string' ? { job: d.job } : {}),
-  ...(d?.hidden === true ? { hidden: true } : {}), ...(typeof d?.name === 'string' ? { name: d.name } : {}),
+  ...(d?.hidden === true ? { hidden: true } : {}), ...(d?.kept === true ? { kept: true } : {}),
+  ...(typeof d?.name === 'string' ? { name: d.name } : {}),
 })
 
 /** prefix = the workspace's job prefix: the gateway mints J-NNNN, and the job is stored as <prefix>-NNNN */

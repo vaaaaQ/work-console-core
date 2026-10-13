@@ -53,6 +53,13 @@ new round.*
 - A planned message is `[via, to, text]`: a chat by name, a comment on the job's work item, or a mail.
   A mail without `to` replies to the job's mail; one with `to` is a new mail, `to` its addresses and a
   fourth element `{cc, subject}` its head. The send dialog shows To, CC and Subject for the user to check.
+- A chat message whose `to` names no listed chat, in a job with no single chat of its own, gets a To in the
+  send dialog: a listed chat by name, a person the `people` get finds, or a typed address. A person or an
+  address gets a 1:1 opened by `chat.open` first. The chat joins the job's context before the message goes.
+- **Kept chats.** A chat the console opened, posted to, or saw in a job's context is kept: its mark
+  `chat:{id}` carries `kept` and the name (`server/bridge/kept.ts`). The chat list and an act's chat lookup
+  add the kept chats the source no longer lists, last and with no last message; hiding one hides it,
+  unhiding keeps it.
 - `needs` says in plain words what context a playbook's jobs need. A playbook with `once: 1` holds
   one job's own steps: no playbook list, the builder's catalog or `list_playbooks` shows it.
 - The transition rules (start, done, skip, return, block, rounds) are in `console/src/model/transitions.ts`.

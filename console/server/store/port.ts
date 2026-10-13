@@ -8,8 +8,9 @@ export class Conflict extends Error {
   current: Job | undefined
   constructor(msg: string, current?: Job) { super(msg); this.current = current }
 }
-/** a mail's done/job, or a chat thread's hidden under chat:{threadId}; console-only, never sent to the source */
-export type Mark = { done?: boolean; job?: string; hidden?: boolean; name?: string }
+/** a mail's done/job, or a chat thread's hidden or kept (listed after the source drops it, bridge/kept.ts) under
+    chat:{threadId}; console-only, never sent to the source */
+export type Mark = { done?: boolean; job?: string; hidden?: boolean; kept?: boolean; name?: string }
 
 export interface Store {
   jobs(): Promise<Job[]>

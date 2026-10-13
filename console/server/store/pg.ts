@@ -28,7 +28,8 @@ const clone = <T>(x: T): T => structuredClone(x)
 const asJob = (r: Row): Job => ({ ...clone(r.doc), v: r.v }) as unknown as Job
 const asMark = (d: Record<string, unknown> | undefined): Mark => ({
   ...(d?.done === true ? { done: true } : {}), ...(typeof d?.job === 'string' ? { job: d.job } : {}),
-  ...(d?.hidden === true ? { hidden: true } : {}), ...(typeof d?.name === 'string' ? { name: d.name } : {}),
+  ...(d?.hidden === true ? { hidden: true } : {}), ...(d?.kept === true ? { kept: true } : {}),
+  ...(typeof d?.name === 'string' ? { name: d.name } : {}),
 })
 
 /** a SQLSTATE that says the database is away (connection, operator intervention, resources), or no SQLSTATE at all */
