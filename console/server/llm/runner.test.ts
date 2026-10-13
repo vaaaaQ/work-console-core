@@ -822,6 +822,24 @@ test('an approve reply builds its text from the stored commands, ignores the tex
   assert.equal(await state(s.runner, r.id), 'draft')
 })
 
+test('an interrupted approve turn never resumes by itself: the person sees where the commands stopped and resumes it', async () => {
+  const s = setup(undefined, { autoResume: true }), d = await withCommands(s)
+  const r = await s.runner.reply(d.job, d.step, '', 'approve', { at: d.at })
+  await until(() => s.sessions.length === 2)
+  s.sessions[1].push({ k: 'session', id: 'S1' })
+  await tick()
+  await s.runner.interruptAll('the bridge went away')
+  assert.deepEqual([await state(s.runner, r.id), (await s.runner.get(r.id))!.ar], ['interrupted', undefined])
+  assert.equal((await s.jobs.get(d.job))!.jr[0].n, 'resume it when the console is back.')
+  await s.runner.resumeDue(); await tick()
+  assert.equal(s.sessions.length, 2, 'nothing ran by itself')
+  // the person resumes it by hand, in the same session, still an approval
+  await s.runner.resume(r.id)
+  await until(() => s.sessions.length === 3)
+  assert.equal(s.sessions[2].resume, 'S1')
+  assert.equal((await s.jobs.get(d.job))!.flow[d.step].run!.ap, 1)
+})
+
 test('an approve reply is refused without commands, on a stale draft, and from a session or the console', async () => {
   const s = setup(), d = await withCommands(s)
   await assert.rejects(s.runner.reply(d.job, d.step, '', 'approve', { at: '2020-01-01T00:00:00.000Z' }), code(409, 'stale'))
