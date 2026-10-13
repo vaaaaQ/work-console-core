@@ -402,7 +402,7 @@ A person still accepts, edits or rejects every draft.
 | A step becomes current | on Start, on accept, Mark done or Skip of the step before, and on Return to. 6 s later, if the step is still current with no run and no draft, it is asked with the Ask modal's default text, signed `console` |
 | A blocker closes | the step it freed is asked as above if that made it current. A step that keeps a draft gets a revise reply in the draft's session instead, carrying each closed blocker's outcome and plan, signed `console` |
 | Not a trigger | Reject, Cancel, Reopen step, Resume of a waiting step, a recurring job's new period, a step that was already current, and anything a run does |
-| A run is interrupted | it resumes once by itself when the bridge or the console comes back: its session if it has one, else afresh. Not if its job closed, its step moved on or a newer run took its place. A second interruption, and every failed run, waits for a person |
+| A run is interrupted | it resumes once by itself when the bridge or the console comes back: its session if it has one, else afresh. Not if its job closed, its step moved on or a newer run took its place. A second interruption, every failed run, and an `approve` turn, which may have stopped halfway through its commands, wait for a person |
 
 - The 6 s wait outlasts the page's Undo, so an undone step asks nothing.
 - Sessions stay capped at `maxSessions`; the rest queue. The push for an interrupted run says it resumes by itself.

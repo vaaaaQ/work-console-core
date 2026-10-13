@@ -343,8 +343,9 @@ export class Runner {
   }
 
   private async end(r: RunRec, state: 'cancelled' | 'failed' | 'interrupted', reason: string): Promise<RunRec> {
-    // a run that already resumed by itself once waits for the user
-    const due = state === 'interrupted' && this.autoResume && r.ar !== 'used'
+    // a run that already resumed by itself once waits for the user; so does an approval, which may have
+    // stopped halfway through its commands: the person sees where, and resumes it or not
+    const due = state === 'interrupted' && this.autoResume && r.ar !== 'used' && r.intent !== 'approve'
     const next: RunRec = { ...r, state, reason, ended: new Date().toISOString(), ...(due ? { ar: 'due' as const } : {}) }
     await this.jobCmd(r, { op: 'runEnd', step: r.step, why: state, detail: state === 'cancelled' ? undefined : reason, ...(due ? { due: true } : {}) })
     await this.save(next)

@@ -13,7 +13,7 @@ import { decide, editProposal } from '../actions/knowledge.tsx'
 import { grantsAccept, grantsReject, openAgent } from '../actions/agent.tsx'
 import type { AgentPending } from '../model/agent.ts'
 import { FillT } from '../ui/bits.tsx'
-import { ApproveBtn, CmdList } from '../ui/Commands.tsx'
+import { ApproveBtn, CmdList, approveHead } from '../ui/Commands.tsx'
 import { DraftTalk } from '../ui/DraftTalk.tsx'
 import { Ic } from '../ui/Icon.tsx'
 import { OutSeg, OutText } from '../ui/outText.ts'
@@ -31,7 +31,7 @@ function ApCard({ x }: { x: Approval }) {
         <div className="dc-h"><span className="st"><Ic n="bot" sm /><b>LLM draft · {s.t}</b></span>{lnk}<span className="src">{tfmt(dr.at)}</span><OutSeg /></div>
         <div className="why">{j.t} · done when: {s.x}</div>{draftReport(j, dr) && <div className="why rep">{draftReport(j, dr)}</div>}<OutText t={dr.t} />
         <CmdList job={j} step={s.id} />
-        <div className="row"><ApproveBtn job={j} step={s.id} /><button className={'btn sm' + (dr.cm?.length ? '' : ' pri')} disabled={!!f.run} onClick={() => acceptDraft(j.id, s.id)}><Ic n="check" sm />Accept</button>
+        <div className="row"><ApproveBtn job={j} step={s.id} /><button className={'btn sm' + (approveHead(j, s.id) ? '' : ' pri')} disabled={!!f.run} onClick={() => acceptDraft(j.id, s.id)}><Ic n="check" sm />Accept</button>
           <button className="btn sm" disabled={!!f.run} onClick={() => editDraft(j.id, s.id)}><Ic n="pen" sm />Edit…</button>
           <button className="btn sm" disabled={!!f.run} onClick={() => rejectDraft(j.id, s.id)}><Ic n="x" sm />Reject…</button>{open}</div>
         <DraftTalk job={j} step={s.id} last={2} />
