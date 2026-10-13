@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { homedir, tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
-import { ALLOW, DENY, agentOptions, askOptions, exeOption, mcpServers, permissions, runToolDefs, sessionEvents, userMessage } from './sdk.ts'
+import { ALLOW, DENY, agentOptions, askOptions, exeOption, mcpServers, permissions, reportOf, runToolDefs, sessionEvents, userMessage } from './sdk.ts'
 import { agentLimits } from '../agent/limits.ts'
 import type { RunTools } from './sdk.ts'
 import { BROWSER_TOOLS, WITHHELD } from './runBrowser.ts'
@@ -95,6 +95,20 @@ test('submit_draft takes an optional outcome, return_to and why and hands them o
   await call({ text: 'smoke red', outcome: 'failed', return_to: 'Run the deploy', why: 'the smoke test failed' }, {})
   assert.deepEqual(got, [['done it', {}], ['smoke red', { o: 'failed', rt: 'Run the deploy', why: 'the smoke test failed' }]])
   for (const k of ['outcome', 'return_to', 'why']) assert.ok(k in (d.inputSchema as Record<string, unknown>), k)
+})
+
+test('submit_draft takes the commands the draft waits to have approved and hands them on as cm', async () => {
+  const none = async () => {}, got: unknown[] = []
+  const base: RunTools = { submitDraft: async (t, r) => { got.push([t, r]) }, addArtifact: none, addArtifactFile: none, journal: none }
+  const d = runToolDefs(base).find((x) => x.name === 'submit_draft')!
+  assert.ok('commands' in (d.inputSchema as Record<string, unknown>))
+  assert.match(d.description, /commands: when the step's instruction says a command runs only after it is approved/)
+  const call = d.handler as (a: unknown, x: unknown) => Promise<{ isError?: boolean }>
+  await call({ text: 'push it', commands: ['git push', 'npm run deploy'] }, {})
+  await call({ text: 'none', commands: [] }, {})
+  assert.deepEqual(got, [['push it', { cm: ['git push', 'npm run deploy'] }], ['none', { cm: [] }]])
+  assert.deepEqual(reportOf({ commands: ['a'] }), { cm: ['a'] })
+  assert.deepEqual(reportOf({}), {})
 })
 
 test('context only when the run carries it; it answers with each picture after its label, then the text', async () => {

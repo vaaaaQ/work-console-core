@@ -447,6 +447,32 @@ test('draft_reply accept with wait says accepted; a step with only its first ask
   assert.equal(r.err, true); assert.match(r.text, /no_draft/)
 })
 
+test('a session never approves commands: draft_reply leaves approve out and refuses it; submit_draft hands commands in', async (t) => {
+  const s = await setup(t), j = await openJob(s.jobs), at = T.atOf(demoCtx(), j)!
+  const tools = (await s.rpc('tools/list')).result.tools as { name: string; inputSchema: { properties: Record<string, { enum?: string[] }> } }[]
+  assert.deepEqual(tools.find((x) => x.name === 'draft_reply')!.inputSchema.properties.intent.enum, ['revise', 'accept', 'ask'])
+  assert.ok(tools.find((x) => x.name === 'submit_draft')!.inputSchema.properties.commands)
+  const bad = await s.call('submit_draft', { id: j.id, step: at, output: 'push it', commands: [] })
+  assert.equal(bad.err, true); assert.match(bad.text, /^bad_args/)
+  const r = await s.call('submit_draft', { id: j.id, step: at, output: 'push it', commands: ['git push'] })
+  assert.equal(r.err, false, r.text)
+  assert.deepEqual((await s.jobs.get(j.id))!.flow[at].dr!.cm, ['git push'])
+  await s.jobs.cmd(j.id, { op: 'rejectDraft', step: at })
+  const w = await drafted2(s)
+  const ap = await s.call('draft_reply', { id: w.j.id, step: w.at, text: 'x', intent: 'approve' })
+  assert.equal(ap.err, true); assert.match(ap.text, /not_yours/)
+})
+/** as drafted, but the draft waits for a command */
+async function drafted2(s: Awaited<ReturnType<typeof setup>>) {
+  const j = await openJob(s.jobs), at = T.atOf(demoCtx(), j)!, n = s.sessions.length
+  await s.runner.ask(j.id, at, 'go')
+  await until(() => s.sessions.length === n + 1)
+  const x = s.sessions[n]
+  x.push({ k: 'session', id: 'S2' }); await x.tools.submitDraft('push it', { cm: ['git push'] }); x.end()
+  await until(async () => !(await s.jobs.get(j.id))!.flow[at].run)
+  return { j, at }
+}
+
 test('job_command rejectDraft with why redoes the step, signed Claude Code; without why nothing starts', async (t) => {
   const s = await setup(t), d = await drafted(s)
   const r = await s.call('job_command', { id: d.j.id, op: 'rejectDraft', step: d.at, why: 'wrong scope' })

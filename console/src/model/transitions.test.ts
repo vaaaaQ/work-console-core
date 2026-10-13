@@ -505,6 +505,44 @@ test('stay keeps a reported step open even when its draft names a step to go bac
   assert.equal(k.flow[at].m, 'reported failed')
 })
 
+test('a draft carries the commands it waits to have approved: trimmed, 1 to 10, each at most 2000 characters; the journal counts them', () => {
+  const j0 = open(), at = atOf(X, j0)!
+  const run = apply(X, j0, { op: 'runStart', step: at, q: 'go', id: 'r1' }).job
+  const j = apply(X, run, { op: 'runDraft', step: at, t: 'Push the branch.', cm: ['  git push origin job/x  ', 'npm run deploy\n  -- --env dev'] }).job
+  assert.deepEqual(j.flow[at].dr!.cm, ['git push origin job/x', 'npm run deploy\n  -- --env dev'])
+  assert.match(j.jr[0].o, /is ready; waits for approval of 2 commands\.$/)
+  const one = apply(X, run, { op: 'runDraft', step: at, t: 'x', cm: ['git push'] }).job
+  assert.match(one.jr[0].o, /waits for approval of 1 command\.$/)
+  // none, an empty list, eleven, an empty or blank command, a command that is not text, and one over 2000 characters are refused
+  const plain = apply(X, run, { op: 'runDraft', step: at, t: 'x' }).job
+  assert.ok(!('cm' in plain.flow[at].dr!))
+  for (const cm of [[], Array.from({ length: 11 }, (_, i) => `c${i}`), [''], ['  '], [42], ['x'.repeat(2001)], 'git push'])
+    code(() => apply(X, run, { op: 'runDraft', step: at, t: 'x', cm: cm as string[] }), 'bad_args')
+  assert.equal(apply(X, run, { op: 'runDraft', step: at, t: 'x', cm: ['x'.repeat(2000)] }).job.flow[at].dr!.cm![0].length, 2000)
+  // a draft handed in by hand carries them too
+  const h = apply(X, j0, { op: 'draftIn', step: at, t: 'push it', cm: ['git push'] }).job
+  assert.deepEqual(h.flow[at].dr!.cm, ['git push'])
+  assert.match(h.jr[0].o, /handed in; waits for approval of 1 command\.$/)
+})
+
+test('an approve reply journals what it approved and marks the run; its draft carries ap and no commands, a revision without commands clears them', () => {
+  const j0 = open(), at = atOf(X, j0)!
+  let j = apply(X, j0, { op: 'runStart', step: at, q: 'go', id: 'r1' }).job
+  j = apply(X, j, { op: 'runDraft', step: at, t: 'Push the branch.', cm: ['git push', 'npm run deploy'] }).job
+  const q = 'Approved, run exactly these commands, in this order:\n1. git push\n2. npm run deploy'
+  const a = apply({ ...X, by: 'you' }, j, { op: 'runReply', step: at, q, id: 'r2', intent: 'approve' }).job
+  assert.deepEqual(a.flow[at].run, { q, at: T0.getTime(), id: 'r2', reply: 1, ap: 1 })
+  assert.equal(a.jr[0].o, `Approved 2 commands for “${stepOf(X, a, at)!.t}”: git push; npm run deploy`)
+  assert.equal(a.jr[0].c, 'LLM runs them.')
+  assert.equal(a.jr[0].n, 'wait for it.')
+  assert.equal(a.flow[at].dr!.t, 'Push the branch.', 'the draft stays while the commands run')
+  const out = apply(X, a, { op: 'runDraft', step: at, t: 'Both ran: …' }).job
+  assert.equal(out.flow[at].dr!.ap, 1); assert.ok(!('cm' in out.flow[at].dr!))
+  // a revise turn's draft without commands has none; with them it waits again
+  const r = apply(X, apply(X, j, { op: 'runReply', step: at, q: 'shorter', id: 'r3', intent: 'revise' }).job, { op: 'runDraft', step: at, t: 'v2' }).job
+  assert.ok(!('cm' in r.flow[at].dr!) && !('ap' in r.flow[at].dr!))
+})
+
 test('reportText is the line the page shows on a draft that reports it did not finish; none on a plain draft', () => {
   const { j, at, all } = reported({ o: 'failed', rt: steps(X, open().pb)[0].id, why: 'smoke red' })
   assert.equal(reportText(X, j, j.flow[at].dr!), `reports failed → returns to “${all[0].t}” on accept: smoke red`)

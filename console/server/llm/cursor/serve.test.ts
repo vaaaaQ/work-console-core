@@ -33,7 +33,7 @@ test('the run\'s tools as the CLI sees them: listed with JSON schemas, called wi
     assert.deepEqual(list.map((x: { name: string }) => x.name), ['submit_draft', 'add_artifact', 'add_artifact_file', 'journal'])
     assert.deepEqual(list[0].inputSchema, { type: 'object', properties: {
       text: { type: 'string', minLength: 1 }, outcome: { type: 'string', enum: ['done', 'not_done', 'failed'] },
-      return_to: { type: 'string', minLength: 1 }, why: { type: 'string' },
+      return_to: { type: 'string', minLength: 1 }, why: { type: 'string' }, commands: { type: 'array', items: { type: 'string' } },
     }, required: ['text'] })
     assert.deepEqual((await call(s, 'submit_draft', { text: 'done' })).body.result, { content: [{ type: 'text', text: 'draft submitted' }] })
     const bad = (await call(s, 'submit_draft', { text: '' })).body.result

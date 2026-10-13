@@ -146,6 +146,31 @@ test('a new knowledge proposal pushes once, to Approvals', async () => {
   assert.deepEqual(sent.map((s) => [s.title, s.body, s.url]), [['Knowledge: Sleeping tabs', 'llm: seen twice', '/?view=approvals']])
 })
 
+test('a draft that waits for commands pushes how many with the numbered commands; needsYou says commands to approve', async () => {
+  const { sent, n } = setup()
+  const j = structuredClone(JOBS.find((x) => x.id === 'J-0419')!)
+  j.flow.tr = { ...j.flow.tr, s: 'wait', dr: { t: 'Push it.', at: '', cm: ['git push origin job/x', 'npm run deploy'] } }
+  const r: RunRec = { id: 'r1', job: 'J-0419', step: 'tr', q: 'q', state: 'draft', at: '' }
+  await n.run(r, j)
+  await n.run({ ...r, parent: 'r0', intent: 'revise' }, j)
+  assert.deepEqual(sent.map((s) => [s.title, s.body, s.url]), [
+    ['J-0419 · Understand the request: 2 commands wait for approval', '1. git push origin job/x\n2. npm run deploy', '/?job=J-0419&step=tr&ws=acme'],
+    ['J-0419 · Understand the request: 2 commands wait for approval', '1. git push origin job/x\n2. npm run deploy', '/?job=J-0419&step=tr&ws=acme']])
+  sent.length = 0
+  j.flow.tr.dr!.cm = ['x'.repeat(300)]
+  await n.run(r, j)
+  assert.equal(sent[0].title, 'J-0419 · Understand the request: 1 command waits for approval')
+  assert.equal(sent[0].body.length, 200)
+  sent.length = 0
+  await n.needsYou(j)
+  assert.equal(sent[0].title, 'J-0419: commands to approve')
+  // a draft without commands pushes as before
+  sent.length = 0
+  delete j.flow.tr.dr!.cm
+  await n.run(r, j); await n.needsYou(j)
+  assert.deepEqual(sent.map((s) => s.title), ['J-0419 · Understand the request: draft ready', 'J-0419: a draft to review'])
+})
+
 test('a reply pushes its answer, or says the draft was revised', async () => {
   const { sent, settled } = setup()
   const r: RunRec = { id: 'r2', job: 'J-0419', step: 'tr', q: 'why?', state: 'answered', a: 'Because.', at: '', parent: 'r1', intent: 'ask' }

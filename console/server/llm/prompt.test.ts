@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { redoText, replyPrompt, buildPrompt, blockersText, manualText, contextText } from './prompt.ts'
+import { approveText, redoText, replyPrompt, buildPrompt, blockersText, manualText, contextText } from './prompt.ts'
 import { apply, freshJob } from '../../src/model/transitions.ts'
 import { demoCtx } from '../testkit.ts'
 import type { Cmd, Flow } from '../../src/model/types.ts'
@@ -10,6 +10,15 @@ test('a reply prompt carries the text and one line by intent', () => {
   assert.match(replyPrompt('ok, ship it', 'accept'), /^the user replied.*accepted as it is then\.$/s)
   const ask = replyPrompt('why X?', 'ask')
   assert.match(ask, /Answer in text/); assert.match(ask, /Do not call submit_draft/)
+})
+
+test('an approval is the numbered commands, and its reply prompt ends with the approve tail', () => {
+  const q = approveText(['git push origin job/x', 'npm run deploy\n  -- --env dev'])
+  assert.equal(q, 'Approved, run exactly these commands, in this order:\n1. git push origin job/x\n2. npm run deploy\n  -- --env dev')
+  const p = replyPrompt(q, 'approve', 'Valery')
+  assert.ok(p.startsWith(`Valery replied to your draft:\n\n${q}\n\n`))
+  assert.ok(p.endsWith('Run exactly these commands, in this order, and nothing else that needs approval. Stop at the first that fails. '
+    + 'Then call submit_draft with what each one printed. If one failed, set outcome failed. A further command that needs approval goes in commands again.'))
 })
 
 test('a redo carries the ask, the rejected draft clipped and why', () => {

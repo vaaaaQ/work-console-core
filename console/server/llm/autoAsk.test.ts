@@ -304,6 +304,9 @@ test('holdOf names what keeps a draft from being accepted by itself', () => {
   assert.equal(holdOf(f({ b: [{ k: 'p', t: 'x', r: '', o: 1 }] })), 'a problem note')
   assert.equal(holdOf(f({ bb: { say: 'wait for Imre', at: '' } })), 'a blocker asked for')
   assert.equal(holdOf(f({ w: [{ j: 'J-2', st: 'open', at: '' }] as Flow['w'] })), 'open blockers')
+  // commands wait for the person's approval, and what approved commands printed is the person's to read
+  assert.equal(holdOf(f({ dr: { t: 'd', at: '', cm: ['git push', 'npm run deploy'] } })), 'the draft waits for approval of 2 commands')
+  assert.equal(holdOf(f({ dr: { t: 'd', at: '', ap: 1 } })), 'the draft reports approved commands')
 })
 
 test('an auto step\'s draft that reports failed or not done is held back for the person, never closed by itself', async () => {
@@ -316,6 +319,18 @@ test('an auto step\'s draft that reports failed or not done is held back for the
   assert.equal(a.jr[0].o, 'Held back the automatic accept of “Understand the request”: the draft reports failed.')
   assert.equal(a.flow.tr.s, 'wait'); assert.equal(a.flow.tr.dr!.o, 'failed')
   assert.equal(holdOf({ ...a.flow.tr, dr: { ...a.flow.tr.dr!, o: 'not_done' } }), 'the draft reports not done')
+  s.off()
+})
+
+test('an auto step\'s draft that waits for commands is held back for the person', async () => {
+  const s = modes(false), j = await s.job('auto')
+  await s.jobs.cmd(j.id, { op: 'start' }, (await s.get(j.id)).v)
+  await until(() => s.sessions.length === 1)
+  await s.sessions[0].tools.submitDraft('Push it.', { cm: ['git push'] }); s.sessions[0].end()
+  await until(async () => (await s.get(j.id)).jr[0].o.startsWith('Held back'))
+  const a = await s.get(j.id)
+  assert.equal(a.jr[0].o, 'Held back the automatic accept of “Understand the request”: the draft waits for approval of 1 command.')
+  assert.equal(a.flow.tr.s, 'wait'); assert.deepEqual(a.flow.tr.dr!.cm, ['git push'])
   s.off()
 })
 

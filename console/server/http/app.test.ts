@@ -33,7 +33,11 @@ const STEPS = { once: false, key: 'weekly-report', name: 'Weekly report', descri
 /** every run's prompt, in the order the runs started */
 const prompts: string[] = []
 const sdk: Sdk = {
-  async *start({ tools, prompt }) { prompts.push(prompt); yield { k: 'session', id: 'sess-1' }; await tools.submitDraft('a draft'); yield { k: 'result', ok: true } },
+  // an instruction that says "with commands" gets a draft that waits for two
+  async *start({ tools, prompt }) {
+    prompts.push(prompt); yield { k: 'session', id: 'sess-1' }
+    await tools.submitDraft('a draft', /with commands/.test(prompt) ? { cm: ['git push', 'npm run deploy'] } : {}); yield { k: 'result', ok: true }
+  },
   // a say that starts with "steps:" gets new steps
   async *ask({ prompt }) {
     const say = /^1\. (.*)$/m.exec(prompt)?.[1] ?? ''
@@ -1147,6 +1151,29 @@ test("a reply goes to the run's step in its session; reject with a reason answer
     await until(async () => (await call(lp, 'GET', `/api/runs/${rj.json.run.id}`)).json.run?.state === 'draft')
     const plain = await call(lp, 'POST', `/api/jobs/${job.id}/cmd`, { body: { cmd: { op: 'noteAdd', step, k: 'q', t: 'x' } } })
     assert.equal(plain.status, 200, plain.text); assert.equal('run' in plain.json, false)
+  } finally { await stop() }
+})
+
+test('approve: the reply is built from the draft\'s stored commands, the text sent is ignored, and a stale at is 409', async () => {
+  const { lp, stop } = await setup({ one: true })
+  try {
+    const { job, step } = await openStep(lp)
+    const a = await call(lp, 'POST', '/api/runs', { body: { job: job.id, step, instruction: 'push it, with commands' } })
+    const id = a.json.run.id as string
+    await until(async () => (await call(lp, 'GET', `/api/runs/${id}`)).json.run?.state === 'draft')
+    const dr = (await call(lp, 'GET', `/api/jobs/${job.id}`)).json.job.flow[step].dr
+    assert.deepEqual(dr.cm, ['git push', 'npm run deploy'])
+    const stale = await call(lp, 'POST', `/api/runs/${id}/reply`, { body: { intent: 'approve', at: '2020-01-01T00:00:00.000Z' } })
+    assert.equal(stale.status, 409); assert.equal(stale.json.error.code, 'stale')
+    const n = prompts.length
+    const ok = await call(lp, 'POST', `/api/runs/${id}/reply`, { body: { intent: 'approve', at: dr.at, t: 'rm -rf /' } })
+    assert.equal(ok.status, 200, ok.text); assert.equal(ok.json.run.intent, 'approve')
+    assert.equal(ok.json.run.q, 'Approved, run exactly these commands, in this order:\n1. git push\n2. npm run deploy')
+    await until(async () => (await call(lp, 'GET', `/api/runs/${ok.json.run.id}`)).json.run?.state === 'draft')
+    assert.match(prompts[n], /replied to your draft:\n\nApproved, run exactly these commands, in this order:\n1\. git push\n2\. npm run deploy/)
+    assert.doesNotMatch(prompts[n], /rm -rf/)
+    const f = (await call(lp, 'GET', `/api/jobs/${job.id}`)).json.job.flow[step]
+    assert.equal(f.s, 'wait'); assert.equal(f.dr.ap, 1)
   } finally { await stop() }
 })
 

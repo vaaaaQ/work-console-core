@@ -792,6 +792,47 @@ test("an accept reply revises, then accepts on the replier's word", async () => 
   assert.ok(j.jr.some((x) => /Replied to the LLM draft/.test(x.o) && x.a === 'Claude Code'))
 })
 
+/** a started job whose first step holds a draft from session S1 that waits for two commands */
+async function withCommands(s: ReturnType<typeof setup>) {
+  const j = await started(s.jobs), step = T.atOf(demoCtx(), j)!
+  const r = await s.runner.ask(j.id, step, 'go')
+  await until(() => s.sessions.length === 1)
+  s.sessions[0].push({ k: 'session', id: 'S1' })
+  await s.sessions[0].tools.submitDraft('Push and deploy.', { cm: ['git push', 'npm run deploy'] }); s.sessions[0].end()
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  return { job: j.id, step, r, at: (await s.jobs.get(j.id))!.flow[step].dr!.at }
+}
+
+test('an approve reply builds its text from the stored commands, ignores the text sent, resumes the session and does not accept', async () => {
+  const s = setup({ v: true }, { me: 'Valery' }), d = await withCommands(s)
+  const r = await s.runner.reply(d.job, d.step, 'rm -rf /', 'approve', { at: d.at })
+  const q = 'Approved, run exactly these commands, in this order:\n1. git push\n2. npm run deploy'
+  assert.equal(r.q, q); assert.equal(r.intent, 'approve'); assert.equal(r.parent, d.r.id)
+  await until(() => s.sessions.length === 2)
+  assert.equal(s.sessions[1].resume, 'S1')
+  assert.match(s.sessions[1].prompt, /^Valery replied to your draft:\n\nApproved, run exactly these commands, in this order:\n1\. git push\n2\. npm run deploy\n\nRun exactly these commands/)
+  assert.doesNotMatch(s.sessions[1].prompt, /rm -rf/)
+  const j = (await s.jobs.get(d.job))!
+  assert.match(j.jr[0].o, /^Approved 2 commands for “.+”: git push; npm run deploy$/)
+  await s.sessions[1].tools.submitDraft('git push: ok\nnpm run deploy: ok'); s.sessions[1].end()
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  const f = (await s.jobs.get(d.job))!.flow[d.step]
+  assert.equal(f.s, 'wait', 'the person reads the output and accepts it'); assert.equal(f.dr!.t, 'git push: ok\nnpm run deploy: ok')
+  assert.equal(f.dr!.ap, 1); assert.equal(f.dr!.cm, undefined)
+  assert.equal(await state(s.runner, r.id), 'draft')
+})
+
+test('an approve reply is refused without commands, on a stale draft, and from a session or the console', async () => {
+  const s = setup(), d = await withCommands(s)
+  await assert.rejects(s.runner.reply(d.job, d.step, '', 'approve', { at: '2020-01-01T00:00:00.000Z' }), code(409, 'stale'))
+  await assert.rejects(s.runner.reply(d.job, d.step, '', 'approve', {}), code(409, 'stale'))
+  await assert.rejects(s.runner.reply(d.job, d.step, '', 'approve', { at: d.at, via: 'session' }), code(403, 'not_yours'))
+  await assert.rejects(s.runner.reply(d.job, d.step, '', 'approve', { at: d.at, via: 'console' }), code(403, 'not_yours'))
+  assert.equal(s.sessions.length, 1, 'nothing ran')
+  const t = setup(), p = await withDraft(t), at = (await t.jobs.get(p.job))!.flow[p.step].dr!.at
+  await assert.rejects(t.runner.reply(p.job, p.step, '', 'approve', { at }), code(409, 'no_commands'))
+})
+
 test('submit_draft with an outcome stores it; a bad return_to is refused and the run may hand in again', async () => {
   const { runner, sessions, jobs } = setup(), j = await started(jobs), step = T.atOf(demoCtx(), j)!
   const r = await runner.ask(j.id, step, 'deploy')
