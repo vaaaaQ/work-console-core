@@ -75,17 +75,30 @@ run ── runs them, quotes output ── submit_draft {text}   (no commands) �
   takes the list from the stored draft, not from the page.
 - Live only, like the conversation. The demo draws the list but has no Approve.
 
-### 4. Docs
+### 4. Notifications (Valery: yes)
+
+- `Notifier.run` in `server/notify/notify.ts`, for a run that ended as `draft`:
+  - when the step's draft has `cm`, the push says `<job> · <step>: N commands wait for approval`
+    instead of `draft ready` / `draft revised`;
+  - the body is the commands, numbered and cut to 200 characters as bodies already are;
+  - the URL is the same step link.
+- `Notifier.needsYou`: a job whose current draft has `cm` says `commands to approve` instead of
+  `a draft to review`.
+- A draft without `cm` pushes exactly as today.
+
+### 5. Docs
 
 - architecture.md, "Replies to a draft": an `approve` row, the three refusals, and `commands` beside
   `outcome` in "LLM runs".
+- architecture.md, "Notifications": the commands push.
 - gateway-protocol.md: not touched. This is the console's own API, not the gateway.
 
 ### Not in this job
 
 - **The agents-dev playbook text** lives in `D:\agents` (`ASK` in `workspaces/agents-dev/page.ts`) and
   should say "list each in submit_draft's commands". That is a consumer change, a follow-up agents job
-  after the core sync. Until then runs learn the field only from the tool description.
+  after the core sync. Until then runs learn the field only from the tool description. The same
+  follow-up must keep the console's own `update.ps1` **out** of `commands` (see "Run permissions" below).
 - **Partial approval** (tick some commands, not others) is left out. Reject with a reason, or a typed
   reply, still covers it.
 
@@ -100,21 +113,32 @@ run ── runs them, quotes output ── submit_draft {text}   (no commands) �
 | `reply(..., 'approve')` builds `q` from the stored list, resumes the session and does not accept. It refuses `no_commands`, `stale` and via session/console | `server/llm/runner.test.ts` |
 | `POST /api/runs/:id/reply {intent:'approve', at}` works, ignores `t`, and gives 409 on a stale `at` | `server/http/app.test.ts` |
 | MCP `draft_reply` refuses `approve` | `server/mcp/mcp.test.ts` |
+| A draft with `cm` pushes "N commands wait for approval" with the numbered commands as the body, and `needsYou` says "commands to approve". A draft without `cm` pushes as before | `server/notify/notify.test.ts` |
 | `npm test`, `npm run typecheck`, `npm run build && npm run smoke` all green | console |
 | **Live (Prove it live):** a console built from the job branch on a spare port, with a scripted SDK whose first turn submits a draft with two commands and whose reply turn submits their "output". Screenshots: the inspector card with the list and Approve, the same card in Approvals, the conversation after the click ("You · approve" plus the numbered list), and the journal line. Also quote the prompt the reply turn received | proof/ |
 
-## Open questions (notes)
+## Decisions (Valery's reply to the first draft)
 
-1. **One click, or a confirm modal?** The spec has one click, because that is what was asked and the list
-   sits right above the button. A modal would repeat the list. With one click there is no undo once the
-   run starts, only Cancel on the run.
-2. **Drafts handed in by hand** (MCP `submit_draft` from a Claude Code session) can carry `commands` too.
-   With no session for the console to continue, Approve stays hidden there, as DraftTalk's box does. Keep
-   the field on the MCP tool for symmetry, or leave it run-only for now? The spec keeps it, for symmetry.
-3. **Cap of 10 commands**, the same as `llmActs`' 10 acts a run. Is that enough for a deploy? (ad7 is
-   usually one or two.)
-4. **Push notification:** should a draft that waits for commands push "N commands wait for approval"
-   instead of the usual draft push? Left out unless wanted.
-5. **Run permissions:** Approve does not widen the run's tools. If the workspace's `llm` allowlist does
-   not allow `git push` or the deploy script, the run fails the command and says so in a `failed` draft.
-   That is correct, but it is worth knowing before the first live use on agents-dev.
+1. **One click**, no confirm dialog.
+2. **Drafts handed in by hand** through MCP `submit_draft` carry `commands` too. Approve stays hidden on
+   them because there is no session to continue.
+3. **Cap of 10 commands** a draft.
+4. **Notifications:** yes, a draft that waits for commands gets its own push (section 4).
+5. **Run permissions:** checked; see below.
+
+## Run permissions on agents-dev (checked 2026-10-12, from inside this run)
+
+Approve does not widen a run's tools, so it only works for commands the workspace already lets a run
+execute. Here is what agents-dev's runs can do today:
+
+| What | Finding |
+|---|---|
+| Tools | `D:\agents\services\work-console\workspaces\agents-dev\grants.json` gives `runTools` plain `Bash` and `PowerShell`, with no command patterns. The core `DENY` list only blocks paths with `.bridge`, `.work-console`, `console.token` or `mcp.token` in them, so `git push`, `python …05-deploy-app.py` and `08-deploy-jobs.py` are not denied. There is no `.claude/settings.json` in `D:\agents`, `D:\work-console-core` or the worktree to add deny rules. |
+| `git push`, core | From this run in `D:\agents-jobs\AD-0012`: `git push --dry-run origin HEAD:refs/heads/ad-0012-dryrun-probe` → `* [new branch] HEAD -> ad-0012-dryrun-probe`, exit 0. Auth works without a prompt (`GIT_TERMINAL_PROMPT=0`). It was a dry run, so nothing was pushed. |
+| `git push`, agents | The same dry run in `D:\agents-jobs\AD-0009` against `vaaaaQ/agents-platform`: exit 0. Nothing was pushed. |
+| Azure (05/08) | `az account show` → `Azure subscription 1  valery.hilimovich@gmail.com`, exit 0. |
+| Python (05/08) | `python --version` → `Python 3.12.10`. The WindowsApps path is a real interpreter, not the Store stub, and `import yaml` works. |
+| **Console deploy** | `powershell -NoProfile -File services/work-console/scripts/update.ps1` is not denied, but it stops the console that hosts the run (task `WorkConsole`, Running), which kills the run halfway. The ad7 text already says "Valery runs it outside the console". **So `update.ps1` must never go in `commands`**: an approved one would cut off its own run. The core cannot know this (it names no workplace), so the agents-dev follow-up states it in the playbook text, and the draft keeps that command as text for Valery to run. |
+
+So Approve works on agents-dev today for `git push` and the 05/08 deploys, and must not be used for
+the console's own update.
