@@ -7,12 +7,12 @@ import { KINDS, ctxOf, parseWorkId } from '../../src/model/context.ts'
 import { holdsOf } from '../../src/model/blockers.ts'
 import { thread } from '../../src/model/thread.ts'
 import * as T from '../../src/model/transitions.ts'
-import { INTENTS, SESSION_OPS } from '../../src/model/types.ts'
+import { CMDS_MAX, INTENTS, SESSION_OPS } from '../../src/model/types.ts'
 import type { Cmd, Job, RunIntent, RunRec } from '../../src/model/types.ts'
 import { GatewayError } from '../bridge/wire.ts'
 import { HttpError } from '../events.ts'
 import { safeName } from '../llm/runner.ts'
-import { OUTCOME_HELP, reportOf } from '../llm/sdk.ts'
+import { COMMANDS_HELP, OUTCOME_HELP, reportOf } from '../llm/sdk.ts'
 import type { Space, Spaces } from '../spaces.ts'
 
 /* Job tools for the user's own sessions (Claude Code, Cursor, …): an MCP server (streamable HTTP, JSON replies only)
@@ -215,7 +215,8 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
       name: 'submit_draft',
       description: 'Hand in the draft of a step taken up by hand: it waits in Approvals for the user to accept, reply to or reject, as an LLM run\'s draft does. '
         + 'artifacts: files the step expects, as {name, content}, at most 10 of 5 MB each. Refused busy while an LLM run of the step is queued or running, '
-        + 'and draft_waiting while a draft waits (reply to it with draft_reply, or reject it with job_command, first). Undo takes it back. ' + OUTCOME_HELP,
+        + 'and draft_waiting while a draft waits (reply to it with draft_reply, or reject it with job_command, first). Undo takes it back. ' + OUTCOME_HELP + ' ' + COMMANDS_HELP
+        + ' Only the user approves them, on the page.',
       inputSchema: {
         type: 'object', required: ['id', 'step', 'output'],
         properties: {
@@ -223,6 +224,7 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
           outcome: { type: 'string', enum: ['done', 'not_done', 'failed'], description: 'done (the default), not_done or failed' },
           return_to: { type: 'string', description: 'with not_done or failed: the earlier step the job goes back to on accept, id or exact title' },
           why: { type: 'string', description: 'why the step is not done, in one line' },
+          commands: { type: 'array', minItems: 1, maxItems: CMDS_MAX, items: { type: 'string' }, description: 'the exact commands, in order, this draft waits to have approved' },
           artifacts: { type: 'array', maxItems: ARTS_MAX, items: { type: 'object', required: ['name', 'content'], properties: { name: { type: 'string' }, content: { type: 'string' } } } },
         },
       },

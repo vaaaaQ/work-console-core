@@ -469,7 +469,8 @@ export function createApp(d: Deps) {
     // a reply to the draft of the run's step, in the step's newest session
     ['POST', /^\/api\/runs\/([^/]+)\/reply$/, async (r) => {
       const [s, run] = await runOf(r.p[0]), b = await r.body()
-      return { run: await s.runner.reply(run.job, run.step, String(b.t ?? ''), b.intent as RunIntent) }
+      // approve takes its text from the draft's stored commands; at = the draft the page showed
+      return { run: await s.runner.reply(run.job, run.step, String(b.t ?? ''), b.intent as RunIntent, typeof b.at === 'string' ? { at: b.at } : {}) }
     }],
     ['GET', /^\/api\/artifacts\/([^/]+)\/([^/]+)$/, (r) => artifact(r, r.p[0], r.p[1])],
     ['POST', /^\/api\/push\/subscribe$/, async (r) => {

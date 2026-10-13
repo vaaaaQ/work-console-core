@@ -53,12 +53,17 @@ export interface Review { v: Vote[]; need: number }
 /** what a draft reports about its step: done (the default, not stored), not finished, or a check that failed */
 export type Outcome = 'done' | 'not_done' | 'failed'
 export const OUTCOMES: readonly Outcome[] = ['done', 'not_done', 'failed']
-/** a draft's report: o = not finished or failed, rt = the step (already passed) the job goes back to on accept, why = the reason */
-export interface DraftReport { o?: Outcome; rt?: string; why?: string }
-/** o, rt, why: the draft's report, set only when it did not finish */
-export interface Draft extends New { t: string; at: string; q?: string; o?: Exclude<Outcome, 'done'>; rt?: string; why?: string }
-/** id = the backend's run record; absent in the demo; reply = it continues the draft's session, so the draft stays */
-export interface Run { q: string; at: number; id?: string; reply?: 1 }
+/** a draft's report: o = not finished or failed, rt = the step (already passed) the job goes back to on accept, why = the reason,
+    cm = the exact commands, in order, the draft waits to have approved */
+export interface DraftReport { o?: Outcome; rt?: string; why?: string; cm?: string[] }
+/** the most commands one draft may wait for, and the most characters of one */
+export const CMDS_MAX = 10, CMD_MAX = 2000
+/** o, rt, why: the draft's report, set only when it did not finish; cm = the commands it waits to have approved;
+    ap = it reports approved commands, so it is the person's to read and never accepted by itself */
+export interface Draft extends New { t: string; at: string; q?: string; o?: Exclude<Outcome, 'done'>; rt?: string; why?: string; cm?: string[]; ap?: 1 }
+/** id = the backend's run record; absent in the demo; reply = it continues the draft's session, so the draft stays;
+    ap = the reply approves the draft's commands */
+export interface Run { q: string; at: number; id?: string; reply?: 1; ap?: 1 }
 export interface Sent { at: string; t: string }
 /** a step's blocker: j = the job it waits for, t = its title when linked, st = its state as last seen,
     plan = what to do with its outcome, out = its outcome, copied in when it closed, at = when it closed */
@@ -172,9 +177,12 @@ export const SESSION_OPS = [...PAGE_OPS.filter((o) => !o.startsWith('pp')), 'ret
 export const PP_OPS = ['stepAdd', 'stepDel', 'stepEdit', 'stepMove', 'returnTo', 'waitAdd', 'waitDel', 'stepDone',
   'describe', 'ctxAdd', 'ctxDel', 'noteAdd'] as const
 
-/** what a reply to a draft asks for: change it, change it and accept it, or only answer */
-export type RunIntent = 'revise' | 'accept' | 'ask'
-export const INTENTS: readonly RunIntent[] = ['revise', 'accept', 'ask']
+/** what a reply to a draft asks for: change it, change it and accept it, only answer, or run the commands it waits for
+    (approve: the page's button only; the text is built from the draft's commands) */
+export type RunIntent = 'revise' | 'accept' | 'ask' | 'approve'
+/** the intents a typed reply may have; approve is not one */
+export type ReplyIntent = Exclude<RunIntent, 'approve'>
+export const INTENTS: readonly RunIntent[] = ['revise', 'accept', 'ask'] satisfies ReplyIntent[]
 export type RunState = 'queued' | 'running' | 'draft' | 'answered' | 'failed' | 'cancelled' | 'interrupted'
 /** one LLM ask; session = the Claude Code session id, for Resume and hand-over;
     ar = auto-resume: due = it resumes by itself after the next comeback, used = it did once or no longer can;

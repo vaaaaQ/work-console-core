@@ -1,6 +1,6 @@
 import { HttpError } from '../events.ts'
 import { readToken } from '../config.ts'
-import type { RunIntent } from '../../src/model/types.ts'
+import type { ReplyIntent, RunIntent } from '../../src/model/types.ts'
 import { INTENTS } from '../../src/model/types.ts'
 
 /* Spoken or typed text made clean for a field, by one OpenAI call with a strict JSON answer. Built like
@@ -9,7 +9,7 @@ import { INTENTS } from '../../src/model/types.ts'
 export type Target = 'llm' | 'people'
 /** ctx = what is being answered; field = the text already in the field, context only */
 export interface FormatIn { text: string; ctx?: string; field?: string; target: Target; intents?: boolean }
-export interface Format { format(o: FormatIn, signal?: AbortSignal): Promise<{ text: string; intent?: RunIntent }> }
+export interface Format { format(o: FormatIn, signal?: AbortSignal): Promise<{ text: string; intent?: ReplyIntent }> }
 
 const CTX_MAX = 8000, TEXT_MAX = 20_000
 const KEYISH = /\bsk-[A-Za-z0-9_*.-]{2,}/g
@@ -75,7 +75,7 @@ export function formatter(o: { keyPath: string; model?: string; fetch?: typeof f
       let got: { text?: unknown; intent?: unknown } = {}
       try { got = JSON.parse(out ?? '') } catch { /* told below */ }
       if (typeof got.text !== 'string') throw new HttpError(502, 'format_failed', 'OpenAI sent no text')
-      const intent = i.intents && INTENTS.includes(got.intent as RunIntent) ? (got.intent as RunIntent) : undefined
+      const intent = i.intents && INTENTS.includes(got.intent as RunIntent) ? (got.intent as ReplyIntent) : undefined
       return { text: got.text.trim(), ...(intent ? { intent } : {}) }
     },
   }

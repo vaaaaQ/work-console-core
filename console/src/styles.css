@@ -503,6 +503,9 @@ p.cx-t{font-family:var(--font)}
 .turn-q{font-size:12.5px;white-space:pre-wrap;overflow-wrap:anywhere}
 .turn-q b{font-weight:600;color:var(--muted);margin-right:4px}
 .talk-box{display:flex;flex-direction:column;gap:6px}
+.cmds{margin:8px 0}
+.cmds ol{margin:4px 0 0;padding-left:22px;font-size:12px}
+.cmds li{padding:2px 0}
 .llmr .hd b{color:var(--fg);font-weight:600}
 .out{white-space:pre-wrap;background:var(--sunken);border-radius:4px;padding:10px 12px;font-size:13px;margin:0;overflow-wrap:anywhere}
 .spin{display:inline-block;width:13px;height:13px;flex:none;border-radius:50%;border:2px solid color-mix(in oklab,var(--cur) 25%,transparent);border-top-color:var(--cur);animation:spin .8s linear infinite}

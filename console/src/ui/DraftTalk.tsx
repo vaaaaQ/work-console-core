@@ -4,7 +4,7 @@ import { newBlocker } from '../actions/newjob.tsx'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
 import { thread } from '../model/thread.ts'
-import type { Job, RunIntent, RunRec } from '../model/types.ts'
+import type { Job, ReplyIntent, RunRec } from '../model/types.ts'
 import { commit } from '../store.ts'
 import { Ic } from './Icon.tsx'
 import { OutText } from './outText.ts'
@@ -15,11 +15,11 @@ import { VoiceField } from './VoiceField.tsx'
 /* A draft's conversation: the replies after its first ask, each with what came of it, then the box that
    sends the next one. A reply runs in the draft's own session; live only. */
 
-const SEND_L: Record<RunIntent, string> = { revise: 'Send', accept: 'Send and accept', ask: 'Ask' }
+const SEND_L: Record<ReplyIntent, string> = { revise: 'Send', accept: 'Send and accept', ask: 'Ask' }
 
 /** last = how many replies to show before "N more" */
 export function DraftTalk({ job, step, last }: { job: Job; step: string; last?: number }) {
-  const [more, setMore] = React.useState(false), [t, setT] = React.useState(''), [intent, setIntent] = React.useState<RunIntent>('revise')
+  const [more, setMore] = React.useState(false), [t, setT] = React.useState(''), [intent, setIntent] = React.useState<ReplyIntent>('revise')
   const [sending, setSending] = React.useState(false)
   const f = job.flow[step]
   if (!LIVE.on || !f?.dr) return null
@@ -78,7 +78,8 @@ function Turn({ r }: { r: RunRec }) {
     <div className="turn">
       <div className="turn-q"><b>{who} · {r.intent}</b> {r.q}</div>
       {r.state === 'answered' ? <OutText t={r.a || ''} />
-        : r.state === 'draft' ? <div className="hint">{r.intent === 'accept' ? 'The draft was revised but not accepted; accept it above.' : 'The draft was revised.'}</div>
+        : r.state === 'draft' ? <div className="hint">{r.intent === 'accept' ? 'The draft was revised but not accepted; accept it above.'
+          : r.intent === 'approve' ? 'The commands ran; the draft above says what they printed.' : 'The draft was revised.'}</div>
         : <div className="hint">{r.state}{r.reason ? `: ${r.reason}` : ''}</div>}
     </div>
   )

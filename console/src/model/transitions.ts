@@ -5,7 +5,7 @@ import { fromWall, midnight, offsetAt } from '../lib/zone.ts'
 import { openOf, reaches, settled, waitsM } from './blockers.ts'
 import { KINDS, ctxDefaults, ctxLabel, ctxOf, ctxUnit, parseWorkId } from './context.ts'
 import type { Kind } from './context.ts'
-import { OUTCOMES, PP_OPS } from './types.ts'
+import { CMD_MAX, CMDS_MAX, OUTCOMES, PP_OPS } from './types.ts'
 import type {
   BadgeKind, Cmd, Draft, DraftReport, CtxItem, CtxKind, Flow, Job, JobStatus, JournalEntry, Lamp, NewStep, NodeState, Phase, Playbook, Round, Start, Step, StepOverride, Tpl, Ws,
 } from './types.ts'
@@ -312,29 +312,42 @@ export function sentBefore(j: Job, sid: string): SentBefore[] {
 
 /** a draft's report, checked as it is handed in so a bad one is refused while the run can still fix it:
     an outcome it knows, and return_to (by id or exact title) a step before the drafting one, which returnTo would accept */
-function report(x: Ctx, j: Job, sid: string, r: DraftReport): Pick<Draft, 'o' | 'rt' | 'why'> {
+function report(x: Ctx, j: Job, sid: string, r: DraftReport): Pick<Draft, 'o' | 'rt' | 'why' | 'cm'> {
+  const cm = r.cm === undefined ? {} : { cm: commandsOf(r.cm) }
   if (r.o !== undefined && !OUTCOMES.includes(r.o)) throw new CmdError('bad_args', `outcome is one of ${OUTCOMES.join(', ')}`)
   const why = typeof r.why === 'string' ? line(r.why, 300) : ''
   if (!r.o || r.o === 'done') {
     if (r.rt) throw new CmdError('bad_args', 'return_to goes with outcome not_done or failed')
-    return {}
+    return cm
   }
-  if (!r.rt) return { o: r.o, ...(why ? { why } : {}) }
+  if (!r.rt) return { o: r.o, ...(why ? { why } : {}), ...cm }
   const all = stepsOf(x, j), want = r.rt.trim().toLowerCase()
   let ti = all.findIndex((s) => s.id === r.rt)
   if (ti < 0) ti = all.findIndex((s) => s.t.toLowerCase() === want)
   if (ti < 0) throw new CmdError('bad_step', `return_to: ${j.id} has no step ${r.rt}`)
   if (ti >= all.findIndex((s) => s.id === sid)) throw new CmdError('bad_step', `return_to: “${all[ti].t}” has not been passed yet; name a step before this one`)
-  return { o: r.o, rt: all[ti].id, ...(why ? { why } : {}) }
+  return { o: r.o, rt: all[ti].id, ...(why ? { why } : {}), ...cm }
 }
+/** the commands a draft waits to have approved, each trimmed: 1 to CMDS_MAX, none empty or over CMD_MAX characters */
+function commandsOf(cm: unknown): string[] {
+  if (!Array.isArray(cm) || !cm.length || cm.length > CMDS_MAX) throw new CmdError('bad_args', `commands are a list of 1 to ${CMDS_MAX}`)
+  return cm.map((c, i) => {
+    const t = typeof c === 'string' ? c.trim() : ''
+    if (!t || t.length > CMD_MAX) throw new CmdError('bad_args', `command ${i + 1} is empty or longer than ${CMD_MAX} characters`)
+    return t
+  })
+}
+/** "N commands", one or more */
+export const cmdsN = (n: number) => `${n} command${n === 1 ? '' : 's'}`
 /** the line the page shows on a draft that reports it did not finish, or null */
 export function reportText(x: Ctx, j: Job, dr: Draft): string | null {
   if (!dr.o) return null
   const where = dr.rt ? `returns to “${stepOf(x, j, dr.rt)?.t ?? dr.rt}” on accept` : 'the step stays open on accept'
   return `reports ${dr.o === 'failed' ? 'failed' : 'not done'} → ${where}${dr.why ? `: ${dr.why}` : ''}`
 }
-const reportTxt = (x: Ctx, j: Job, r: Pick<Draft, 'o' | 'rt'>) =>
-  r.o ? `; it reports ${r.o === 'failed' ? 'failed' : 'not done'}${r.rt ? ` and goes back to “${stepOf(x, j, r.rt)!.t}” on accept` : ''}` : ''
+const reportTxt = (x: Ctx, j: Job, r: Pick<Draft, 'o' | 'rt' | 'cm'>) =>
+  (r.cm ? `; waits for approval of ${cmdsN(r.cm.length)}` : '')
+  + (r.o ? `; it reports ${r.o === 'failed' ? 'failed' : 'not done'}${r.rt ? ` and goes back to “${stepOf(x, j, r.rt)!.t}” on accept` : ''}` : '')
 
 /* ===== the job's own steps ===== */
 const STARTS: readonly Start[] = ['hand', 'self', 'auto']
@@ -742,18 +755,21 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     case 'runReply': {
       if (F.run) throw new CmdError('bad_state', `“${S.t}” already has an LLM run`)
       needDraft()
-      F.run = { q: cmd.q, at: nowOf(x).getTime(), id: cmd.id, reply: 1 }; F.s = 'cur'; F.nw = 1
-      const what = cmd.intent === 'ask' ? 'answers' : cmd.intent === 'accept' ? 'revises the draft, then it is accepted' : 'revises the draft'
-      if (cmd.resumed) jr(x, j, `Resumed the reply to the LLM draft for “${S.t}”.`, `LLM ${what}.`, 'wait for it.', by(x), 'cur')
+      const ap = cmd.intent === 'approve'
+      if (ap && !F.dr!.cm?.length) throw new CmdError('bad_state', `the draft for “${S.t}” waits for no commands`)
+      F.run = { q: cmd.q, at: nowOf(x).getTime(), id: cmd.id, reply: 1, ...(ap ? { ap: 1 as const } : {}) }; F.s = 'cur'; F.nw = 1
+      const what = ap ? 'runs them' : cmd.intent === 'ask' ? 'answers' : cmd.intent === 'accept' ? 'revises the draft, then it is accepted' : 'revises the draft'
+      if (ap && !cmd.resumed) jr(x, j, `Approved ${cmdsN(F.dr!.cm!.length)} for “${S.t}”: ${line(F.dr!.cm!.join('; '), 300)}`, `LLM ${what}.`, 'wait for it.', by(x), 'cur')
+      else if (cmd.resumed) jr(x, j, `Resumed the reply to the LLM draft for “${S.t}”.`, `LLM ${what}.`, 'wait for it.', by(x), 'cur')
       else jr(x, j, `Replied to the LLM draft for “${S.t}”: ${line(cmd.q)}`, `LLM ${what}.`, 'wait for it.', by(x), 'cur')
       syncStatus(x, j)
       break
     }
     case 'runDraft': {
       if (!F.run) throw new CmdError('bad_state', `“${S.t}” has no LLM run`)
-      const re = !!F.run.reply
+      const re = !!F.run.reply, ap = F.run.ap ? { ap: 1 as const } : {}
       const rep = report(x, j, sid, cmd)
-      F.run = null; F.dr = { t: cmd.t, at: nowOf(x).toISOString(), nw: 1, ...rep }; F.s = 'wait'; F.m = re ? 'LLM draft revised' : 'LLM draft ready'; F.nw = 1
+      F.run = null; F.dr = { t: cmd.t, at: nowOf(x).toISOString(), nw: 1, ...rep, ...ap }; F.s = 'wait'; F.m = re ? 'LLM draft revised' : 'LLM draft ready'; F.nw = 1
       jr(x, j, `${re ? `Draft for “${S.t}” revised` : `Draft for “${S.t}” is ready`}${reportTxt(x, j, rep)}.`, 'waiting for your review.', 'accept, edit or reject it.', 'LLM', 'wait'); syncStatus(x, j)
       break
     }

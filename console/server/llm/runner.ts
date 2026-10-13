@@ -14,7 +14,7 @@ import type { Jobs } from '../jobs/jobs.ts'
 import type { Notes } from '../knowledge/notes.ts'
 import type { Store } from '../store/port.ts'
 import type { PromptImage, RunContext } from './context.ts'
-import { buildPrompt, contextText, manualText, redoText, replyPrompt, RESUME_ASK_PROMPT, RESUME_PROMPT } from './prompt.ts'
+import { approveText, buildPrompt, contextText, manualText, redoText, replyPrompt, RESUME_ASK_PROMPT, RESUME_PROMPT } from './prompt.ts'
 import type { PromptIn } from './prompt.ts'
 import { pickOf } from './providers.ts'
 import type { OpenIn, SdkPick } from './providers.ts'
@@ -164,11 +164,15 @@ export class Runner {
     return { head: t.at(-1), session: s?.session, provider: s?.provider ?? 'claude' }
   }
 
-  /** a reply to the step's draft in its own session; via = who replied when not the user: a session, or the console itself */
-  async reply(job: string, step: string, t: string, intent: RunIntent, o: { via?: 'session' | 'console'; name?: string } = {}): Promise<RunRec> {
+  /** a reply to the step's draft in its own session; via = who replied when not the user: a session, or the console itself.
+      approve runs the draft's commands: only the user approves, the text is built from the stored commands, and
+      at = the draft's time as the page drew it, so a draft revised since is never approved blind */
+  async reply(job: string, step: string, t: string, intent: RunIntent, o: { via?: 'session' | 'console'; name?: string; at?: string } = {}): Promise<RunRec> {
     if (!this.gate()) throw downError(this.via, 'the reply was not sent')
-    if (!t || !t.trim()) throw new HttpError(400, 'bad_args', 'the reply is empty')
-    if (!INTENTS.includes(intent)) throw new HttpError(400, 'bad_args', `intent is one of ${INTENTS.join(', ')}`)
+    const ap = intent === 'approve'
+    if (ap && o.via) throw new HttpError(403, 'not_yours', 'only the user approves commands, from the page')
+    if (!ap && (!t || !t.trim())) throw new HttpError(400, 'bad_args', 'the reply is empty')
+    if (!ap && !INTENTS.includes(intent)) throw new HttpError(400, 'bad_args', `intent is one of ${INTENTS.join(', ')}, or approve from the page`)
     const j = await this.jobs.get(job)
     if (!j) throw new HttpError(404, 'not_found', `no job ${job}`)
     const f = j.flow[step]
@@ -176,6 +180,9 @@ export class Runner {
     if (T.isClosed(j)) throw new HttpError(409, 'bad_state', `${job} is closed`)
     if (f.run) throw new HttpError(409, 'busy', 'this step already has an LLM run')
     if (!f.dr) throw new HttpError(409, 'no_draft', 'this step has no draft to reply to')
+    if (ap && !f.dr.cm?.length) throw new HttpError(409, 'no_commands', 'this draft waits for no commands')
+    if (ap && o.at !== f.dr.at) throw new HttpError(409, 'stale', 'the draft changed since the page showed it; look at its commands again')
+    if (ap) t = approveText(f.dr.cm!)
     const c = await this.chain(job, step)
     if (!c.head || !c.session) throw new HttpError(409, 'no_session', 'this draft has no LLM session to continue; ask again instead')
     // a run that has submitted its draft can still be winding its session down

@@ -1,7 +1,7 @@
 import * as React from 'react'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
-import type { RunIntent } from '../model/types.ts'
+import type { ReplyIntent } from '../model/types.ts'
 import { S } from '../model/world.ts'
 import { Ic } from './Icon.tsx'
 import { canRecord, micError, Recorder } from './voice.ts'
@@ -14,7 +14,7 @@ import { insertAt, swap } from './voiceText.ts'
 const REC_MAX = 10 * 60_000
 /** how much of the text being answered goes to the formatter */
 const CTX_MAX = 8000
-const INTENT_L: Record<RunIntent, string> = { revise: 'Revise', accept: 'Revise and accept', ask: 'Ask' }
+const INTENT_L: Record<ReplyIntent, string> = { revise: 'Revise', accept: 'Revise and accept', ask: 'Ask' }
 type Busy = null | 'wait' | 'rec' | 'stt' | 'fmt'
 const BUSY_L: Record<Exclude<Busy, null>, string> = { wait: 'Waiting for the mic…', rec: 'Listening…', stt: 'Turning it into text…', fmt: 'Tidying up…' }
 
@@ -22,7 +22,7 @@ const BUSY_L: Record<Exclude<Busy, null>, string> = { wait: 'Waiting for the mic
     choice and lets the formatter pick it from the words */
 export function VoiceField(p: {
   name?: string; defaultValue?: string; value?: string; onChange?(v: string): void; ctx?: string; target: 'llm' | 'people'
-  intent?: RunIntent; onIntent?(i: RunIntent): void; rows?: number; placeholder?: string; autoFocus?: boolean; maxLength?: number
+  intent?: ReplyIntent; onIntent?(i: ReplyIntent): void; rows?: number; placeholder?: string; autoFocus?: boolean; maxLength?: number
 }) {
   const [own, setOwn] = React.useState(p.defaultValue ?? '')
   const v = p.value ?? own, vr = React.useRef(v)
@@ -91,7 +91,7 @@ export function VoiceField(p: {
         {LIVE.voice && !busy && <button type="button" className="btn sm" disabled={!v.trim()} title="The formatter cleans up the whole text"
           onClick={() => { const t = vr.current; void tidy(t, '', 0, t.length) }}>Tidy up</button>}
         {busy && <button type="button" className="btn sm" onClick={cancel} title="Stop; the text stays as it is"><Ic n="x" sm />Cancel</button>}
-        {p.onIntent && <span className="seg">{(['revise', 'accept', 'ask'] as RunIntent[]).map((i) =>
+        {p.onIntent && <span className="seg">{(['revise', 'accept', 'ask'] as ReplyIntent[]).map((i) =>
           <button key={i} type="button" aria-pressed={p.intent === i} onClick={() => p.onIntent!(i)}>{INTENT_L[i]}</button>)}</span>}
         {busy && <span className="vf-st">{BUSY_L[busy]}</span>}
       </div>

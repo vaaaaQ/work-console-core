@@ -349,6 +349,7 @@ carry it, and the page shows it in a banner.
 - It never reads the console home: the deny list covers `.work-console` for Read, Bash and PowerShell.
 - The run hands back its draft with `submit_draft`. The page shows the draft, and a person sends it.
 - A draft can report that its step is not done: `submit_draft` takes `outcome` (`done` by default, `not_done`, `failed`), `return_to` (an earlier step, by id or exact title, checked when the draft is handed in) and `why`. Accepting such a draft keeps it as the step's output and never marks the step done: with `return_to` the job goes back there as `returnTo` does, without it the step stays open. On the page, Accept asks: **Return to** the step, **Keep the step open** (`stay`), or **Mark done anyway** (`asDone`, refused from anything but the page). An auto step holds such a draft back for the person, and a reply that accepts never closes it. Nothing is read from the draft's words.
+- A draft can wait for commands: when the step's instruction says a command runs only after it is approved, `submit_draft` takes `commands`, the exact commands in order (1 to 10, each trimmed, non-empty and at most 2000 characters; a bad list is `bad_args` while the run can still fix it). They are stored as the draft's `cm`, and a revised draft without them clears them. The page lists them with **Approve** (see Replies to a draft). An auto step holds such a draft back for the person, and holds the draft that reports what approved commands printed (`ap`) as well.
 - The gateway serves the run's read tools as MCP at `{gateway}/mcp` with the `llm` token. The fake
   gateway does not serve `/mcp`, so a demo run uses the fake SDK in tests.
 
@@ -381,7 +382,9 @@ draft, and `get_job` lists it.
 | `revise` | changes the draft and submits it again | `draft`, which waits for review again |
 | `accept` | changes the draft if asked, then submits it | `draft`, accepted the moment it is submitted, signed by whoever replied. If that accept fails, the draft stays and a push says so |
 | `ask` | answers in text and submits nothing | `answered`, with the answer in `a` (at most 4000 characters). The draft stays |
+| `approve` | runs exactly the draft's commands, in order, stops at the first that fails, then submits what each printed | `draft` with `ap`, which waits for the person to read and accept. It is never accepted by itself |
 
+- `approve` is the page's **Approve** button: `{intent: 'approve', at}`, where `at` is the draft's time as the page drew it. Any `t` is ignored: the server builds the reply from the stored `cm` (`Approved, run exactly these commands, in this order:` and the numbered list), so the conversation shows what was approved. It is refused with 409 `no_commands` on a draft without commands, 409 `stale` when the draft changed since the page drew it, and 403 `not_yours` from a Claude Code session or the console itself: an LLM never approves commands, and MCP `draft_reply` leaves `approve` out. Approve does not widen a run's tools; it only runs what the workspace already lets runs run.
 - A reply needs a draft (409 `no_draft`), no run on the step (`busy`), and a session in the chain (`no_session`).
   A turn whose session is still winding down after its draft is `busy` too, so two processes never share a session.
 - Accept, Edit and Reject wait while a reply runs. An interrupted reply resumes in its session like any run.
@@ -549,10 +552,15 @@ only one workspace is registered.
   blocker, `holds`, the steps of other jobs that wait for it; `holds` is read from every job of the workspace.
 - Every change is signed with the client's name from `initialize` (`clientInfo.name`), Claude Code when it gives none.
 - `step_context {id, step}` returns what a run of the step would be told, pictures included, with How to work told for a session opened by hand.
-- `submit_draft {id, step, output, outcome?, return_to?, why?, artifacts?}` hands that session's draft in (`draftIn`): it waits in Approvals like a run's. It is `busy` while a run of the step is queued or running, and `draft_waiting` while a draft waits. Undo takes back the draft and its artifact links.
+- `submit_draft {id, step, output, outcome?, return_to?, why?, commands?, artifacts?}` hands that session's draft in (`draftIn`): it waits in Approvals like a run's. It is `busy` while a run of the step is queued or running, and `draft_waiting` while a draft waits. Undo takes back the draft and its artifact links.
 
 ## Notifications
 
 `console/server/notify/` turns deltas into short notices: a new review vote, a red build, a
 mention, a reminder, a revised draft, an LLM's answer to a question. The page receives them over SSE. A phone gets them over the LAN port
 7411 after pairing (`console/server/pairing/`).
+
+A run that ends on a draft waiting for commands pushes `<job> · <step>: N commands wait for approval`
+instead of `draft ready` or `draft revised`, with the numbered commands as the body (cut to 200
+characters) and the same step link. A job that starts needing you with such a draft says
+`commands to approve` instead of `a draft to review`. Any other draft pushes as before.

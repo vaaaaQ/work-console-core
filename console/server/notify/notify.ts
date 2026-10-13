@@ -92,14 +92,23 @@ export class Notify {
   private stepName(j: Job | undefined, step: string) { return (j && T.stepOf(this.ctx(), j, step)?.t) || step }
 
   async run(r: RunRec, j?: Job) {
+    const url = withWs(`/?job=${encodeURIComponent(r.job)}&step=${encodeURIComponent(r.step)}`, j?.ws)
+    // a draft that waits for commands says how many, and lists them
+    const cm = r.state === 'draft' ? j?.flow[r.step]?.dr?.cm : undefined
+    if (cm?.length) {
+      const n = T.cmdsN(cm.length)
+      await this.push(`${r.job} · ${this.stepName(j, r.step)}: ${n} ${cm.length === 1 ? 'waits' : 'wait'} for approval`, cut(cm.map((c, i) => `${i + 1}. ${c}`).join('\n'), 200), url)
+      return
+    }
     const what = r.state === 'draft' ? (r.parent ? 'draft revised' : 'draft ready') : r.state === 'answered' ? 'LLM answered'
       : r.state === 'failed' ? 'run failed' : r.ar === 'due' ? 'run interrupted, resumes by itself' : 'run interrupted'
-    await this.push(`${r.job} · ${this.stepName(j, r.step)}: ${what}`, r.a?.slice(0, 200) || r.reason || j?.t || '', withWs(`/?job=${encodeURIComponent(r.job)}&step=${encodeURIComponent(r.step)}`, j?.ws))
+    await this.push(`${r.job} · ${this.stepName(j, r.step)}: ${what}`, r.a?.slice(0, 200) || r.reason || j?.t || '', url)
   }
 
   async needsYou(j: Job) {
     const x = this.ctx()
-    const what = T.hasDraft(j) ? 'a draft to review' : T.unsentAt(x, j) ? 'a message to send' : j.st === 'ready' ? 'ready to start' : 'waiting for you'
+    const what = T.hasDraft(j) ? (Object.values(j.flow).some((f) => f.dr?.cm?.length && !T.ahead(f)) ? 'commands to approve' : 'a draft to review')
+      : T.unsentAt(x, j) ? 'a message to send' : j.st === 'ready' ? 'ready to start' : 'waiting for you'
     await this.push(`${j.id}: ${what}`, j.t, withWs(`/?job=${encodeURIComponent(j.id)}`, j.ws))
   }
 

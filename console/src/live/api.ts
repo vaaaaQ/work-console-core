@@ -1,5 +1,5 @@
 import type { AgentConv, AgentRec } from '../model/agent.ts'
-import type { CalEvent, Chat, Cmd, Job, Mail, Msg, Playbook, RunIntent, RunRec, Tpl } from '../model/types.ts'
+import type { CalEvent, Chat, Cmd, Job, Mail, Msg, Playbook, ReplyIntent, RunIntent, RunRec, Tpl } from '../model/types.ts'
 import type { NewJob } from '../model/transitions.ts'
 import type { Resolved } from '../model/context.ts'
 import type { TrackerView } from '../model/tracker.ts'
@@ -207,6 +207,8 @@ export const cancelRun = (id: string) => call<{ run: RunRec }>('POST', `/api/run
 export const resumeRun = (id: string) => call<{ run: RunRec }>('POST', `/api/runs/${enc(id)}/resume`)
 /** a reply to the draft of the run's step, in its session */
 export const reply = (id: string, t: string, intent: RunIntent) => call<{ run: RunRec }>('POST', `/api/runs/${enc(id)}/reply`, { t, intent })
+/** approves the commands of the draft the page shows, by its time; the backend takes them from the stored draft */
+export const approve = (id: string, at: string) => call<{ run: RunRec }>('POST', `/api/runs/${enc(id)}/reply`, { intent: 'approve', at })
 export const runInfo = (id: string) => call<{ run: RunRec; feed: string[] }>('GET', `/api/runs/${enc(id)}`)
 export const sources = (ws: string, concepts: string[]) =>
   wsCall<{ concepts: Record<string, ConceptState> }>(ws, 'GET', `/sources?concepts=${concepts.map(enc).join(',')}`)
@@ -259,7 +261,7 @@ export const transcribe = async (ws: string, audio: string, mime: string, signal
   (await wsCall<{ text: string }>(ws, 'POST', '/transcribe', { audio, mime }, 130000, signal)).text
 /** dictated words tidied up for the one who reads them; intents: also which of revise/accept/ask they mean */
 export const format = (ws: string, b: { text: string; ctx?: string; field?: string; target: 'llm' | 'people'; intents?: boolean }, signal?: AbortSignal) =>
-  wsCall<{ text: string; intent?: RunIntent }>(ws, 'POST', '/format', b, 40000, signal)
+  wsCall<{ text: string; intent?: ReplyIntent }>(ws, 'POST', '/format', b, 40000, signal)
 /** the New job form filled from what was said: say = every say so far, oldest first; id names the build in its events */
 export const build = async (ws: string, id: string, say: string[], form: BuildForm, signal?: AbortSignal) =>
   (await wsCall<{ form: BuildForm }>(ws, 'POST', '/build', { id, say, form }, 150000, signal)).form

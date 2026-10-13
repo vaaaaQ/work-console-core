@@ -173,24 +173,29 @@ export function mcpServers(o: { gatewayUrl: string; llmToken: () => string; mcp?
 export const OUTCOME_HELP = 'If the step is not finished, or a check or a test failed, say so with outcome not_done or failed '
   + '(accepting such a draft never marks the step done) and name in return_to the earlier step the job should go back to, if any, '
   + 'by its id or exact title; why says why in one line. Leave outcome out, or done, when the step is done.'
+/** how a draft names the commands it waits to have approved: the same words in every submit_draft */
+export const COMMANDS_HELP = "commands: when the step's instruction says a command runs only after it is approved, the exact commands, in order, "
+  + 'that this draft waits to run. Leave it out otherwise. The text still says what each one does.'
 const REPORT_SCHEMA = {
   outcome: z.enum(['done', 'not_done', 'failed']).optional(),
   return_to: z.string().min(1).optional(),
   why: z.string().optional(),
+  commands: z.array(z.string()).optional(),
 }
-/** the tool's arguments as a draft's report; only what was given */
-export function reportOf(a: { outcome?: unknown; return_to?: unknown; why?: unknown }): DraftReport {
+/** the tool's arguments as a draft's report; only what was given. The commands are checked as the draft goes in */
+export function reportOf(a: { outcome?: unknown; return_to?: unknown; why?: unknown; commands?: unknown }): DraftReport {
   return {
     ...(a.outcome !== undefined ? { o: a.outcome as Outcome } : {}),
     ...(typeof a.return_to === 'string' && a.return_to ? { rt: a.return_to } : {}),
     ...(typeof a.why === 'string' && a.why.trim() ? { why: a.why } : {}),
+    ...(a.commands !== undefined ? { cm: a.commands as string[] } : {}),
   }
 }
 
 /** the run server's tools: always its own, then the ones this run's tools carry */
 export function runToolDefs(tools: RunTools) {
   return [
-    tool('submit_draft', `Submit the draft for this step for the user to review. Call exactly once, at the end. ${OUTCOME_HELP}`,
+    tool('submit_draft', `Submit the draft for this step for the user to review. Call exactly once, at the end. ${OUTCOME_HELP} ${COMMANDS_HELP}`,
       { text: z.string().min(1), ...REPORT_SCHEMA },
       (a) => wrap(() => tools.submitDraft(a.text, reportOf(a)), 'draft submitted')()),
     tool('add_artifact', 'Save a file this step produces (for example analysis.md). Same name replaces it.', { name: z.string().min(1), content: z.string() },

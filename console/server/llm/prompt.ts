@@ -156,11 +156,15 @@ const REPLY_TAIL: Record<RunIntent, string> = {
   revise: 'Change the draft as asked and call submit_draft with the whole new text.',
   accept: 'Change the draft as asked, if anything, and call submit_draft with the whole new text; it is accepted as it is then.',
   ask: 'Answer in text. Do not call submit_draft: the draft stays as it is.',
+  approve: 'Run exactly these commands, in this order, and nothing else that needs approval. Stop at the first that fails. '
+    + 'Then call submit_draft with what each one printed. If one failed, set outcome failed. A further command that needs approval goes in commands again.',
 }
+/** an approval as the draft's session reads it, and as the conversation shows it: the draft's commands, numbered */
+export const approveText = (cm: string[]) => `Approved, run exactly these commands, in this order:\n${cm.map((c, i) => `${i + 1}. ${c}`).join('\n')}`
 const BLOCKER_LINE = 'If the reply asks in so many words for a blocker, a job this step has to wait for (such as waiting for someone\'s answer), call open_blocker with what the user asked and stop. If it seems to want one but leaves open which step or what to wait for, ask back in text instead, without calling submit_draft.'
-/** a reply to the run's own draft, in its session; blocker = the run has open_blocker */
+/** a reply to the run's own draft, in its session; blocker = the run has open_blocker, which an approval never asks for */
 export const replyPrompt = (q: string, intent: RunIntent, me?: string, blocker = false) =>
-  `${me || 'the user'} replied to your draft:\n\n${q}\n\n${REPLY_TAIL[intent]}${blocker ? `\n\n${BLOCKER_LINE}` : ''}`
+  `${me || 'the user'} replied to your draft:\n\n${q}\n\n${REPLY_TAIL[intent]}${blocker && intent !== 'approve' ? `\n\n${BLOCKER_LINE}` : ''}`
 
 /** the most of a rejected draft a redo carries */
 const REDO_DRAFT_MAX = 6000

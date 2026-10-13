@@ -17,6 +17,7 @@ import {
 } from '../actions/flow.tsx'
 import { LIVE } from '../live/api.ts'
 import { FillT, NodePill } from '../ui/bits.tsx'
+import { ApproveBtn, CmdList } from '../ui/Commands.tsx'
 import { DraftTalk } from '../ui/DraftTalk.tsx'
 import { RunFeed, lastRun } from '../ui/RunFeed.tsx'
 import { Ic } from '../ui/Icon.tsx'
@@ -38,7 +39,8 @@ function LlmSec({ j, s, f }: P) {
   if (f.dr) return (
     <section className="sec"><div className="eyebrow">LLM draft</div><div className="llmr pending">
       <div className="hd"><Ic n="bot" sm /><b>Waiting for your review</b><span>· {tfmt(f.dr.at)}</span><OutSeg /></div>{draftReport(j, f.dr) && <div className="why rep">{draftReport(j, f.dr)}</div>}<OutText t={f.dr.t} />
-      <div className="row"><button className="btn sm pri" disabled={!!f.run} onClick={() => acceptDraft(j.id, s.id)}><Ic n="check" sm />Accept</button>
+      <CmdList job={j} step={s.id} />
+      <div className="row"><ApproveBtn job={j} step={s.id} /><button className={'btn sm' + (f.dr.cm?.length ? '' : ' pri')} disabled={!!f.run} onClick={() => acceptDraft(j.id, s.id)}><Ic n="check" sm />Accept</button>
         <button className="btn sm" disabled={!!f.run} onClick={() => editDraft(j.id, s.id)}><Ic n="pen" sm />Edit…</button>
         <button className="btn sm" disabled={!!f.run} onClick={() => rejectDraft(j.id, s.id)}><Ic n="x" sm />Reject…</button></div>
       <DraftTalk job={j} step={s.id} /></div></section>
