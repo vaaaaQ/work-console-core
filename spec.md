@@ -1,144 +1,98 @@
-# AD-0012 — One Approve button on a draft that waits for commands
+# AD-0013: Drafts link their evidence
 
-## Why
+## Problem
 
-Some steps let a run prepare a command but not run it until the person says so. In the agents-dev
-playbook, Merge and push (ad6) and Deploy (ad7) say: *"run them only after an instruction approves that
-exact command; until then the draft is the command"*. AD-0009 is an example. Its draft was one
-`git push`, marked "Needs Valery's OK".
+Runs name builds, releases, PRs, work items and pages by number or by plain name ("build 286944", "release 24610",
+"USIE Connect"), even when they fetched the URL or already had it in the prompt. Valery then has to ask for the links
+(J-0006, Deploy to dev: the Teams message to Venu took two extra rounds just to add them).
 
-Today the only way to approve is to type a reply in the draft's conversation that repeats each command
-word for word. That is slow, typos are easy, and nothing ties the approval to the commands the draft
-actually showed. The console reads nothing from the draft's words (architecture.md, LLM runs), so it
-cannot offer a button.
+## What I found in the core (branch base 143aab7)
+
+1. **The prompt never asks for links.** The "How to work" lists in `server/llm/prompt.ts` (`buildPrompt` and
+   `manualText`) say nothing about URLs. When a step's draft is an outgoing message, the `messageAlone` line covers
+   the message's form, but not links.
+2. **The prompt leaves out links it already has.** Every bridge item schema has a `link` (`ci.item` requires one,
+   and the azure-devops pack builds `…/_build/results?buildId=` when ADO gives none; `work.get` and `review.get` have one too).
+   But `contextSection` (`src/model/context.ts`) prints only the label and the text: `Resolved` keeps `k, id, n, name,
+   status, text` and drops the reply's `link`. So the job's own work item, PR or chat reaches the run without its URL.
+   Asking for links from "the context" can only work once the context carries them.
+3. **How a link reaches the reader depends on where the message goes.**
+   - On the page, drafts render as Markdown (`src/lib/md.ts` renders `[text](url)` as `<a>` for http(s) and mailto links).
+     So a Markdown link in a draft already shows on the page with the name as its visible text.
+   - The core `m365-teams` pack posts `chat.post` as `contentType: 'text'`, and `m365-mail` sends `contentType: 'Text'`.
+     So if an act sends the draft, `[USIE Connect](https://…)` reaches Teams or Outlook as literal brackets. When Valery
+     copies from the rendered page, the link comes along. When the act sends it, it does not.
+   - ADO PR thread comments are Markdown, so they work as written. Work item comments are HTML, and a Markdown link
+     stays literal there.
 
 ## What changes
 
-The draft names its commands in a structured field. The page shows them as a list with one **Approve**
-button. The backend turns that click into a reply that approves exactly those commands, in that order,
-in the draft's own session. Everything is generic core: no workplace, tool or host is named.
+### A. The rule (core, `server/llm/prompt.ts`)
 
-```
-run ── submit_draft {text, commands:[c1,c2]} ──▶ Flow.dr = {t, at, cm:[c1,c2]}
-                                                   │ page: list + [Approve] [Accept] [Edit…] [Reject…]
-person ── Approve ─▶ POST /api/runs/<id>/reply {intent:'approve', at}
-                                                   │ server builds q from dr.cm (never from the page)
-                                    runReply ─▶ same session: "run exactly c1, c2 …"
-run ── runs them, quotes output ── submit_draft {text}   (no commands) ─▶ normal draft, Accept
-```
+A new constant `LINKS_LINE`, put in both How to work lists right before the `submit_draft` line, so the same text
+is in the run prompt and in the manual session text:
 
-### 1. The draft carries its commands (model + run tools)
+> - Before you submit, check each thing the draft names as evidence (a build, pipeline run, release or its failed stage
+>   or log, a PR, commit, work item, chat, mail or page). Where you know its URL, write it as a Markdown link with the
+>   name as its text: [build 286944](url), not "build 286944" with the URL next to it or left out. A URL you know is one
+>   you fetched in this run, one the context or knowledge above gives, or one you build from a pattern a knowledge note
+>   gives. Never guess one. Where you know no URL, leave the plain name.
 
-- `DraftReport` and `Draft` gain `cm?: string[]`: the exact commands the draft waits to have approved.
-  - 1 to 10 commands. Each is trimmed and non-empty, at most 2000 characters, and may span lines.
-  - A bad list is `bad_args` while the run can still fix it, the same way a bad `return_to` is.
-- `runDraft` and `draftIn` store `cm`. A revised draft without commands clears it.
-- The journal line says "…is ready; waits for approval of N commands".
-- `submit_draft` in `server/llm/sdk.ts` gets `commands: z.array(z.string()).optional()`.
-  - `reportOf` hands it on.
-  - Cursor's run server uses the same `runToolDefs`, so it gets the field too.
-  - The tool text: *"commands: when the step's instruction says a command runs only after it is approved,
-    the exact commands, in order, that this draft waits to run. Leave it out otherwise. The text still
-    says what each one does."*
-- An auto step (`start: 'auto'`) never accepts a draft that has `cm`. It holds the draft for the
-  person, as it already does for `not_done`/`failed`.
+When the draft is an outgoing message, `messageAlone` adds one clause: links go on the names in the message itself
+(visible text = the name), never as a list of bare URLs.
 
-### 2. Approve: a fourth reply intent, built on the server
+Why a prompt rule and not a post-check: the run is the only party that knows what it fetched. A checker that greps
+the draft for "build \d+" would have to invent URLs, which the rule forbids, or nag about every number.
 
-- `RunIntent` gains `approve`. The page calls `POST /api/runs/<id>/reply {intent: 'approve', at}`. Any `t`
-  it sends is ignored.
-- `runner.reply` with `approve` checks:
-  - the step's draft has `cm`, otherwise 409 `no_commands`;
-  - `at` equals `dr.at`, otherwise 409 `stale`, so a draft revised after the page drew it is never
-    approved blind;
-  - the reply comes from the page. `via: 'session' | 'console'` gets 403 `not_yours`. An LLM, whether a
-    Claude Code session through MCP `draft_reply` or the console's own agent, never approves its own
-    commands. `draft_reply`'s intent enum leaves `approve` out.
-- `q` is built from `dr.cm`: `Approved, run exactly these commands, in this order:\n1. …\n2. …`. It is
-  the record of what was approved, and it shows in the conversation as "You · approve".
-- `REPLY_TAIL.approve` in `prompt.ts` reads: *"Run exactly these commands, in this order, and nothing else
-  that needs approval. Stop at the first that fails. Then call submit_draft with what each one printed.
-  If one failed, set outcome failed. A further command that needs approval goes in commands again."*
-- `runReply` journals `Approved N commands for "<step>": c1; c2`, then "LLM runs them", then "wait for it".
-- An `approve` turn does not auto-accept the next draft. The person reviews the output and accepts it.
-  The playbook says the step is not done until the command has run and its output is quoted.
+### B. Context items carry their link (core, `src/model/context.ts`)
 
-### 3. The page
+- `Resolved` gets an optional `link`. `okItem` takes it from the reply's `link` when it is an http(s) string, and
+  otherwise leaves it out (a pack never sends secrets in it; `scrub` already covers replies).
+- `contextSection` writes `Link: <url>` as the first line under an item's heading when it has one.
+- `contextText` (the run's `context()` tool) uses the same section, so it gets the link with no extra change.
 
-- The draft card in the step inspector (`Drawer.tsx`) and in Approvals (`ApCard`) show, when `dr.cm` is set:
-  - a "Waits for approval of N commands" heading and a numbered monospace list;
-  - **Approve** as the primary button. Accept becomes a secondary button and keeps its meaning: keep the
-    draft as the output without running anything.
-- Approve is hidden when the draft has no session to continue (the same condition as DraftTalk's box).
-  It is disabled while a run is on the step.
-- Approve is one click with no modal. The list right above it is what gets approved, and the server
-  takes the list from the stored draft, not from the page.
-- Live only, like the conversation. The demo draws the list but has no Approve.
+Without B, the J-0006 case (the job's own release or PR given as context) still has nothing to link.
 
-### 4. Notifications (Valery: yes)
+### C. URL patterns per workspace (knowledge, not code)
 
-- `Notifier.run` in `server/notify/notify.ts`, for a run that ended as `draft`:
-  - when the step's draft has `cm`, the push says `<job> · <step>: N commands wait for approval`
-    instead of `draft ready` / `draft revised`;
-  - the body is the commands, numbered and cut to 200 characters as bodies already are;
-  - the URL is the same step link.
-- `Notifier.needsYou`: a job whose current draft has `cm` says `commands to approve` instead of
-  `a draft to review`.
-- A draft without `cm` pushes exactly as today.
+A workspace knowledge note, proposed through `knowledge_propose` for the IAEA workspace, not core: "ADO link
+patterns", with `{org}/{project}` verified against a link the pack returned:
+`_build/results?buildId={id}` (plus `&view=logs&j=…` for a log only when it was read),
+`_releaseProgress?releaseId={r}&_a=release-environment-logs&environmentId={e}`, `_git/{repo}/pullrequest/{id}`,
+`_git/{repo}/commit/{sha}`, `_workitems/edit/{id}`. The rule in A points at "a pattern a knowledge note gives". The
+core stays free of any workplace name, and a run builds links only from patterns that someone verified.
 
-### 5. Docs
+### D. Delivery (decision needed, see Q1)
 
-- architecture.md, "Replies to a draft": an `approve` row, the three refusals, and `commands` beside
-  `outcome` in "LLM runs".
-- architecture.md, "Notifications": the commands push.
-- gateway-protocol.md: not touched. This is the console's own API, not the gateway.
+The core's Teams and mail acts send plain text, so a link put on a name reaches the reader only through copy from the
+page. My proposal is a small, separate pack change: `chat.post` and `mail.send` turn `[text](http…)` into `<a href>`,
+escape everything else, and send `html` only when the text holds such a link. Plain messages go out exactly as today.
+Work item comments get the same conversion. PR comments stay Markdown.
 
-### Not in this job
+## Then
 
-- **The agents-dev playbook text** lives in `D:\agents` (`ASK` in `workspaces/agents-dev/page.ts`) and
-  should say "list each in submit_draft's commands". That is a consumer change, a follow-up agents job
-  after the core sync. Until then runs learn the field only from the tool description. The same
-  follow-up must keep the console's own `update.ps1` **out** of `commands` (see "Run permissions" below).
-- **Partial approval** (tick some commands, not others) is left out. Reject with a reason, or a typed
-  reply, still covers it.
+Commit on job/ad-0013, merge to the core, and sync the IAEA consumer with `sync-core.mjs` (`work-console: core <sha>`).
+`core-lock.test.ts` stays green because only core files change there.
 
 ## How it will be proven
 
-| Check | Where |
+| What | Proof |
 |---|---|
-| `runDraft`/`draftIn` store `cm`, refuse 0, 11, empty, non-string and >2000-character commands, clear `cm` on a revision without commands, and journal the count | `src/model/transitions.test.ts` |
-| An auto step holds a draft with `cm` for the person | `transitions.test.ts` / `runner.test.ts` |
-| `submit_draft` takes `commands` and `reportOf` hands it on. Cursor's server lists the same schema | `server/llm/sdk.test.ts`, `cursor/serve.test.ts` |
-| `replyPrompt(q, 'approve')` ends with the approve tail | `server/llm/prompt.test.ts` |
-| `reply(..., 'approve')` builds `q` from the stored list, resumes the session and does not accept. It refuses `no_commands`, `stale` and via session/console | `server/llm/runner.test.ts` |
-| `POST /api/runs/:id/reply {intent:'approve', at}` works, ignores `t`, and gives 409 on a stale `at` | `server/http/app.test.ts` |
-| MCP `draft_reply` refuses `approve` | `server/mcp/mcp.test.ts` |
-| A draft with `cm` pushes "N commands wait for approval" with the numbered commands as the body, and `needsYou` says "commands to approve". A draft without `cm` pushes as before | `server/notify/notify.test.ts` |
-| `npm test`, `npm run typecheck`, `npm run build && npm run smoke` all green | console |
-| **Live (Prove it live):** a console built from the job branch on a spare port, with a scripted SDK whose first turn submits a draft with two commands and whose reply turn submits their "output". Screenshots: the inspector card with the list and Approve, the same card in Approvals, the conversation after the click ("You · approve" plus the numbered list), and the journal line. Also quote the prompt the reply turn received | proof/ |
+| The rule is in the prompt | `runner.test.ts` `PROMPT` pin gets the `LINKS_LINE` line in its place; `prompt.test.ts` asserts it in `manualText` as well, and the `messageAlone` clause only for a step whose draft is sent |
+| Context links | `context.test.ts`: an `okItem` with `link: 'https://ci.example/…'` renders `Link: https://ci.example/…` under its heading; a non-http link and a missing one render nothing |
+| No regressions | `npm test`, `npm run typecheck`, `node --test "packs/**/test/*.test.mjs"` |
+| D (if accepted) | pack tests: a text with `[x](https://a.example)` posts `contentType: 'html'` with `<a href="https://a.example">x</a>` and escaped `<`/`&`; a text without links posts `text`, exactly as today |
+| Done-when, live | After the sync, a fresh IAEA run that reports a build, release or PR (re-ask the J-0006 kind of step). Its draft shows each of them as a working link on the page without anyone asking, and I quote the draft and open one link of each kind |
 
-## Decisions (Valery's reply to the first draft)
+## Open questions (notes)
 
-1. **One click**, no confirm dialog.
-2. **Drafts handed in by hand** through MCP `submit_draft` carry `commands` too. Approve stays hidden on
-   them because there is no session to continue.
-3. **Cap of 10 commands** a draft.
-4. **Notifications:** yes, a draft that waits for commands gets its own push (section 4).
-5. **Run permissions:** checked; see below.
-
-## Run permissions on agents-dev (checked 2026-10-12, from inside this run)
-
-Approve does not widen a run's tools, so it only works for commands the workspace already lets a run
-execute. Here is what agents-dev's runs can do today:
-
-| What | Finding |
-|---|---|
-| Tools | `D:\agents\services\work-console\workspaces\agents-dev\grants.json` gives `runTools` plain `Bash` and `PowerShell`, with no command patterns. The core `DENY` list only blocks paths with `.bridge`, `.work-console`, `console.token` or `mcp.token` in them, so `git push`, `python …05-deploy-app.py` and `08-deploy-jobs.py` are not denied. There is no `.claude/settings.json` in `D:\agents`, `D:\work-console-core` or the worktree to add deny rules. |
-| `git push`, core | From this run in `D:\agents-jobs\AD-0012`: `git push --dry-run origin HEAD:refs/heads/ad-0012-dryrun-probe` → `* [new branch] HEAD -> ad-0012-dryrun-probe`, exit 0. Auth works without a prompt (`GIT_TERMINAL_PROMPT=0`). It was a dry run, so nothing was pushed. |
-| `git push`, agents | The same dry run in `D:\agents-jobs\AD-0009` against `vaaaaQ/agents-platform`: exit 0. Nothing was pushed. |
-| Azure (05/08) | `az account show` → `Azure subscription 1  valery.hilimovich@gmail.com`, exit 0. |
-| Python (05/08) | `python --version` → `Python 3.12.10`. The WindowsApps path is a real interpreter, not the Store stub, and `import yaml` works. |
-| **Console deploy** | `powershell -NoProfile -File services/work-console/scripts/update.ps1` is not denied, but it stops the console that hosts the run (task `WorkConsole`, Running), which kills the run halfway. The ad7 text already says "Valery runs it outside the console". **So `update.ps1` must never go in `commands`**: an approved one would cut off its own run. The core cannot know this (it names no workplace), so the agents-dev follow-up states it in the playbook text, and the draft keeps that command as text for Valery to run. |
-
-So Approve works on agents-dev today for `git push` and the 05/08 deploys, and must not be used for
-the console's own update.
+- **Q1: Delivery (D).** Is D part of this job, or a follow-up? Without it, the "link on the name" requirement for an
+  outgoing Teams message holds only when Valery copies the message from the page. Does IAEA post through the core
+  `m365-teams` pack, or through its own? I could not read the iaea-pc console from here.
+- **Q2: The IAEA pattern note.** I can verify `{org}/{project}` and the release `environmentId` only from a link the
+  IAEA ADO pack returned. Should Build propose the note from a real IAEA run's reply, or do you have the org URL to put
+  in now?
+- **Q3: Wording placement.** One line in How to work for every run, including steps with no outgoing message, such as
+  an analysis like this one. Links there help too, so I would not limit it to message steps.
+- **Q4: Revise rounds.** The rule is in the session's first prompt, so a `revise` reply in the same session keeps it.
+  A run that is restarted (not resumed) gets it again from `buildPrompt`. I see nothing to add to `replyPrompt`.
