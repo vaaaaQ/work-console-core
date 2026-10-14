@@ -14,8 +14,11 @@ import { BANNED } from './imports.ts'
 /** what a proposal's cmds may hold, for the system text and the propose tool */
 export const PP_HELP = [
   "What a proposal's cmds may hold; a step is its id, as get_job and each turn's job state give it:",
-  '- stepAdd {before | after: step, step: {t, x?: when it is done, m: llm | you, start?, ask?: 1, a?: [artifact names]}, tpl?: [[source, channel, text]], why?}: a step of this job only. '
+  '- stepAdd {before | after: step, step: {t, x?: when it is done, m: llm | you, start?, ask?: 1, a?: [artifact names]}, tpl?: [[via, to, text, head?]], why?}: a step of this job only. '
     + 'start = how an llm step begins: hand (the person starts it), self (it starts by itself) or auto (it starts by itself and its draft is accepted). '
+    + "tpl = its planned messages, which the person reviews and sends. via is chat, work or mail. chat: to is a chat's name from the job's context, or empty to pick the chat on sending. "
+    + "work: a comment on the job's work item, to empty. mail with an empty to replies to the job's mail; a new mail has to as mail addresses separated by commas, "
+    + 'head {subject, cc?: mail addresses}, and text as the body alone, without the subject. '
     + 'ask: 1 = once its planned message is sent it waits for the reply. why = the reason, shown on the step; it defaults to what the proposal says.',
   '- stepDel {step}, stepMove {step, before | after: step}: a step not reached yet',
   '- stepEdit {step, t?, x?, m?, start?: hand | self | auto | null, ask?: 1 | null}',

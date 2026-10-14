@@ -903,6 +903,22 @@ test('checkStep refuses an empty title, start on a you step, ask without a plann
   assert.deepEqual(tplOf(X, ok, 'n1'), [['chat', 'team', 'Is it ok?']])
 })
 
+test('a planned message goes via chat, work or mail; a new mail has addresses, a subject in its head and a body without it', () => {
+  const j = roomy(), at = atOf(X, j)!
+  const add = (tpl: unknown) => apply(X, j, { op: 'stepAdd', after: at, step: { t: 'Tell them', m: 'you' }, tpl } as never)
+  const no = (tpl: unknown, re: RegExp) => assert.throws(() => add(tpl), (e: CmdError) => e.code === 'bad_args' && re.test(e.message))
+  no([['teams', 'Ann', 'hi']], /chat, work or mail, not teams/)
+  no([['mail', 'DOE, Jane', 'hi', { subject: 'S' }]], /not a mail address: DOE/)
+  no([['mail', 'a@x.org', 'hi']], /subject/)
+  no([['mail', 'a@x.org', 'Subject: S\n\nhi', { subject: 'S' }]], /body alone/)
+  no([['mail', 'a@x.org', 'hi', { subject: 'S', cc: 'Bob' }]], /not a mail address: Bob/)
+  no([['mail', 'a@x.org', 'hi', { subject: 'S', to: 'b@x.org' }]], /cc and subject/)
+  no([['chat', 'team', 'hi', { subject: 'S' }]], /only a new mail/)
+  no([['mail', '', 'hi', { subject: 'S' }]], /only a new mail/)
+  const ok = add([['mail', 'a@x.org; {po}', '{reply}', { subject: 'About {key}', cc: 'b@x.org' }], ['mail', '', 'thanks'], ['work', '', 'done']]).job
+  assert.equal(stepOf(X, ok, 'n1')!.msg, 3)
+})
+
 /* ===== proposals ===== */
 const pp = (j: Job, cmds: Cmd[], say = 'from the daily') => apply({ ...X, by: 'console' }, j, { op: 'ppSet', say, cmds, by: 'conv-1' })
 

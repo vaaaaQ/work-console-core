@@ -96,7 +96,7 @@ test('a chat reset checks every chat watch', async () => {
 })
 
 test('a mail upsert in the thread of the replied mail is recorded with its body and link', async () => {
-  const s = setup(), a = await s.asked(['mail', 'reply', 'ok?'], { ch: 'm-1' })
+  const s = setup(), a = await s.asked(['mail', '', 'ok?'], { ch: 'm-1' })
   s.mails.push({ id: 'm-1', folder: 'Inbox', from: 'Ana', at: iso(a.at - 60000), conversationId: 'conv-1' })
   s.bodies['m-2'] = 'Yes, the full answer'
   const m2: MailItem = { id: 'm-2', folder: 'Inbox', from: 'Ana', at: iso(a.at + 1000), conversationId: 'conv-1', preview: 'Yes', link: 'https://mail.example/m-2' }
@@ -108,7 +108,7 @@ test('a mail upsert in the thread of the replied mail is recorded with its body 
 })
 
 test('a new mail\'s reply from its addressee is recorded; its preview stands in for a missing body', async () => {
-  const s = setup(), a = await s.asked(['mail', 'new', 'ok?'], { ch: '', rto: 'ana@x.org' })
+  const s = setup(), a = await s.asked(['mail', 'ana@x.org', 'ok?', { subject: 'Ask' }], { ch: '', rto: 'ana@x.org' })
   const sent: MailItem = { id: 'm-1', folder: 'Sent', from: 'You', at: iso(a.at + 500), conversationId: 'conv-1' }
   const back: MailItem = { id: 'm-2', folder: 'Inbox', from: 'Ana <ana@x.org>', at: iso(a.at + 1000), conversationId: 'conv-1', preview: 'Sure' }
   s.bus.emit({ kind: 'source', concept: 'mail', upserts: [sent, back], removes: [] })
@@ -118,7 +118,7 @@ test('a new mail\'s reply from its addressee is recorded; its preview stands in 
 })
 
 test('reconcile finds what arrived while the source was down', async () => {
-  const s = setup(), a = await s.asked(['chat', 'team', 'ok?'], { ch: 'c-1' }), b = await s.asked(['mail', 'reply', 'ok?'], { ch: 'm-1' })
+  const s = setup(), a = await s.asked(['chat', 'team', 'ok?'], { ch: 'c-1' }), b = await s.asked(['mail', '', 'ok?'], { ch: 'm-1' })
   s.msg('c-1', 'x1', a.at + 1000, 'chat answer')
   s.mails.push({ id: 'm-1', folder: 'Inbox', from: 'Ana', at: iso(b.at - 60000), conversationId: 'conv-1' },
     { id: 'm-2', folder: 'Inbox', from: 'Ana', at: iso(b.at + 1000), conversationId: 'conv-1', preview: 'mail answer' })

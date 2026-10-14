@@ -363,8 +363,24 @@ function checkTpl(tpl: unknown): Tpl[] {
     const ok = Array.isArray(m) && (m.length === 3 || m.length === 4) && typeof m[0] === 'string' && !!m[0].trim() && typeof m[1] === 'string'
       && typeof m[2] === 'string' && !!m[2].trim() && (m[3] === undefined || (typeof m[3] === 'object' && m[3] !== null && !Array.isArray(m[3])))
     if (!ok) throw new CmdError('bad_args', 'a planned message is [source, channel, text, head?]')
+    const [via, to, t, head] = m as [string, string, string, Record<string, unknown> | undefined]
+    if (!VIAS.includes(via)) throw new CmdError('bad_args', `a planned message goes via chat, work or mail, not ${via}`)
+    if (via === 'mail' && to.trim()) newMail(to, t, head)
+    else if (head !== undefined) throw new CmdError('bad_args', 'only a new mail (via mail with to) has cc or a subject')
     return clone(m) as Tpl
   })
+}
+const VIAS = ['chat', 'work', 'mail']
+/** a mail address, or a {placeholder} the job fills in */
+const mailOk = (s: string) => /^[^@\s]+@[^@\s]+$/.test(s) || /^\{\w+\}$/.test(s)
+/** a new mail: To and CC are mail addresses, the subject is in the head, the text is the body alone */
+function newMail(to: string, t: string, head: Record<string, unknown> | undefined) {
+  if (head && Object.entries(head).some(([k, v]) => (k !== 'cc' && k !== 'subject') || typeof v !== 'string'))
+    throw new CmdError('bad_args', "a new mail's head holds only cc and subject, as text")
+  const bad = [to, String(head?.cc ?? '')].flatMap((s) => s.split(/[\s,;]+/).filter(Boolean)).filter((a) => !mailOk(a))
+  if (bad.length) throw new CmdError('bad_args', `not a mail address: ${bad.join(', ')}; a new mail's to and cc are mail addresses`)
+  if (!String(head?.subject ?? '').trim()) throw new CmdError('bad_args', 'a new mail needs a subject in its head: [mail, to, text, {subject, cc?}]')
+  if (/^\s*subject\s*:/i.test(t)) throw new CmdError('bad_args', "a new mail's text is the body alone; its subject goes in the head")
 }
 /** a new or changed step as the job keeps it, checked; throws bad_args naming what is wrong */
 function checkStep(n: Partial<NewStep>, tpl: Tpl[]): Omit<Step, 'id'> {
