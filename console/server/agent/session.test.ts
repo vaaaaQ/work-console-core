@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { FailedUpdate } from '../../scripts/update.mjs'
 import type { AgentRec, Grants } from '../../src/model/agent.ts'
@@ -40,8 +40,10 @@ function setup(o: { grants?: Partial<Grants>; script?: Script[]; recs?: AgentRec
   if (o.grants) writeFileSync(join(root, 'workspaces', 'w1', 'grants.json'), JSON.stringify(o.grants))
   const file = join(root, 'home', 'agent', 'w1.json')
   if (o.recs) { mkdirSync(join(root, 'home', 'agent'), { recursive: true }); writeFileSync(file, JSON.stringify(o.recs)) }
+  // each restart notes the records as saved when it went: a console that exits keeps only those
   let restarts = 0
-  const restarter = new Restarter(() => { restarts++ })
+  const saved: (AgentRec[] | null)[] = []
+  const restarter = new Restarter(() => { restarts++; saved.push(existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) as AgentRec[] : null) })
   const calls: unknown[][] = [], turns: Turn[] = [], script = [...(o.script ?? [])]
   const ops: SessionOps = {
     check: async () => ({ ok: true, failures: [] }),
@@ -80,7 +82,7 @@ function setup(o: { grants?: Partial<Grants>; script?: Script[]; recs?: AgentRec
     },
   }
   const s = new AgentSession({ ws: 'w1', title: 'One', root, records, sdk, ops, bus, hold: () => restarter.hold(), taken: () => ({ ids: ['w1'], prefixes: ['W'] }), reintegration, managed: o.managed ?? true, max: o.max, job: o.job })
-  return { s, root, file, calls, turns, events, records, u, restarts: () => restarts }
+  return { s, root, file, calls, turns, events, records, u, restarts: () => restarts, saved }
 }
 
 const tool = (t: Turn, name: string) => t.tools.find((x) => x.name === name)!
@@ -207,11 +209,60 @@ test('accepting commits the grants and restarts; the agent hears it with the nex
   assert.equal(x.restarts(), 0)
   const r = await x.s.decide(true, '')
   assert.deepEqual(x.calls.at(-1), ['grants', 'w1', { packs: ['p'], hosts: ['api.example.com'], acts: [], runTools: [], mcp: {} }, 'read the tracker'])
-  assert.equal(x.restarts(), 1)
+  await until(() => x.restarts() === 1)
   assert.equal(r.pending, undefined)
   assert.deepEqual(r.commits.map((c) => c.kind), ['grants'])
   await (await x.s.send('carry on')).done
   assert.match(x.turns[1].prompt, /^The person accepted your grants change "read the tracker" \(cccccccc\).*\n\ncarry on$/s)
+})
+
+test('an accept restarts only once the record without its pending change is saved, after the reply', async () => {
+  const x = setup({ grants: { packs: ['p'] }, script: [async function* (t) {
+    yield { k: 'session', id: 's1' }
+    await tool(t, 'propose_grants').run({ change: { packs: ['p'], hosts: ['api.example.com'] }, reason: 'read the tracker' })
+    yield { k: 'result', ok: true, t: 'asked' }
+  }] })
+  await (await x.s.send('go')).done
+  const r = await x.s.decide(true, '')
+  assert.equal(r.pending, undefined)
+  assert.equal(x.restarts(), 0, 'the reply goes out before the console restarts')
+  await until(() => x.restarts() === 1)
+  const rec = x.saved[0]!.at(-1)!
+  assert.equal(rec.pending, undefined)
+  assert.deepEqual(rec.commits.map((c) => c.kind), ['grants'])
+})
+
+test('an undo restarts only once the record of it is saved, after the reply', async () => {
+  const x = setup({ grants: { packs: ['p'] }, script: [async function* (t) {
+    yield { k: 'session', id: 's1' }
+    await tool(t, 'apply').run({ summary: 'a board' })
+    yield { k: 'result', ok: true, t: 'done' }
+  }] })
+  await (await x.s.send('make a board')).done
+  await until(() => x.restarts() === 1)
+  await x.s.undo('a'.repeat(40))
+  assert.equal(x.restarts(), 1, 'the reply goes out before the console restarts')
+  await until(() => x.restarts() === 2)
+  assert.equal(x.saved[1]!.at(-1)!.commits[0].undoneBy, 'b'.repeat(40))
+})
+
+test('accepting a change the grants already hold clears it without a commit or a restart', async () => {
+  const change = { packs: ['p'], hosts: ['api.example.com'] }
+  const x = setup({ grants: { packs: ['p'] }, script: [async function* (t) {
+    yield { k: 'session', id: 's1' }
+    await tool(t, 'propose_grants').run({ change, reason: 'read the tracker' })
+    yield { k: 'result', ok: true, t: 'asked' }
+  }] })
+  await (await x.s.send('go')).done
+  // an earlier accept committed it, and the console exited before the record lost its pending change
+  writeFileSync(join(x.root, 'workspaces', 'w1', 'grants.json'), JSON.stringify(change))
+  const r = await x.s.decide(true, '')
+  assert.equal(r.pending, undefined)
+  assert.ok(!x.calls.some((c) => c[0] === 'grants'))
+  assert.ok(r.turns.some((t) => t.who === 'note' && /already hold/.test(t.t)))
+  await tick()
+  assert.equal(x.restarts(), 0)
+  assert.equal((await x.s.current())!.pending, undefined)
 })
 
 test('one turn at a time; Stop ends it idle; the page can undo an apply and the agent hears of it', async () => {

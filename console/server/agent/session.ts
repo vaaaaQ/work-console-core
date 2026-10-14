@@ -8,7 +8,7 @@ import type { UpdateKind } from '../../src/model/update.ts'
 import { HttpError } from '../events.ts'
 import type { Bus } from '../events.ts'
 import { CONSOLE } from '../config.ts'
-import { EMPTY_GRANTS, grantsDiff, grantsOf } from '../grants.ts'
+import { EMPTY_GRANTS, grantsDiff, grantsOf, normGrants } from '../grants.ts'
 import { PROVIDERS, isProvider, pickOf } from '../llm/providers.ts'
 import type { SdkPick } from '../llm/providers.ts'
 import type { Sdk } from '../llm/sdk.ts'
@@ -176,14 +176,18 @@ export class AgentSession {
       const what = c.kind === 'grants' ? 'a grants change' : c.kind === 'undo' ? 'an undo' : 'a fix for a core update'
       throw new HttpError(409, 'not_undoable', `${short(c.sha)} is ${what}; it cannot be undone here`)
     }
-    const r = await this.o.ops.undo(this.o.ws, c.sha)
-    if (!r.ok) throw new HttpError(409, 'undo_failed', [r.error, ...(r.failures ?? [])].join('\n'))
-    const rec = await this.last()
-    this.committed(rec, { sha: r.sha, summary: r.summary, files: r.files, at: iso(), kind: 'undo' }, c.sha)
-    this.note(rec, `You undid ${short(c.sha)} (${c.summary}) with ${short(r.sha)}. The console restarts.`)
-    this.tell(rec, `The person undid your commit ${short(c.sha)} "${c.summary}" with ${short(r.sha)}.`)
-    await this.persist(rec)
-    return clone(rec)
+    // the restart waits until the record is saved and the reply sent
+    const release = this.o.hold()
+    try {
+      const r = await this.o.ops.undo(this.o.ws, c.sha)
+      if (!r.ok) throw new HttpError(409, 'undo_failed', [r.error, ...(r.failures ?? [])].join('\n'))
+      const rec = await this.last()
+      this.committed(rec, { sha: r.sha, summary: r.summary, files: r.files, at: iso(), kind: 'undo' }, c.sha)
+      this.note(rec, `You undid ${short(c.sha)} (${c.summary}) with ${short(r.sha)}. The console restarts.`)
+      this.tell(rec, `The person undid your commit ${short(c.sha)} "${c.summary}" with ${short(r.sha)}.`)
+      await this.persist(rec)
+      return clone(rec)
+    } finally { setImmediate(release) }
   }
 
   /** the console moved what an earlier agent left uncommitted in the live folder to the worktree, at its start */
@@ -210,20 +214,31 @@ export class AgentSession {
     return files
   }
 
-  /** the person's answer to the waiting grants change: accepted, it is committed and the console restarts;
-      rejected, the reason goes back to the agent at once, or after its turn */
+  /** the person's answer to the waiting grants change: accepted, it is committed and the console restarts once the
+      record is saved and the reply sent; one the grants already hold just clears; rejected, the reason goes back to
+      the agent at once, or after its turn */
   async decide(accept: boolean, reason: string): Promise<AgentRec> {
     const rec = await this.last(), p = rec.pending
     if (!p) throw new HttpError(409, 'no_pending', 'no grants change waits')
     if (accept) {
-      const r = await this.o.ops.acceptGrants(this.o.ws, p.change, p.reason)
-      if (!r.ok) throw new HttpError(409, 'grants_failed', [r.error, ...(r.failures ?? [])].join('\n'))
-      delete rec.pending
-      rec.commits.push({ sha: r.sha, summary: r.summary, files: r.files, at: iso(), kind: 'grants' })
-      this.note(rec, `Grants accepted (${short(r.sha)}): ${p.reason}. The console restarts to apply them.`)
-      this.tell(rec, `The person accepted your grants change "${p.reason}" (${short(r.sha)}); the console restarted with them.`)
-      await this.persist(rec)
-      return clone(rec)
+      if (this.holds(p.change)) {
+        delete rec.pending
+        this.note(rec, `Grants accepted: ${p.reason}. The grants already hold this change.`)
+        this.tell(rec, `The person accepted your grants change "${p.reason}"; the grants already hold it.`)
+        await this.persist(rec)
+        return clone(rec)
+      }
+      const release = this.o.hold()
+      try {
+        const r = await this.o.ops.acceptGrants(this.o.ws, p.change, p.reason)
+        if (!r.ok) throw new HttpError(409, 'grants_failed', [r.error, ...(r.failures ?? [])].join('\n'))
+        delete rec.pending
+        rec.commits.push({ sha: r.sha, summary: r.summary, files: r.files, at: iso(), kind: 'grants' })
+        this.note(rec, `Grants accepted (${short(r.sha)}): ${p.reason}. The console restarts to apply them.`)
+        this.tell(rec, `The person accepted your grants change "${p.reason}" (${short(r.sha)}); the console restarted with them.`)
+        await this.persist(rec)
+        return clone(rec)
+      } finally { setImmediate(release) }
     }
     const why = oneLine(reason)
     if (!why) throw new HttpError(400, 'bad_args', 'say why the change is rejected')
@@ -297,6 +312,10 @@ export class AgentSession {
   }
 
   private grants(): Grants { return grantsOf(this.o.ws, this.root) ?? EMPTY_GRANTS }
+  /** the workspace's grants are already change; a malformed file holds nothing */
+  private holds(change: Grants): boolean {
+    try { return JSON.stringify(normGrants(change)) === JSON.stringify(grantsOf(this.o.ws, this.root)) } catch { return false }
+  }
 
   /** a turn on rec: its prompt is the unheard lines, then the text */
   private async begin(rec: AgentRec, text: string, own: boolean): Promise<{ rec: AgentRec; done: Promise<void> }> {
