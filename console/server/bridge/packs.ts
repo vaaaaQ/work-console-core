@@ -6,8 +6,24 @@ export const PACKS_DIR = coreDir('packs')
 
 /** one setting a pack takes from its workspace; the workspace's value reaches the script as call.config */
 export type ConfigKey = { about: string; list?: boolean; required?: boolean; pattern?: string; enum?: string[]; default?: string | string[] }
+export type PackKind = 'browser' | 'remote-browser' | 'mcp'
+export const GUIDE_MAX = 2000
+const KINDS: readonly string[] = ['browser', 'remote-browser', 'mcp']
 export interface PackManifest {
   name: string
+  /** browser (default): a tab on this PC; remote-browser: a tab on a work machine; mcp: an MCP server */
+  kind?: PackKind
+  title?: string
+  /** one line: what the pack gives */
+  about?: string
+  /** the LLM guide's file name next to pack.json */
+  guide?: string
+  /** what a scope id is and where to find it */
+  scopeAbout?: string
+  /** an mcp pack's server config, which turning it on puts into grants.mcp */
+  mcp?: Record<string, unknown>
+  /** false keeps the pack out of the Settings list; it still loads when granted */
+  catalog?: boolean
   zone: string
   script: string
   config?: Record<string, ConfigKey>
@@ -19,6 +35,7 @@ export interface PackManifest {
   /** scope: the arg that names the target; a scoped action runs only on a listed id */
   actions?: Record<string, { tab: string; concept: string; scope?: string }>
 }
+export const packKind = (m: Pick<PackManifest, 'kind'>): PackKind => m.kind ?? 'browser'
 export type PackConfig = Record<string, string | string[]>
 export interface RenderedPack { tabs: Record<string, { match: RegExp; open: string }>; hosts: string[] }
 
@@ -33,6 +50,30 @@ export function checkPack(p: unknown, hasSchema: (key: string) => boolean = () =
   const out: string[] = []
   if (!isObj(p)) return ['pack.json is not an object']
   if (typeof p.name !== 'string' || !p.name) out.push('name: missing')
+  if (p.kind === 'token') out.push('kind: token packs come in stage 2')
+  else if (p.kind !== undefined && !KINDS.includes(p.kind)) out.push('kind: not one of browser, remote-browser, mcp')
+  for (const k of ['title', 'scopeAbout'] as const)
+    if (p[k] !== undefined && (typeof p[k] !== 'string' || !p[k].trim())) out.push(`${k}: not a non-empty string`)
+  if (p.about !== undefined && (typeof p.about !== 'string' || !p.about.trim() || /[\r\n]/.test(p.about) || p.about.length > 200)) out.push('about: one line of at most 200 characters')
+  if (p.guide !== undefined && (typeof p.guide !== 'string' || !/^[\w.-]+\.md$/.test(p.guide))) out.push('guide: not a .md file name')
+  if (p.catalog !== undefined && typeof p.catalog !== 'boolean') out.push('catalog: not true or false')
+  const kind = typeof p.kind === 'string' && KINDS.includes(p.kind) ? p.kind as PackKind : p.kind === undefined ? 'browser' : null
+  if (kind === 'mcp') {
+    if (!isObj(p.mcp)) out.push('mcp: an mcp pack needs its server config')
+    for (const k of ['script', 'tabs', 'concepts', 'actions', 'hosts', 'config'])
+      if (p[k] !== undefined) out.push(`${k}: an mcp pack has none`)
+    return out
+  }
+  if (kind === 'remote-browser') {
+    for (const k of ['script', 'tabs', 'hosts', 'config'])
+      if (p[k] !== undefined) out.push(`${k}: a remote-browser pack has none; it runs on the work machine`)
+    const cs: Record<string, unknown> = isObj(p.concepts) ? p.concepts : {}
+    if (!Object.keys(cs).length) out.push('concepts: none')
+    for (const n of Object.keys(cs)) if (!hasSchema(`${n}.item`)) out.push(`concepts.${n}: no schema ${n}.item`)
+    for (const n of Object.keys(isObj(p.actions) ? p.actions : {})) if (!ACTION.test(n)) out.push(`actions.${n}: not an action name`)
+    return out
+  }
+  if (kind === null) return out
   if (typeof p.zone !== 'string' || !p.zone) out.push('zone: missing')
   if (typeof p.script !== 'string' || !/^[\w.-]+\.js$/.test(p.script)) out.push('script: not a .js file name')
   const config: Record<string, any> = isObj(p.config) ? p.config : {}
@@ -127,16 +168,26 @@ export function renderPack(p: PackManifest, config: PackConfig): RenderedPack {
 }
 
 export const schemasIn = (dir: string) => (key: string) => existsSync(join(dir, `${key}.schema.json`))
+/** the fields a pack without a script or tabs still gives its readers; the manifest's own values win */
+const MCP_EMPTY: Partial<PackManifest> = { zone: 'UTC', script: '', tabs: {}, concepts: {} }
+const REMOTE_EMPTY: Partial<PackManifest> = { zone: 'UTC', script: '', tabs: {} }
 
 /** reads and checks <dir>/pack.json; throws with every problem */
 export function readPack(dir: string, hasSchema?: (key: string) => boolean): PackManifest {
   let p: unknown
   try { p = JSON.parse(readFileSync(join(dir, 'pack.json'), 'utf8')) } catch (e) { throw new Error(`pack ${dir}: ${(e as Error).message}`) }
   const problems = checkPack(p, hasSchema)
-  const script = (p as PackManifest)?.script
-  if (!problems.length && !existsSync(join(dir, script))) problems.push(`${script}: missing`)
+  const m = p as PackManifest, kind = problems.length ? null : packKind(m)
+  if (kind === 'browser' && !existsSync(join(dir, m.script))) problems.push(`${m.script}: missing`)
+  if (!problems.length && m.guide) {
+    const f = join(dir, m.guide)
+    if (!existsSync(f)) problems.push(`${m.guide}: missing`)
+    else { const n = readFileSync(f, 'utf8').length; if (n > GUIDE_MAX) problems.push(`${m.guide}: ${n} characters, at most ${GUIDE_MAX}`) }
+  }
   if (problems.length) throw new Error(`pack ${dir}: ${problems.join('; ')}`)
-  return p as PackManifest
+  if (kind === 'mcp') return { ...MCP_EMPTY, ...m }
+  if (kind === 'remote-browser') return { ...REMOTE_EMPTY, ...m }
+  return m
 }
 
 export const loadPacks = (packsDir: string, names: readonly string[], hasSchema?: (key: string) => boolean): PackManifest[] =>

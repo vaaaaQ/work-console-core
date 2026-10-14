@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { checkPack, loadPacks, packConfig, readPack, renderPack, schemasIn } from './packs.ts'
+import { checkPack, loadPacks, packConfig, packKind, readPack, renderPack, schemasIn } from './packs.ts'
 import type { PackManifest } from './packs.ts'
 import { tempDir } from '../testdirs.ts'
 
@@ -106,4 +106,38 @@ test('every pack beside the console is sound', (t) => {
   const names = readdirSync(packsDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name)
   assert.ok(names.length > 0)
   assert.equal(loadPacks(packsDir, names, schemasIn(schemasDir)).length, names.length)
+})
+
+test('the catalog fields are checked: kind, one-line about, guide file name, catalog flag', () => {
+  const p = { ...sound(), kind: 'browser', title: 'Tracker', about: 'work items of a tracker', guide: 'guide.md', scopeAbout: 'a project key', catalog: false }
+  assert.deepEqual(checkPack(p, all), [])
+  assert.deepEqual(checkPack({ ...sound(), kind: 'token' }, all), ['kind: token packs come in stage 2'])
+  assert.deepEqual(checkPack({ ...sound(), kind: 'ftp' }, all), ['kind: not one of browser, remote-browser, mcp'])
+  assert.deepEqual(checkPack({ ...sound(), about: 'two\nlines' }, all), ['about: one line of at most 200 characters'])
+  assert.deepEqual(checkPack({ ...sound(), title: '' }, all), ['title: not a non-empty string'])
+  assert.deepEqual(checkPack({ ...sound(), guide: '../x.md' }, all), ['guide: not a .md file name'])
+  assert.deepEqual(checkPack({ ...sound(), catalog: 'no' }, all), ['catalog: not true or false'])
+})
+
+test('an mcp pack carries its server config and no tabs; a remote-browser pack names concepts without tabs', () => {
+  const mcp = { name: 'remote', kind: 'mcp', title: 'Remote', about: 'a work machine', mcp: { type: 'http', url: 'http://127.0.0.1:1/mcp' } }
+  assert.deepEqual(checkPack(mcp, all), [])
+  assert.deepEqual(checkPack({ ...mcp, mcp: undefined }, all), ['mcp: an mcp pack needs its server config'])
+  assert.deepEqual(checkPack({ ...mcp, tabs: {} }, all), ['tabs: an mcp pack has none'])
+  const rb = { name: 'far', kind: 'remote-browser', title: 'Far', about: 'a far tab', concepts: { chat: {} }, actions: { 'chat.post': {} } }
+  assert.deepEqual(checkPack(rb, all), [])
+  assert.deepEqual(checkPack({ ...rb, concepts: { chat: {} } }, () => false), ['concepts.chat: no schema chat.item'])
+  assert.deepEqual(checkPack({ ...rb, actions: { post: {} } }, all), ['actions.post: not an action name'])
+})
+
+test('readPack checks the guide file and its length, and fills an mcp pack with empty tabs', () => {
+  const dir = packDir({ ...sound(), guide: 'guide.md' })
+  assert.throws(() => readPack(dir, all), /guide\.md: missing/)
+  writeFileSync(join(dir, 'guide.md'), 'x'.repeat(2001))
+  assert.throws(() => readPack(dir, all), /guide\.md: 2001 characters, at most 2000/)
+  writeFileSync(join(dir, 'guide.md'), 'Read work items with bridge_get.')
+  assert.equal(readPack(dir, all).guide, 'guide.md')
+  const m = packDir({ name: 'tracker', kind: 'mcp', title: 'T', about: 'a', mcp: { type: 'http', url: 'http://127.0.0.1:1/mcp' } }, false)
+  const r = readPack(m, all)
+  assert.deepEqual([r.script, r.tabs, r.concepts, packKind(r)], ['', {}, {}, 'mcp'])
 })
