@@ -14,6 +14,7 @@ const WAIT = 300
 
 export function ChatTo({ ws, init }: { ws: string; init?: ToPick }) {
   const [q, setQ] = React.useState(''), [at, setAt] = React.useState(0), [pick, setPick] = React.useState<ToPick | null>(init ?? null)
+  const changed = React.useRef(false)
   const [found, setFound] = React.useState<{ q: string; people: api.Person[] }>({ q: '', people: [] })
   const [busy, setBusy] = React.useState(false), [err, setErr] = React.useState('')
   const t = q.trim()
@@ -34,14 +35,14 @@ export function ChatTo({ ws, init }: { ws: string; init?: ToPick }) {
 
   if (pick) return <div className="to-pick">
     <Ic n={icon(pick)} sm /><b>{pick.name}</b><span className="hint">{'chat' in pick ? 'chat' : `opens a 1:1 with ${pick.addr}`}</span><span className="fsp" />
-    <button type="button" className="btn sm ghost" onClick={() => { setPick(null); setQ(''); setAt(0) }}>Change</button>
+    <button type="button" className="btn sm ghost" onClick={() => { changed.current = true; setPick(null); setQ(''); setAt(0) }}>Change</button>
     {'chat' in pick ? <input type="hidden" name="toChat" value={pick.chat} /> : <input type="hidden" name="toAddr" value={pick.addr} />}
     <input type="hidden" name="toName" value={pick.name} />
   </div>
   return <div className="to">
     <input className="inp" type="text" role="combobox" aria-expanded={rows.length > 0} aria-controls="to-l" aria-autocomplete="list" aria-label="To"
       aria-activedescendant={rows.length ? 'to-' + i : undefined} placeholder="A name, a chat or a mail address" autoComplete="off" spellCheck={false}
-      data-autofocus value={q} onChange={(e) => { setQ(e.target.value); setAt(0) }}
+      data-autofocus autoFocus={changed.current} value={q} onChange={(e) => { setQ(e.target.value); setAt(0) }}
       onKeyDown={(e) => {
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const n = rows.length; if (n) setAt((i + (e.key === 'ArrowDown' ? 1 : n - 1)) % n) }
         // Enter picks; it never sends a message whose To is still open
