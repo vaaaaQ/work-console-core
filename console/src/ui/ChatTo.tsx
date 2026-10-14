@@ -6,14 +6,14 @@ import { Ic } from './Icon.tsx'
 import { toRows } from './chatTo.ts'
 import type { ToPick } from './chatTo.ts'
 
-/* The To of a chat message whose job has no chat of its own: a listed chat, a person or an address (chatTo.ts).
-   A form reads toChat or toAddr, and toName. */
+/* The To of a chat message: a listed chat, a person or an address (chatTo.ts); init = the chat the message goes to
+   unless changed. A form reads toChat or toAddr, and toName. */
 
 /** typing pauses this long before the people are looked up */
 const WAIT = 300
 
-export function ChatTo({ ws }: { ws: string }) {
-  const [q, setQ] = React.useState(''), [at, setAt] = React.useState(0), [pick, setPick] = React.useState<ToPick | null>(null)
+export function ChatTo({ ws, init }: { ws: string; init?: ToPick }) {
+  const [q, setQ] = React.useState(''), [at, setAt] = React.useState(0), [pick, setPick] = React.useState<ToPick | null>(init ?? null)
   const [found, setFound] = React.useState<{ q: string; people: api.Person[] }>({ q: '', people: [] })
   const [busy, setBusy] = React.useState(false), [err, setErr] = React.useState('')
   const t = q.trim()
