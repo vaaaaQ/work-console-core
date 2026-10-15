@@ -10,7 +10,7 @@ import { startFakeGateway } from './bridge/fake.ts'
 import { Bus, HttpError } from './events.ts'
 import type { Ev } from './events.ts'
 import { GATEWAY_ACTIONS } from './bridge/actions.ts'
-import { hub, makeSpace, runBridge, Spaces } from './spaces.ts'
+import { hub, makeSpace, runBridge, runSources, Spaces } from './spaces.ts'
 import type { Space } from './spaces.ts'
 import { acme, acmeServer, fakeSdk } from './testkit.ts'
 import { fakeSeed } from './workspace.ts'
@@ -24,6 +24,8 @@ import type { Browser } from './browser/launcher.ts'
 import type { StateDocs } from './browser/state.ts'
 import type { PgSource } from './store/pg.ts'
 import { tempDir } from './testdirs.ts'
+import { wsPackDirs } from './browser/packs.ts'
+import type { Grants } from './grants.ts'
 import type { RunBrowser, RunBrowserOpts } from './llm/runBrowser.ts'
 
 /** Acme under another id and prefix; its playbooks stay Acme's, so it brings none of its own */
@@ -395,6 +397,35 @@ test("a managed workspace's runs get exactly its grants' runTools, and its plugi
     assert.equal(plain.grants, null)
     assert.equal(plain.acts, GATEWAY_ACTIONS)
   } finally { await plain.close() }
+})
+
+test('a run gets ## Sources only where packs load, and the Off line only where grants manage them', async () => {
+  install([{ page: acme }])
+  const dir = tempDir('spaces'), f = fakeSdk()
+  // a gateway workspace has no packs of its own to name: the section is absent and the bridge line stands alone
+  const space = await makeSpace(acmeServer, { cfg: wsCfg(dir), home: dir, artifactsDir: join(dir, 'arts'), sdk: f.sdk, fake: true, push: async () => {}, root: join(dir, 'none') })
+  try {
+    space.source.start()
+    await until(() => space.source.available())
+    const j = await space.jobs.create({ t: 'S', key: 'NEW', pb: 'action', prj: acme.pack.prj[0], ws: space.id })
+    await space.jobs.cmd(j.id, { op: 'start' })
+    await space.runner.ask(j.id, T.atOf(space.ctx(), (await space.jobs.get(j.id))!)!, 'go')
+    await until(() => f.sessions.length === 1)
+    assert.doesNotMatch(f.sessions[0].prompt, /## Sources/)
+    assert.match(f.sessions[0].prompt, /\(bridge_snapshot, bridge_get\)\.\n/)
+    f.sessions[0].end()
+  } finally { await space.close() }
+  const docs: StateDocs = { load: async () => ({ docs: {}, seq: 0 }), put: async () => {}, seq: async () => {} }
+  const idle: Browser = { endpoint: () => null, status: () => ({ state: 'off' }), start: async () => {}, stop: async () => {}, onChange: () => () => {} }
+  const cfg = { ...wsCfg(dir), packs: ['m365-mail'] }
+  const source = localSource(cfg, { bus: new Bus(), ws: 'acme', grants: () => ({ packs: ['m365-mail'], hosts: [], config: {} }), docs, browser: idle, log: () => {} })
+  const packDirs = wsPackDirs('acme', join(dir, 'none'))
+  assert.equal(runSources({ packDirs, grants: null, cfg: wsCfg(dir), source: { via: 'bridge' } as unknown as Source }), '', 'not a local source')
+  const un = runSources({ packDirs, grants: null, cfg, source })
+  assert.match(un, /^## Sources\n[\s\S]*### .*\(m365-mail/)
+  assert.doesNotMatch(un, /\nOff: /)
+  const grants = { packs: ['m365-mail'], hosts: [], acts: [], llmActs: [], runTools: [], mcp: {} } as unknown as Grants
+  assert.match(runSources({ packDirs, grants, cfg, source }), /\nOff: .*\(m365-teams\)/)
 })
 
 /** a runs' browser that launches nothing: what it was made with, and what it was asked */

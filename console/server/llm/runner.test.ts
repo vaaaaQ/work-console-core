@@ -402,7 +402,7 @@ const PROMPT = [
   '',
   '## How to work',
   '- Everything above was read for this step when the run started: work from it, and use tools only for what it does not cover.',
-  '- Read anything else from the sources with the bridge tools (bridge_snapshot, bridge_get); the packs behind them are under ## Sources, and bridge_get takes pack where a concept has more than one.',
+  '- Read anything else from the sources with the bridge tools (bridge_snapshot, bridge_get).',
   '- context() returns these sections again, read anew, when a long run needs them back.',
   '- You never send anything to a source (no chat posts, mails, votes, comments or state changes): the user sends after review.',
   '- Write progress with the run tool journal(observed, changed, next) at meaningful points.',
@@ -514,7 +514,7 @@ test("a run's prompt carries the job's notes and its playbook's in full, once ea
 
 test('a workspace without a gateway: the prompt does not point at the bridge tools, and the rest is unchanged', async () => {
   const x = demoCtx(), j = promptJob()
-  const line = '\n- Read anything else from the sources with the bridge tools (bridge_snapshot, bridge_get); the packs behind them are under ## Sources, and bridge_get takes pack where a concept has more than one.'
+  const line = '\n- Read anything else from the sources with the bridge tools (bridge_snapshot, bridge_get).'
   assert.equal(buildPrompt(x, j, 'sn', 'Draft the reply.', { bridge: false }), PROMPT.replace(line, ''))
   assert.equal(buildPrompt(x, j, 'sn', 'Draft the reply.', { bridge: true }), PROMPT)
   const s = setup(), [t] = await targets(s.jobs, 1)

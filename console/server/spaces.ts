@@ -158,6 +158,11 @@ export function runBridge(w: WorkspaceServer, source: Source, cfg: WsConfig): { 
   }
 }
 
+/** the ## Sources of a run: only where packs load (a local source), and "Off" only where grants manage them */
+export function runSources(s: { packDirs: string[]; grants: Grants | null; cfg: WsConfig; source: Source }): string {
+  return isLocal(s.source) ? sourcesSection(viewsFor(s), s.grants !== null) : ''
+}
+
 export async function makeSpace(w: WorkspaceServer, o: SpaceOpts): Promise<Space> {
   const fake = o.fake ? await startFakeGateway({ seed: fakeSeed(w), me: w.page.me, board: w.page.board }) : null
   // a workspace hook that throws would leave the fake holding its port
@@ -222,7 +227,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     // runs call only what grants.llmActs names and the source would run; the source checks the scopes
     acts: grants?.llmActs ? { allowed: grants.llmActs.filter((a) => acts.has(a)), act: (a) => source.act(a) } : undefined,
     // the packs' state is read from the source at each run start
-    sources: () => sourcesSection(viewsFor({ packDirs, grants, cfg, source })),
+    sources: () => runSources({ packDirs, grants, cfg, source }),
   })
   const offAuto = autoAsk({ jobs, runner, ctx, on: cfg.autoAsk === true, delay: o.askDelay })
   // a workspace without a gateway gives the builder no sources to read

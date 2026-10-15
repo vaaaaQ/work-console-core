@@ -103,7 +103,9 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: Prompt
     block('## How to work', [
       `- Everything above was read for this step when the run started: work from it, and use tools only for what it does not cover.`,
       ...(o.images ? [`- [image N] in the text is the picture labelled [image N] before this text.`] : []),
-      ...(o.bridge === false ? [] : [`- Read anything else from the sources with the bridge tools (bridge_snapshot, bridge_get); the packs behind them are under ## Sources, and bridge_get takes pack where a concept has more than one.`]),
+      ...(o.bridge === false ? [] : [o.sources
+        ? `- Read anything else from the sources with the bridge tools (bridge_snapshot, bridge_get); the packs behind them are under ## Sources, and bridge_get takes pack where a concept has more than one.`
+        : `- Read anything else from the sources with the bridge tools (bridge_snapshot, bridge_get).`]),
       `- context() returns these sections again, read anew, when a long run needs them back.`,
       ...(o.knowledge ? [`- When you learn something a later run would need, propose a knowledge note or a change with knowledge_propose; ${w} decides. Notes not given above are found with knowledge_search and knowledge_read.`] : []),
       `- You never send anything to a source (no chat posts, mails, votes, comments or state changes): ${w} sends after review.`,

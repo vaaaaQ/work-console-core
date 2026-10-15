@@ -10,8 +10,9 @@ function stateLine(p: PackView): string {
   return `state: ${p.state}${p.message && p.state !== 'ok' ? ` (${p.message})` : ''}`
 }
 
-export function sourcesSection(views: PackView[]): string {
-  const on = views.filter((p) => p.on), off = views.filter((p) => !p.on && p.listed && !p.problem)
+/** managed: the workspace's packs are turned on in Settings, so the ones that are off are named */
+export function sourcesSection(views: PackView[], managed: boolean): string {
+  const on = views.filter((p) => p.on), off = managed ? views.filter((p) => !p.on && p.listed && !p.problem) : []
   if (!on.length && !off.length) return ''
   const blocks = on.map((p) => [
     `### ${p.title} (${p.name}, ${KIND_LABEL[p.kind]})`,
