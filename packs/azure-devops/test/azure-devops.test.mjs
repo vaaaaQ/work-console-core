@@ -204,6 +204,15 @@ test('work.comment: on the project the item lives in', async () => {
   assert.deepEqual(post.body, { text: 'Done.' });
 });
 
+test('work.comment: a text with links goes as HTML, the rest escaped; a PR thread comment stays Markdown', async () => {
+  const r = await run(act('work.comment', { id: '95512', text: 'See [build 7](https://ci.example/b?x=1&y=2) <now> & "then"\nok' }, { config: cfg }), { ...tab, routes: routes() });
+  ok(r);
+  assert.deepEqual(r.requests.find((q) => q.method === 'POST').body, { text: 'See <a href="https://ci.example/b?x=1&amp;y=2">build 7</a> &lt;now&gt; &amp; &quot;then&quot;<br>ok' });
+  const pr = await run(act('review.comment', { id: '101', text: 'See [build 7](https://ci.example/b)' }, { config: cfg }), { ...tab, routes: routes() });
+  ok(pr);
+  assert.equal(pr.requests.find((q) => q.method === 'POST').body.comments[0].content, 'See [build 7](https://ci.example/b)');
+});
+
 test('review.vote: a PUT on my reviewer entry; a vote outside the scale is refused', async () => {
   const r = await run(act('review.vote', { id: '101', vote: -5 }, { config: cfg }), { ...tab, routes: routes() });
   assert.deepEqual(ok(r), { id: '101', vote: -5 });

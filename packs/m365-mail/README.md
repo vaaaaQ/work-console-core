@@ -34,4 +34,5 @@ its sender.
 | `mail.send` | `{text, replyTo}` replies to a message; `{text, to[], cc[]?, subject}` sends a new mail | `Mail.Send` |
 
 A new mail goes as HTML, its Markdown converted the way the Teams pack's `chat.post` does it. A reply
-goes as the `comment` of Graph's reply, its text as written.
+goes as the `comment` of Graph's reply, its text as written; a reply with Markdown links `[name](https://…)` goes as
+HTML there, each link on its name and the rest escaped.

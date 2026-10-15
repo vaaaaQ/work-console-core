@@ -282,11 +282,28 @@ async function (call, env) {
     return { id, state: w && w.fields && w.fields['System.State'] ? w.fields['System.State'] : state };
   };
 
+  // ---- mdLinks: begin ----
+  // a text with Markdown links [name](url) as HTML: each link an <a> on its name, the rest escaped, line breaks <br>.
+  // null when it has none, so the text goes as plain text as before; only http(s) and mailto links count.
+  const mdLinks = (text) => {
+    const LINK = /\[([^\]\n]+)\]\(((?:https?:\/\/|mailto:)[^\s()<>"]+)\)/g;
+    const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const br = (s) => esc(s).replace(/\r?\n/g, '<br>');
+    let out = '', at = 0, m, any = false;
+    while ((m = LINK.exec(text))) {
+      any = true;
+      out += br(text.slice(at, m.index)) + '<a href="' + esc(m[2]) + '">' + esc(m[1]) + '</a>';
+      at = m.index + m[0].length;
+    }
+    return any ? out + br(text.slice(at)) : null;
+  };
+  // ---- mdLinks: end ----
+
   const workComment = async (args) => {
     const id = argId(args, 'id'), text = argStr(args, 'text', { max: MAX_TEXT });
     const w = await ado('GET', v(ADO + '/_apis/wit/workitems/' + id + '?fields=System.TeamProject'));
     const project = (w && w.fields && w.fields['System.TeamProject']) || PROJECT;
-    const res = await ado('POST', ADO + '/' + encodeURIComponent(project) + '/_apis/wit/workItems/' + id + '/comments?api-version=7.1-preview.4', { text });
+    const res = await ado('POST', ADO + '/' + encodeURIComponent(project) + '/_apis/wit/workItems/' + id + '/comments?api-version=7.1-preview.4', { text: mdLinks(text) ?? text });
     return { id, commentId: res ? res.id : null };
   };
 

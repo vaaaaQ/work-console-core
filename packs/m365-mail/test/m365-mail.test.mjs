@@ -83,6 +83,17 @@ test('mail.send: a new mail as HTML and a reply through Graph', async () => {
   assert.deepEqual(reply.requests[0].body, { comment: 'Thanks.' });
 });
 
+test('mail.send: a reply with links goes as HTML in its comment, a link on its name, the rest escaped, through Graph and Outlook REST', async () => {
+  const reply = await run(act('mail.send', { replyTo: 'AAMkAD-m1', text: 'See [build 7](https://ci.example/b?x=1&y=2) <now> & "then"\nok' }, { config: cfg }),
+    { ...graphTab, routes: [['POST', re(GRAPH + '/me/messages/AAMkAD-m1/reply'), { status: 202 }]] });
+  ok(reply);
+  assert.deepEqual(reply.requests[0].body, { comment: 'See <a href="https://ci.example/b?x=1&amp;y=2">build 7</a> &lt;now&gt; &amp; &quot;then&quot;<br>ok' });
+  const rest = await run(act('mail.send', { replyTo: 'AAMkAD-m1', text: 'Mail [me](mailto:robin@acme.example)' }, { config: cfg }),
+    { ...outlookTab, routes: [['POST', re(OUTLOOK + '/me/messages/AAMkAD-m1/reply'), { status: 202 }]] });
+  ok(rest);
+  assert.deepEqual(rest.requests[0].body, { Comment: 'Mail <a href="mailto:robin@acme.example">me</a>' });
+});
+
 test('mail.send: through Outlook REST with PascalCase bodies when only an Outlook token is there', async () => {
   const sent = await run(act('mail.send', { to: ['sam.diaz@acme.example'], subject: 'Notes', text: 'See below.' }, { config: cfg }),
     { ...outlookTab, routes: [['POST', re(OUTLOOK + '/me/sendmail'), { status: 202 }]] });
@@ -160,4 +171,15 @@ test('errors: 401 and 403 are unauthorized, 429 carries its wait, an HTML page i
   const rl = await at({ status: 429, headers: { 'Retry-After': '12' } });
   assert.deepEqual([rl.result.code, rl.result.retryAfter], ['rate_limited', 12]);
   assert.equal((await at({ text: '<html>sign in</html>' })).result.code, 'unauthorized');
+});
+
+test('mdLinks is the same in every pack that sends it: one copy each, since a pack loads as one file', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const copy = async (p) => {
+    const s = await readFile(new URL(p, import.meta.url), 'utf8');
+    const m = s.match(/\/\/ ---- mdLinks: begin ----[\s\S]*?\/\/ ---- mdLinks: end ----/);
+    assert.ok(m, p);
+    return m[0].replace(/\r\n/g, '\n');
+  };
+  assert.equal(await copy('../../azure-devops/azure-devops.js'), await copy('../m365-mail.js'));
 });

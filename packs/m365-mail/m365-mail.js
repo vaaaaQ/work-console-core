@@ -260,15 +260,33 @@ async function (call, env) {
     };
   };
 
+  // ---- mdLinks: begin ----
+  // a text with Markdown links [name](url) as HTML: each link an <a> on its name, the rest escaped, line breaks <br>.
+  // null when it has none, so the text goes as plain text as before; only http(s) and mailto links count.
+  const mdLinks = (text) => {
+    const LINK = /\[([^\]\n]+)\]\(((?:https?:\/\/|mailto:)[^\s()<>"]+)\)/g;
+    const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const br = (s) => esc(s).replace(/\r?\n/g, '<br>');
+    let out = '', at = 0, m, any = false;
+    while ((m = LINK.exec(text))) {
+      any = true;
+      out += br(text.slice(at, m.index)) + '<a href="' + esc(m[2]) + '">' + esc(m[1]) + '</a>';
+      at = m.index + m[0].length;
+    }
+    return any ? out + br(text.slice(at)) : null;
+  };
+  // ---- mdLinks: end ----
+
   const mailSend = async (args) => {
     const text = argStr(args, 'text', { max: MAX_TEXT });
     const replyTo = argStr(args, 'replyTo', { optional: true, max: 512 });
+    const html = mdLinks(text);
     let message;
     if (replyTo !== undefined) { if (!MSG_ID.test(replyTo)) fail('bad_args', 'replyTo is not a message id'); }
     else message = { subject: argStr(args, 'subject'), body: { contentType: 'HTML', content: toHtml(text) }, toRecipients: addresses(args, 'to'), ccRecipients: addresses(args, 'cc', true) };
     const b = backend(SCOPES.send);
     if (replyTo !== undefined) {
-      await api(b, 'POST', '/me/messages/' + encodeURIComponent(replyTo) + '/reply', { body: { comment: text }, as: 'none' });
+      await api(b, 'POST', '/me/messages/' + encodeURIComponent(replyTo) + '/reply', { body: { comment: html === null ? text : html }, as: 'none' });
       return { sent: true, replyTo };
     }
     await api(b, 'POST', b.graph ? '/me/sendMail' : '/me/sendmail', { body: { message, saveToSentItems: true }, as: 'none' });

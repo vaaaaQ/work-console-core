@@ -45,7 +45,7 @@ The board is scoped by the team's area values and the item types the board's fir
 | Action | Args |
 |---|---|
 | `work.setState` | `{id, state}` |
-| `work.comment` | `{id, text}` |
+| `work.comment` | `{id, text}`; a text with Markdown links `[name](https://…)` goes as HTML, each link on its name, the rest escaped |
 | `review.vote` | `{id, vote}`, vote one of 10, 5, 0, -5, -10 |
 | `review.comment` | `{id, text, threadId?}`: a new thread, or a reply in `threadId` |
 
