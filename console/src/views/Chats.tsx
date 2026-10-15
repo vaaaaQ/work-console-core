@@ -38,6 +38,7 @@ export function Chats() {
   if (st && st !== 'ok') return <Unavailable what="Chats" st={st} concept="chat" />
   if (!c && !hid.length) return <div className="empty">{LIVE.on ? 'No chats.' : `No chat source in ${w.n}.`}</div>
   const jobs = c ? JOBS.filter((j) => j.chat === c.id) : [], tool = w.src.chat?.n
+  const many = new Set(L.map((y) => y.pack ?? '')).size > 1
   return <>
     <div className="vh"><div><div className="eyebrow">{w.n} · sources</div><h1>Chats</h1>
       <p>{tool} threads you follow. Start a job from a message, or let the LLM draft a reply; nothing is posted until you confirm it.</p></div></div>
@@ -48,7 +49,7 @@ export function Chats() {
           <div key={h.id} className="li"><span className="r1"><span className="nm">{h.name}</span><span className="fsp" /><button className="btn sm ghost" onClick={() => unhideChat(h.id, ws)}><Ic n="inbox" sm />Unhide</button></span></div>))
           : <div className="empty">No hidden threads.</div>)
           : L.map((x) => {
-            const l = last(x), many = new Set(L.map((y) => y.pack ?? '')).size > 1
+            const l = last(x)
             return (
               <button key={`${x.pack ?? ''}:${x.id}`} className="li" aria-current={x.id === c?.id} onClick={() => pickChat(x.id)}>
                 <span className="r1"><span className="nm">{x.name}</span>{many && x.pack ? <span className="hint">{x.pack}</span> : null}{x.unread ? <span className="unr">{x.unread}</span> : null}<span className="ts">{l?.at || ''}</span></span>
