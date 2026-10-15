@@ -336,7 +336,7 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
         return { status: 'ok', rev: f.proj.rev, items: v }
       } catch (e) {
         if (!(e instanceof SourceFail)) throw e
-        return { status: e.code, message: e.message, ...(e.host ? { host: e.host } : {}) } as ConceptReply
+        return { status: e.code, message: e.message, ...(e.host ? { host: e.host } : {}), ...(e.retryAfter ? { retryAfter: e.retryAfter } : {}) } as ConceptReply
       }
     },
     async file(concept, id, file, pack) {
@@ -352,7 +352,7 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
         return isFile(v) ? { status: 'ok', items: v } : { status: 'source_error', message: `${concept} ${id}: the pack sent no file` }
       } catch (e) {
         if (!(e instanceof SourceFail)) throw e
-        return { status: e.code, message: e.message, ...(e.host ? { host: e.host } : {}) } as ConceptReply
+        return { status: e.code, message: e.message, ...(e.host ? { host: e.host } : {}), ...(e.retryAfter ? { retryAfter: e.retryAfter } : {}) } as ConceptReply
       }
     },
     async candidates(name) {

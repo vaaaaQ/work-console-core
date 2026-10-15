@@ -293,6 +293,12 @@ test('file: an expired file reference fetches the message once more; a second ex
   assert.equal(gets(always, 'messages.getHistory').length, 2);
 });
 
+test('file: fewer bytes than the message declared is a source_error, not a truncated file', async () => {
+  const tg = withFiles({ blobs: { d20: blob(1200000 - 524288) } });
+  const r = await pack(fileCall(FILES, '20'), tg.env);
+  assert.deepEqual([r.ok, r.code, r.message], [false, 'source_error', 'acta.pdf: got 675712 of 1200000 bytes']);
+});
+
 test('file: a flood wait while downloading is rate_limited with its seconds', async () => {
   const tg = withFiles({ fail: { 'upload.getFile': { type: 'FLOOD_WAIT_7' } } });
   const r = await pack(fileCall(FILES, '20'), tg.env);

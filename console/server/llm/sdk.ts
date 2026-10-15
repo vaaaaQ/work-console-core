@@ -239,7 +239,7 @@ export function runToolDefs(tools: RunTools) {
     ...(tools.act ? [tool('act', "Run an act this workspace lets runs call by themselves (for example a post into an allowed chat), at most 10 a run. It goes out at once, without the user's review; only the chats or targets the workspace allows are accepted. A refusal or failure is shown on the step with the text; do not retry it.",
       { action: z.string().min(1), args: z.record(z.string(), z.unknown()) },
       (a) => answer(() => tools.act!(a.action, a.args))())] : []),
-    ...(tools.saveSourceFile ? [tool('save_source_file', "Save a file a source item lists in its files (concept, id, file; pack where the concept has more than one) as an artifact of this step, at most 20 MB and 100 a run. A copy lands at .source-files/<name> under your working dir for you to read. Download only when the file's content matters; its description is often enough.",
+    ...(tools.saveSourceFile ? [tool('save_source_file', "Save a file a source item lists in its files (concept, id, file; pack where the concept has more than one) as an artifact of this step, at most 20 MB and 100 a run. A copy lands at .source-files/<job id>/<name> under your working dir for you to read. Download only when the file's content matters; its description is often enough.",
       { concept: z.string().min(1), id: z.string().min(1), file: z.string().min(1), pack: z.string().optional() },
       (a) => answer(() => tools.saveSourceFile!(a))())] : []),
   ]

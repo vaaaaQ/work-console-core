@@ -344,7 +344,7 @@ carry it, and the page shows it in a banner.
 - The prompt carries what the run needs, read at its start, so the run works instead of reading (see the table below).
 - The run's tools come from the allowlist in `sdk.ts`: it can read A, and search, read and propose the
   workspace's knowledge notes. It cannot act, and it cannot write B beyond its own step, plus the jobs `llm.jobTools` lets it create and start.
-- It keeps files with `add_artifact` and `add_artifact_file` (a file under its dir, at most 20 MB).
+- It keeps files with `add_artifact` and `add_artifact_file` (a file under its dir, at most 20 MB), and a source item's file with `save_source_file` (at most 20 MB, 100 a run; a copy for reading lands in `.source-files/<job id>/`).
   Images show on the page; html and svg are served as text.
 - It never reads the console home: the deny list covers `.work-console` for Read, Bash and PowerShell.
 - The run hands back its draft with `submit_draft`. The page shows the draft, and a person sends it.

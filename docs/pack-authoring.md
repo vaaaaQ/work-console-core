@@ -106,7 +106,7 @@ async function (call, env) { ... }   // env is injected only by tests
 
 A scoped concept or action's call also has `scope`, the allowed ids.
 
-Only a concept with `files: true` gets `file` calls. The console waits up to 120 s for one, and a run saves the result as an artifact with `save_source_file`.
+Only a concept with `files: true` gets `file` calls. The console waits up to 120 s for one, and a run saves the result as an artifact with `save_source_file`. A download that comes back shorter than the declared `size` is a `source_error`, never a part of the file.
 
 `watch` maps a concept to the ids that jobs follow. A read includes them even when they don't
 match the pack's default query. A get-only concept, such as `image`, answers a read with `[]`.

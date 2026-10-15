@@ -112,7 +112,7 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: Prompt
       `- You never send anything to a source (no chat posts, mails, votes, comments or state changes): ${w} sends after review.`,
       `- Write progress with the run tool journal(observed, changed, next) at meaningful points.`,
       `- Save files the step expects with add_artifact(name, content), or with add_artifact_file(path) for a file already under your working dir; images show on the page.`,
-      ...(o.files ? [`- A source message lists the files it carries in files; save one with save_source_file(concept, id, file) when its content matters to the step, then read the copy under .source-files/.`] : []),
+      ...(o.files ? [`- A source message lists the files it carries in files; save one with save_source_file(concept, id, file) when its content matters to the step, then read the copy under .source-files/<job id>/.`] : []),
       `- Finish by calling submit_draft(text) exactly once with the draft for ${w} to review. Without it the run counts as failed.`,
       NOT_DONE_LINE,
       ...(by.length ? [messageAlone(by, w, 'submit_draft', 'in journal()')] : []),

@@ -2,8 +2,8 @@
    {status:'ok', rev, items} or {status:<error code>, message}; an act reply has the same shape. */
 
 export type PackReply = { status: string; message?: string; host?: string }
-/** host: where a signin_required concept's tab waits for the person to sign in; packs: each serving pack's own state, on a concept the local source reads from packs */
-export type ConceptReply = { status: string; rev?: number; items?: unknown; message?: string; host?: string; packs?: Record<string, PackReply> }
+/** host: where a signin_required concept's tab waits for the person to sign in; retryAfter: seconds to wait after rate_limited; packs: each serving pack's own state, on a concept the local source reads from packs */
+export type ConceptReply = { status: string; rev?: number; items?: unknown; message?: string; host?: string; retryAfter?: number; packs?: Record<string, PackReply> }
 export interface Snapshot {
   bridge: { state: string; at?: string }
   counts?: { chatUnread?: number; mailToReply?: number }

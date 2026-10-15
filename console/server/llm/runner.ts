@@ -47,11 +47,12 @@ const ANSWER_MAX = 4000
 /** started: the record says running; until then cancel and interruptAll leave settling to run() */
 type Live = { ac: AbortController; why: 'cancelled' | 'interrupted' | null; reason?: string; drafted: boolean; started: boolean; blocked?: string }
 
-/** an artifact name that stays inside its job folder */
+const DEVICE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
+/** an artifact name that stays inside its job folder and is no Windows device */
 export function safeName(n: string) {
   const s = (String(n).split(/[\\/]/).pop() || '').replace(/[:*?"<>|\x00-\x1f]/g, '_').replace(/^\.+/, '').trim().slice(0, 120)
   if (!s) throw new Error('an artifact needs a name')
-  return s
+  return DEVICE.test(s.split('.')[0]) ? `_${s}` : s
 }
 
 /** a sign-in page: http or https only, as the window will open it */
@@ -487,7 +488,7 @@ export class Runner {
         saveSourceFile: async (o: { concept: string; id: string; file: string; pack?: string }) => {
           if (saved >= FILES_MAX) throw new Error(`this run already saved ${FILES_MAX} files`)
           const r = await sf(o.concept, o.id, o.file, o.pack)
-          if (r.status !== 'ok') throw new Error(`${r.status}: ${r.message ?? 'no file'}`)
+          if (r.status !== 'ok') throw new Error(`${r.status}: ${r.message ?? 'no file'}${r.retryAfter ? `; retry after ${r.retryAfter} s` : ''}`)
           const f = r.items as { name?: unknown; base64?: unknown } | undefined
           if (typeof f?.name !== 'string' || typeof f.base64 !== 'string') throw new Error(`${o.concept} ${o.id}: the source sent no file`)
           const name = safeName(f.name)
@@ -497,11 +498,12 @@ export class Runner {
           if (bytes.length > FILE_MAX) throw new Error(`${name} is over 20 MB`)
           await keep(name, (p) => writeFile(p, bytes))
           saved++
-          const local = join(cwd, '.source-files')
-          await mkdir(local, { recursive: true })
-          await writeFile(join(local, '.gitignore'), '*\n')
-          await writeFile(join(local, name), bytes)
-          return `saved ${name} (${sizeText(bytes.length)}) as an artifact; a copy is at .source-files/${name}`
+          // one dir per job: jobs without a work dir share the cwd, and two acta.pdf must not meet
+          const mineDir = safeName(rec.job), root = join(cwd, '.source-files')
+          await mkdir(join(root, mineDir), { recursive: true })
+          await writeFile(join(root, '.gitignore'), '*\n')
+          await writeFile(join(root, mineDir, name), bytes)
+          return `saved ${name} (${sizeText(bytes.length)}) as an artifact; a copy is at .source-files/${mineDir}/${name}`
         },
       } : {}),
       ...(kn ? {

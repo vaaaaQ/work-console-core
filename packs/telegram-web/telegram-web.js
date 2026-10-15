@@ -197,6 +197,7 @@ async function (call, env) {
       if (b.length < PART) break;
     }
     if (!got) fail('source_error', `${f.name}: Telegram sent no bytes`);
+    if (f.size > 0 && got !== f.size) fail('source_error', `${f.name}: got ${got} of ${f.size} bytes`);
     const all = new Uint8Array(got);
     let at = 0;
     for (const p of parts) { all.set(p, at); at += p.length; }

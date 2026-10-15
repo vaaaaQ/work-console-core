@@ -443,3 +443,12 @@ test('file: a pack answer that is not a file is a source_error', async () => {
   await until(() => src.packStates().talk?.concepts.chat?.status === 'ok')
   assert.deepEqual(plain(await src.file!('chat', 't1', '20', 'talk')), { status: 'source_error', message: 'chat t1: the pack sent no file' })
 })
+
+test('file: a rate-limited pack answers rate_limited with the seconds to wait', async () => {
+  const talk = cdp.addTab('https://talk.example/app', { DATA: { chat: [talkChat('t1')] }, FILES: { chat: { 't1/20': PDF } } })
+  const { src } = make({ grants: both() })
+  await until(() => src.packStates().talk?.concepts.chat?.status === 'ok')
+  talk.ctx.MODE = { chat: { ok: false, code: 'rate_limited', message: 'FLOOD_WAIT_7', retryAfter: 7 } }
+  const r = plain(await src.file!('chat', 't1', '20', 'talk'))
+  assert.deepEqual([r.status, r.retryAfter], ['rate_limited', 7])
+})

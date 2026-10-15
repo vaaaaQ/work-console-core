@@ -42,11 +42,14 @@ export class PackRuntime {
     return `(${this.pack.script})(${JSON.stringify(full)})`
   }
 
-  async read(tab: string, call: Call, ms = this.evalMs): Promise<unknown> {
+  async read(tab: string, call: Call, ms = this.evalMs, hold = false): Promise<unknown> {
     const key = this.key(tab), expr = this.expression(call)
     let recovered = false
     for (;;) {
-      const [env, failure] = await this.evaluate(key, expr, ms, true)
+      // a file read holds reloads off only while it runs, so its own recover below can still reload
+      if (hold) this.hold(key, 1)
+      let env: Envelope | null, failure: string | null
+      try { [env, failure] = await this.evaluate(key, expr, ms, true) } finally { if (hold) this.hold(key, -1) }
       const code = failure ?? this.code(env)
       if (code === null) {
         this.signedOutAt.delete(key)
@@ -64,7 +67,7 @@ export class PackRuntime {
   }
 
   /** a file's bytes as base64: a read that may take fileMs, since a download outlasts evalMs */
-  file(tab: string, call: Call): Promise<unknown> { return this.read(tab, call, this.fileMs) }
+  file(tab: string, call: Call): Promise<unknown> { return this.read(tab, call, this.fileMs, true) }
 
   private readFail(tab: string, key: string, code: string, env: Envelope | null, ms: number): SourceFail {
     if (code === 'unauthorized') return new SourceFail('signin_required', `${tab}: sign-in required at ${this.pool.host(key)} (${msg(env)})`, { host: this.pool.host(key) })
@@ -82,7 +85,7 @@ export class PackRuntime {
   /** one run, no reload, no retry; it waits out a reload that has just started, and holds reloads off while it runs */
   async act(tab: string, call: Call): Promise<unknown> {
     const key = this.key(tab)
-    this.acting.set(key, (this.acting.get(key) ?? 0) + 1)
+    this.hold(key, 1)
     try {
       const reload = this.reloading.get(key)
       if (reload) await reload
@@ -99,9 +102,14 @@ export class PackRuntime {
       if (PASS.has(code)) throw new SourceFail(code, `${tab}: ${msg(env)}`)
       throw new SourceFail('source_error', `${tab}: ${code}: ${msg(env)}`)
     } finally {
-      const n = (this.acting.get(key) ?? 1) - 1
-      if (n) this.acting.set(key, n); else this.acting.delete(key)
+      this.hold(key, -1)
     }
+  }
+
+  /** counts the acts and file reads running in a tab, which no reload may interrupt */
+  private hold(key: string, by: 1 | -1) {
+    const n = (this.acting.get(key) ?? 0) + by
+    if (n > 0) this.acting.set(key, n); else this.acting.delete(key)
   }
 
   private code(env: Envelope | null): string | null {
@@ -157,7 +165,7 @@ export class PackRuntime {
   }
 
   private async reload(key: string, why: string) {
-    if (this.acting.has(key)) { this.log(`browser: not reloading ${key} (${why}): an action is running in it`); return }
+    if (this.acting.has(key)) { this.log(`browser: not reloading ${key} (${why}): an action or file read is running in it`); return }
     let done = () => {}
     const p = new Promise<void>((ok) => { done = ok })
     this.reloadedAt.set(key, this.now()); this.reloading.set(key, p)

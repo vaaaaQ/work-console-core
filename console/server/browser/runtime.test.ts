@@ -169,3 +169,24 @@ test('too_large passes through as itself, with no reload and no retry', async ()
   assert.deepEqual([e.code, board.reloads, evals()], ['too_large', 0, 1])
   assert.match(e.message, /48\.2 MB/)
 })
+
+test('a failing read does not reload a tab while a file read runs in it', async () => {
+  const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms))
+  const file = { name: 'a.pdf', mime: 'application/pdf', size: 3, base64: 'YWJj' }
+  const board = cdp.addTab('https://board.example/acme/core', { DATA: { work: WORK }, FILES: { work: { 'W-1/7': file } },
+    MODE: { work: async (c: { verb: string }) => { if (c.verb !== 'file') return { ok: false, code: 'blank', message: 'nothing yet' }; await sleep(600); return { ok: true, data: file } } } })
+  const carrier = cdpCarrier(() => cdp.url)
+  const rt = new PackRuntime(pack, new TabPool(carrier, (h) => h.endsWith('.example')), carrier, { evalMs: 300, fileMs: 2000, settleMs: 20, now: () => clock })
+  const dl = rt.file('board', { verb: 'file', concept: 'work', id: 'W-1', file: '7' })
+  await sleep(100)
+  assert.equal((await failure(read(rt))).code, 'source_error')
+  assert.equal(board.reloads, 0)
+  assert.deepEqual(plain(await dl), file)
+})
+
+test("a file read that fails reloads the tab once itself and retries", async () => {
+  const file = { name: 'a.pdf', mime: 'application/pdf', size: 3, base64: 'YWJj' }
+  const { rt, board } = setup({ FILES: { work: { 'W-1/7': file } }, MODE: { work: seq({ ok: false, code: 'blank', message: 'nothing yet' }, null) } })
+  assert.deepEqual(plain(await rt.file('board', { verb: 'file', concept: 'work', id: 'W-1', file: '7' })), file)
+  assert.equal(board.reloads, 1)
+})
