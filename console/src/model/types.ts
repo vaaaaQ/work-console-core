@@ -59,8 +59,9 @@ export interface DraftReport { o?: Outcome; rt?: string; why?: string; cm?: stri
 /** the most commands one draft may wait for, and the most characters of one */
 export const CMDS_MAX = 10, CMD_MAX = 2000
 /** o, rt, why: the draft's report, set only when it did not finish; cm = the commands it waits to have approved;
-    ap = it reports approved commands, so it is the person's to read and never accepted by itself */
-export interface Draft extends New { t: string; at: string; q?: string; o?: Exclude<Outcome, 'done'>; rt?: string; why?: string; cm?: string[]; ap?: 1 }
+    ap = it reports approved commands, so it is the person's to read and never accepted by itself;
+    hd = handed in by hand, so no LLM session wrote it and none approves its commands */
+export interface Draft extends New { t: string; at: string; q?: string; o?: Exclude<Outcome, 'done'>; rt?: string; why?: string; cm?: string[]; ap?: 1; hd?: 1 }
 /** id = the backend's run record; absent in the demo; reply = it continues the draft's session, so the draft stays;
     ap = the reply approves the draft's commands */
 export interface Run { q: string; at: number; id?: string; reply?: 1; ap?: 1 }

@@ -3,7 +3,7 @@ import { failText } from '../actions/flow.tsx'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
 import { cmdsN } from '../model/transitions.ts'
-import { thread } from '../model/thread.ts'
+import { approveTo, thread } from '../model/thread.ts'
 import type { Job } from '../model/types.ts'
 import { commit } from '../store.ts'
 import { Ic } from './Icon.tsx'
@@ -24,12 +24,11 @@ export function CmdList({ job, step }: { job: Job; step: string }) {
   )
 }
 
-/** the run a step's Approve goes to: its newest, when the thread has a session to continue; live only */
+/** the run a step's Approve goes to (approveTo); live only */
 export function approveHead(job: Job, step: string) {
   const f = job.flow[step]
-  if (!LIVE.on || !f?.dr?.cm?.length) return null
-  const all = thread(Object.values(LIVE.runs), job.id, step)
-  return all.some((r) => r.session) ? all.at(-1) ?? null : null
+  if (!LIVE.on || !f?.dr) return null
+  return approveTo(f.dr, thread(Object.values(LIVE.runs), job.id, step))
 }
 
 /** Approve: one click, no dialog; hidden without a session to continue, disabled while a run is on the step */

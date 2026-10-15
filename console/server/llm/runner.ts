@@ -181,6 +181,7 @@ export class Runner {
     if (f.run) throw new HttpError(409, 'busy', 'this step already has an LLM run')
     if (!f.dr) throw new HttpError(409, 'no_draft', 'this step has no draft to reply to')
     if (ap && !f.dr.cm?.length) throw new HttpError(409, 'no_commands', 'this draft waits for no commands')
+    if (ap && f.dr.hd) throw new HttpError(409, 'no_session', 'this draft was handed in by hand; no LLM session wrote it to run its commands')
     if (ap && o.at !== f.dr.at) throw new HttpError(409, 'stale', 'the draft changed since the page showed it; look at its commands again')
     if (ap) t = approveText(f.dr.cm!)
     const c = await this.chain(job, step)

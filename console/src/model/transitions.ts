@@ -780,7 +780,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       const t = (cmd.t || '').trim()
       if (!t) throw new CmdError('bad_args', 'the draft is empty')
       const rep = report(x, j, sid, cmd)
-      F.dr = { t, at: nowOf(x).toISOString(), nw: 1, ...rep }; F.s = 'wait'; F.m = 'draft handed in'; F.nw = 1
+      F.dr = { t, at: nowOf(x).toISOString(), nw: 1, ...rep, hd: 1 }; F.s = 'wait'; F.m = 'draft handed in'; F.nw = 1
       jr(x, j, `Draft for “${S.t}” handed in${reportTxt(x, j, rep)}.`, 'waiting for your review.', 'accept, edit or reject it.', by(x), 'wait'); syncStatus(x, j)
       break
     }
