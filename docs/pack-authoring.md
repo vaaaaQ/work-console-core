@@ -34,6 +34,7 @@ flowchart LR
 | `concepts.<c>.cap` | Max items kept |
 | `actions.<a>.concept` | Which concept to re-read after the act |
 | `concepts.<c>.scope`, `actions.<a>.scope` | Optional. The item field, or the act's arg, that names a target the workspace must list (see Scope) |
+| `concepts.<c>.files` | Optional. `true` when the pack answers the `file` verb for this concept |
 
 ### Scope
 
@@ -100,9 +101,12 @@ async function (call, env) { ... }   // env is injected only by tests
 |---|---|---|
 | `read` | `concept`, `watch`, `zone`, `now` | an array of items (`<concept>.item` schema) |
 | `get` | `concept`, `id` | one detail (`<concept>.get` schema) |
+| `file` | `concept`, `id`, `file` | `{name, mime, size, base64}` of one file the item carries, at most 20 MB |
 | `act` | `action`, `args` | the act's result, small |
 
 A scoped concept or action's call also has `scope`, the allowed ids.
+
+Only a concept with `files: true` gets `file` calls. The console waits up to 120 s for one, and a run saves the result as an artifact with `save_source_file`.
 
 `watch` maps a concept to the ids that jobs follow. A read includes them even when they don't
 match the pack's default query. A get-only concept, such as `image`, answers a read with `[]`.
@@ -129,6 +133,7 @@ Return `{ok:false, code, message, retryAfter?}` and never throw out of the funct
 | `unauthorized` | 401 or 403, a sign-in host, or an HTML page where JSON was expected |
 | `rate_limited` | 429, with `retryAfter` in seconds |
 | `not_found` | 404 |
+| `too_large` | A file over the 20 MB limit. Check the size before downloading |
 | `bad_args` | An unknown verb or concept, or invalid args. Check before any request |
 | `source_error` | Anything else that surely did not change the source |
 | `unknown` | Something failed after a write went out, so the outcome is unknown |

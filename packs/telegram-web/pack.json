@@ -12,7 +12,7 @@
     "tg": { "match": "^https://web\\.telegram\\.org/k/", "open": "https://web.telegram.org/k/" }
   },
   "concepts": {
-    "chat": { "tab": "tg", "interval": 30, "cap": 20, "scope": "id" }
+    "chat": { "tab": "tg", "interval": 30, "cap": 20, "scope": "id", "files": true }
   },
   "actions": {
     "tg.post": { "tab": "tg", "concept": "chat", "scope": "chat" }

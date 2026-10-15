@@ -1,6 +1,7 @@
 // Telegram Web K as the person signed in to it: reads and posts through the page's own managers
 // (window.rootScope.managers), never by typing into the page. It serves only the chats call.scope
 // lists; the console checks the same list before and after, so this check is the second one.
+// A message's file comes back only on the file verb, read through the page's session.
 async function (call, env) {
   env = env || {
     managers: window.rootScope && window.rootScope.managers,
@@ -11,7 +12,7 @@ async function (call, env) {
   };
 
   const ID = /^-?[1-9]\d{0,19}$/;
-  const MAX_TEXT = 4096, PAGE = 50, PREVIEW = 200, CONFIRM_MS = 10000, STEP_MS = 500;
+  const MAX_TEXT = 4096, PAGE = 50, PREVIEW = 200, CONFIRM_MS = 10000, STEP_MS = 500, PART = 524288, FILE_MAX = 20 * 1048576;
 
   class Fail extends Error {
     constructor(code, message, retryAfter) { super(message); this.code = code; this.retryAfter = retryAfter; }
@@ -37,13 +38,15 @@ async function (call, env) {
     : { ok: false, code: 'blank', message: 'Telegram Web is still starting' };
 
   // ---- the API, through the page's own session ----
-  const api = async (method, params) => {
-    try { return await m.apiManager.invokeApi(method, params); } catch (e) {
+  const api = async (method, params, opts) => {
+    try { return await m.apiManager.invokeApi(method, params, opts); } catch (e) {
       const type = str(e && (e.type || e.message || e));
       const flood = /^FLOOD_WAIT_(\d+)/.exec(type);
       if (flood) fail('rate_limited', `${method}: ${type}`, Number(flood[1]));
       if (/^(AUTH_KEY_UNREGISTERED|AUTH_KEY_INVALID|SESSION_REVOKED|SESSION_EXPIRED|USER_DEACTIVATED)/.test(type)) fail('unauthorized', `${method}: ${type}`);
       if (/^(PEER_ID_INVALID|CHAT_ID_INVALID|CHANNEL_INVALID|CHANNEL_PRIVATE|CHAT_FORBIDDEN|USER_BANNED_IN_CHANNEL)/.test(type)) fail('not_found', `${method}: ${type}`);
+      // the message is fetched again for a fresh reference
+      if (/^FILE_REFERENCE_/.test(type)) fail('stale_ref', `${method}: ${type}`);
       fail('source_error', `${method}: ${type || 'failed'}`);
     }
   };
@@ -71,9 +74,52 @@ async function (call, env) {
     if (f && f.user_id !== undefined) return Number(f.user_id);
     return Number(id) > 0 ? (msg.pFlags && msg.pFlags.out ? me : Number(id)) : null;
   };
+  const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'video/mp4': 'mp4', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'application/pdf': 'pdf' };
+  const sizeText = (n) => (n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`);
+  const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  // the one file a message carries, with where to download it from; null for none
+  const fileOf = (msg) => {
+    const md = msg.media, id = String(msg.id);
+    if (md && md._ === 'messageMediaPhoto' && md.photo && md.photo._ === 'photo') {
+      const p = md.photo;
+      const best = (p.sizes || []).filter((s) => s._ === 'photoSize' || s._ === 'photoSizeProgressive')
+        .map((s) => ({ s, bytes: s._ === 'photoSizeProgressive' ? Math.max(0, ...(s.sizes || [])) : Number(s.size) || 0 }))
+        .sort((a, b) => b.bytes - a.bytes)[0];
+      if (!best || !best.bytes) return null;
+      return { kind: 'photo', file: id, name: `photo-${id}.jpg`, mime: 'image/jpeg', size: best.bytes, w: best.s.w, h: best.s.h, dcId: p.dc_id,
+        location: { _: 'inputPhotoFileLocation', id: p.id, access_hash: p.access_hash, file_reference: p.file_reference, thumb_size: best.s.type } };
+    }
+    if (md && md._ === 'messageMediaDocument' && md.document && md.document._ === 'document') {
+      const d = md.document, attrs = d.attributes || [], is = (t) => attrs.find((a) => a._ === t);
+      const audio = is('documentAttributeAudio'), video = is('documentAttributeVideo'), named = is('documentAttributeFilename');
+      const kind = is('documentAttributeSticker') ? 'sticker' : audio ? (audio.pFlags && audio.pFlags.voice ? 'voice' : 'audio') : video ? 'video' : 'document';
+      const mime = str(d.mime_type) || 'application/octet-stream';
+      const name = (named && str(named.file_name)) || `${kind}-${id}.${EXT[mime] || mime.split('/')[1] || 'bin'}`;
+      return { kind, file: id, name, mime, size: Number(d.size) || 0, duration: Number((audio || video || {}).duration) || 0, dcId: d.dc_id,
+        location: { _: 'inputDocumentFileLocation', id: d.id, access_hash: d.access_hash, file_reference: d.file_reference, thumb_size: '' } };
+    }
+    return null;
+  };
+  // one line for what the media is; a file says its size, a document its name
+  const describe = (md, f) => {
+    if (f && f.kind === 'photo') return `[photo ${f.w}×${f.h}, ${sizeText(f.size)}]`;
+    if (f && f.kind === 'document') return `[document "${f.name}", ${f.mime}, ${sizeText(f.size)}]`;
+    if (f) return `[${f.kind}${f.duration ? ' ' + clock(f.duration) : ''}, ${sizeText(f.size)}]`;
+    const t = str(md && md._);
+    if (!t || t === 'messageMediaEmpty') return '';
+    if (/^messageMedia(Geo|GeoLive|Venue)$/.test(t)) return '[geo]';
+    if (t === 'messageMediaContact') return `[contact ${[md.first_name, md.last_name].filter(Boolean).join(' ')}]`;
+    if (t === 'messageMediaPoll') { const q = md.poll && md.poll.question; return `[poll "${str(q && typeof q === 'object' ? q.text : q)}"]`; }
+    if (t === 'messageMediaDice') return `[dice ${str(md.emoticon)}]`;
+    return '[media]';
+  };
   const textOf = (msg) => {
     if (msg._ === 'messageService') return `[${str(msg.action && msg.action._).replace(/^messageAction/, '') || 'service'}]`;
-    return str(msg.message) || (msg.media ? '[media]' : '');
+    const text = str(msg.message), md = msg.media;
+    // a link preview adds nothing to a text that has the link
+    if (md && md._ === 'messageMediaWebPage') return text || `[link ${str(md.webpage && md.webpage.url)}]`;
+    const d = describe(md, fileOf(msg));
+    return d && text ? `${d} ${text}` : d || text;
   };
   const isMine = (msg, id) => !!(msg.pFlags && msg.pFlags.out) || fromOf(msg, id) === me;
   const real = (r) => (r && Array.isArray(r.messages) ? r.messages.filter((x) => x && x._ !== 'messageEmpty') : []);
@@ -111,10 +157,11 @@ async function (call, env) {
     const msgs = real(r).slice(0, PAGE);
     return {
       messages: msgs.map((x) => {
-        const from = fromOf(x, id), u = from ? byId(r.users, from) : null;
+        const from = fromOf(x, id), u = from ? byId(r.users, from) : null, f = fileOf(x);
         return {
           id: String(x.id), author: from === me ? 'me' : from ? userName(u, from) : chatName(r, id),
           authorKind: isMine(x, id) ? 'me' : u && u.bot ? 'bot' : 'person', at: iso(x.date), text: textOf(x),
+          ...(f ? { files: [{ file: f.file, name: f.name, mime: f.mime, size: f.size }] } : {}),
         };
       }),
       cursor: msgs.length === PAGE ? String(msgs[msgs.length - 1].id) : null,
@@ -133,6 +180,55 @@ async function (call, env) {
       out.push({ id, name: p.user_id !== undefined ? (Number(id) === me ? 'Saved Messages' : userName(byId(r.users, p.user_id), p.user_id)) : (c && c.title) || `chat ${id}` });
     }
     return out;
+  }
+
+  // ---- files ----
+  // parts of 512 KB at 512 KB offsets: precise reads may not cross a 1 MB boundary
+  async function download(f) {
+    const parts = [];
+    let got = 0;
+    for (;;) {
+      const r = await api('upload.getFile', { location: f.location, offset: got, limit: PART, precise: true }, { dcId: f.dcId, fileDownload: true });
+      const b = r && r.bytes;
+      if (!b || !b.length) break;
+      parts.push(b instanceof Uint8Array ? b : Uint8Array.from(b));
+      got += b.length;
+      if (got > FILE_MAX) fail('too_large', `${f.name} is over 20 MB, the limit is 20 MB`);
+      if (b.length < PART) break;
+    }
+    if (!got) fail('source_error', `${f.name}: Telegram sent no bytes`);
+    const all = new Uint8Array(got);
+    let at = 0;
+    for (const p of parts) { all.set(p, at); at += p.length; }
+    // 768 KB of bytes is 1 MB of base64 with no padding inside
+    let b64 = '';
+    for (let i = 0; i < got; i += 786432) {
+      const c = all.subarray(i, i + 786432);
+      let s = '';
+      for (let j = 0; j < c.length; j += 32768) s += String.fromCharCode.apply(null, c.subarray(j, j + 32768));
+      b64 += btoa(s);
+    }
+    return { size: got, base64: b64 };
+  }
+
+  async function getFile(id, file) {
+    checkId(id, 'id');
+    if (typeof file !== 'string' || !/^\d{1,12}$/.test(file)) fail('bad_args', 'file must be a message id, as a string');
+    await notMigrated(id);
+    for (let attempt = 0; ; attempt++) {
+      // fetched fresh, so the file reference is current
+      const x = real(await history(id, 1, Number(file) + 1)).find((y) => String(y.id) === file);
+      const f = x && fileOf(x);
+      if (!f) fail('not_found', `message ${file} in chat ${id} has no file`);
+      if (f.size > FILE_MAX) fail('too_large', `${f.name} is ${sizeText(f.size)}, the limit is 20 MB`);
+      try {
+        const d = await download(f);
+        return { name: f.name, mime: f.mime, size: d.size, base64: d.base64 };
+      } catch (e) {
+        if (!(e instanceof Fail) || e.code !== 'stale_ref') throw e;
+        if (attempt) fail('source_error', e.message);
+      }
+    }
   }
 
   // ---- acts ----
@@ -165,6 +261,10 @@ async function (call, env) {
     if (call.verb === 'get') {
       if (call.concept !== 'chat') fail('bad_args', `no concept ${call.concept}`);
       return { ok: true, data: await getChat(call.id, call.cursor) };
+    }
+    if (call.verb === 'file') {
+      if (call.concept !== 'chat') fail('bad_args', `no concept ${call.concept}`);
+      return { ok: true, data: await getFile(call.id, call.file) };
     }
     if (call.verb === 'act') {
       if (call.action !== 'tg.post') fail('bad_args', `no action ${call.action}`);
