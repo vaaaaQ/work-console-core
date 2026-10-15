@@ -209,8 +209,8 @@ export const sources = (ws: string, concepts: string[]) =>
   wsCall<{ concepts: Record<string, ConceptState> }>(ws, 'GET', `/sources?concepts=${concepts.map(enc).join(',')}`)
 /** the console's browser brings the tab of host to the front, for the person to sign in there */
 export const front = (ws: string, host: string) => wsCall<{ ok: boolean }>(ws, 'POST', '/browser/front', { host })
-export const chatThread = async (ws: string, id: string) =>
-  (await wsCall<{ item: { messages?: Msg[] } }>(ws, 'GET', `/sources/chat/${enc(id)}`)).item.messages || []
+export const chatThread = async (ws: string, id: string, pack?: string) =>
+  (await wsCall<{ item: { messages?: Msg[] } }>(ws, 'GET', `/sources/chat/${enc(id)}${pack ? `?pack=${enc(pack)}` : ''}`)).item.messages || []
 export type { PackView, PackChange } from '../model/packs.ts'
 /** the workspace's catalog: every pack, whether it is on, its scopes, acts and state */
 export const packs = (ws: string) => wsCall<{ managed: boolean; packs: PackView[] }>(ws, 'GET', '/packs')

@@ -92,6 +92,16 @@ test("the packs calls go to the workspace's packs routes", async () => {
   } finally { await m.close() }
 })
 
+test("a thread is asked for from its pack", async () => {
+  const m = await backend()
+  try {
+    const seen: string[] = [], real = globalThis.fetch
+    globalThis.fetch = (u, i) => { const x = new URL(String(u)); if (x.port === String(m.loopbackPort)) seen.push(x.pathname + x.search); return real(u, i) }
+    try { await api.chatThread('acme', 't1', 'telegram-web').catch(() => {}) } finally { globalThis.fetch = real }
+    assert.deepEqual(seen, ['/api/ws/acme/sources/chat/t1?pack=telegram-web'])
+  } finally { await m.close() }
+})
+
 test('only a part B did not give while the bridge is up counts as missing, per workspace', () => {
   const was = { ws: api.LIVE.ws }, sel = S.ws
   try {

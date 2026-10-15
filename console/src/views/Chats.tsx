@@ -48,10 +48,10 @@ export function Chats() {
           <div key={h.id} className="li"><span className="r1"><span className="nm">{h.name}</span><span className="fsp" /><button className="btn sm ghost" onClick={() => unhideChat(h.id, ws)}><Ic n="inbox" sm />Unhide</button></span></div>))
           : <div className="empty">No hidden threads.</div>)
           : L.map((x) => {
-            const l = last(x)
+            const l = last(x), many = new Set(L.map((y) => y.pack ?? '')).size > 1
             return (
-              <button key={x.id} className="li" aria-current={x.id === c?.id} onClick={() => pickChat(x.id)}>
-                <span className="r1"><span className="nm">{x.name}</span>{x.unread ? <span className="unr">{x.unread}</span> : null}<span className="ts">{l?.at || ''}</span></span>
+              <button key={`${x.pack ?? ''}:${x.id}`} className="li" aria-current={x.id === c?.id} onClick={() => pickChat(x.id)}>
+                <span className="r1"><span className="nm">{x.name}</span>{many && x.pack ? <span className="hint">{x.pack}</span> : null}{x.unread ? <span className="unr">{x.unread}</span> : null}<span className="ts">{l?.at || ''}</span></span>
                 <span className="sub">{x.hidden && x.mentioned ? <span className="tag">hidden · mentioned you</span> : null}{x.kept && !x.at ? <span className="tag" title="Kept by the console; no recent messages">kept</span> : null}{x.kind}{l ? ` · ${l.me ? 'You: ' : ''}${l.t}` : ''}</span>
               </button>
             )

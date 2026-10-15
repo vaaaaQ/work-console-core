@@ -16,6 +16,11 @@ test('a chat item becomes a chat with the last message as its summary', () => {
   assert.deepEqual(c, { id: '19:abc', name: 'Team Dev', kind: 'group', unread: 2, sum: 'Tom Becker: Will look after lunch.', msgs: [], at: '10:05', link: 'https://x' })
 })
 
+test('a chat keeps the pack it came from', () => {
+  assert.equal(adapt.chat({ id: 't1', name: 'Brothers', kind: 'group', unread: 0, lastAt: '2026-09-30T13:05:00Z', pack: 'telegram-web' }, now).pack, 'telegram-web')
+  assert.equal(adapt.chat({ id: '19:a', name: 'A', kind: 'group', unread: 0, lastAt: '2026-09-30T13:05:00Z' }, now).pack, undefined)
+})
+
 test('a hidden thread brought back by a mention keeps both marks; plain threads carry neither', () => {
   const c = adapt.chat({ id: '19:h', name: 'Noisy', kind: 'group', unread: 1, lastAt: '2026-09-30T13:05:00Z', hidden: true, mentioned: true }, now)
   assert.equal(c.hidden, 1); assert.equal(c.mentioned, 1)

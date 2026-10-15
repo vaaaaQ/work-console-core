@@ -28,6 +28,7 @@ export const adapt = {
     if (i.hidden === true) o.hidden = 1
     if (i.mentioned === true) o.mentioned = 1
     if (i.kept === true) o.kept = 1
+    if (typeof i.pack === 'string') o.pack = i.pack
     return o
   },
   msg(m: Any, now?: Date): Msg {

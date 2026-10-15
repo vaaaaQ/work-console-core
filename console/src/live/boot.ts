@@ -143,7 +143,8 @@ export function loadThread(id: string, ws: Ws = S.ws) {
   const key = lk(ws, id)
   if (!LIVE.on || srcState('chat', ws) !== 'ok' || loaded.chat.has(key)) return
   loaded.chat.add(key)
-  api.chatThread(ws, id).then((msgs) => commit(() => { const c = (CHATS[ws] || []).find((x) => x.id === id); if (c) c.msgs = msgs }))
+  const pack = (CHATS[ws] || []).find((x) => x.id === id)?.pack
+  api.chatThread(ws, id, pack).then((msgs) => commit(() => { const c = (CHATS[ws] || []).find((x) => x.id === id); if (c) c.msgs = msgs }))
     .catch(() => { loaded.chat.delete(key) })
 }
 export function refreshThread(id: string, ws: Ws = S.ws) { loaded.chat.delete(lk(ws, id)); loadThread(id, ws) }
