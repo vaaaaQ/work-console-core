@@ -47,8 +47,11 @@ export interface ChatDetail { messages?: Entry[] }
 /** mail.get */
 export interface MailDetail { body?: string; attachments?: string[] }
 export interface NoteDetail { text?: string }
-/** status ok = text is the item; anything else = text says why it could not be read */
-export interface Resolved extends CtxItem { status: string; text: string }
+/** status ok = text is the item; anything else = text says why it could not be read.
+    link = the item's http(s) URL as the reply gave it, for a run to put on the item's name */
+export interface Resolved extends CtxItem { status: string; text: string; link?: string }
+/** an http(s) URL, or undefined for anything else (javascript:, file:, not a string) */
+export const httpUrl = (v: unknown): string | undefined => (typeof v === 'string' && /^https?:\/\/[^\s]+$/i.test(v.trim()) ? v.trim() : undefined)
 
 const clip = (s: string, max: number) => (s.length > max ? s.slice(0, max).trimEnd() + ' […]' : s)
 const stamp = (at = '') => (/^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(at) ? at.slice(0, 16).replace('T', ' ') + 'Z' : at)
@@ -87,11 +90,14 @@ export function renderItem(it: CtxItem, d: unknown, me?: string): string {
   return renderChat(it, o as ChatDetail, me)
 }
 
-export const okItem = (it: CtxItem, d: unknown, me?: string): Resolved => ({ ...it, status: 'ok', text: renderItem(it, d, me) })
+export function okItem(it: CtxItem, d: unknown, me?: string): Resolved {
+  const link = httpUrl((d as { link?: unknown } | null)?.link)
+  return { ...it, status: 'ok', text: renderItem(it, d, me), ...(link ? { link } : {}) }
+}
 export const badItem = (it: CtxItem, status: string, why: string): Resolved => ({ ...it, status: status === 'ok' ? 'source_error' : status, text: why })
 
 /** the prompt's context block; empty when the job gives none */
 export function contextSection(ws: Ws, rs: Resolved[]): string {
   if (!rs.length) return ''
-  return `## Context\n${rs.map((r) => `### ${KINDS[r.k].l} ${ctxLabel(ws, r)} (${ctxUnit(r)})${r.status === 'ok' ? '' : ' — unavailable'}\n${r.text}`).join('\n\n')}\n`
+  return `## Context\n${rs.map((r) => `### ${KINDS[r.k].l} ${ctxLabel(ws, r)} (${ctxUnit(r)})${r.status === 'ok' ? '' : ' — unavailable'}\n${r.link ? `Link: ${r.link}\n` : ''}${r.text}`).join('\n\n')}\n`
 }

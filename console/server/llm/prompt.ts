@@ -94,7 +94,7 @@ function resent(x: T.Ctx, j: Job, step: string) {
 }
 /** draft = how the session names what it hands in; remarks = where notes to the user go instead */
 const messageAlone = (by: string[], w: string, draft: string, remarks: string) =>
-  `- Once accepted, the draft is the message ${by.join(', ')} sends, word for word: ${draft} carries that message alone, in the language it goes out in, with nothing around it (no notes to ${w}, headings or separators). Remarks for ${w} go ${remarks}.`
+  `- Once accepted, the draft is the message ${by.join(', ')} sends, word for word: ${draft} carries that message alone, in the language it goes out in, with nothing around it (no notes to ${w}, headings or separators). Remarks for ${w} go ${remarks}. Links go on the names in the message itself (the visible text is the name), never as a list of bare URLs.`
 
 export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn = {}): string {
   const p = parts(x, j, step, q, o), w = who(o), by = sentBy(x, j, step)
@@ -113,6 +113,7 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: Prompt
       `- Write progress with the run tool journal(observed, changed, next) at meaningful points.`,
       `- Save files the step expects with add_artifact(name, content), or with add_artifact_file(path) for a file already under your working dir; images show on the page.`,
       ...(o.files ? [`- A source message lists the files it carries in files; save one with save_source_file(concept, id, file) when its content matters to the step, then read the copy under .source-files/<job id>/.`] : []),
+      LINKS_LINE,
       `- Finish by calling submit_draft(text) exactly once with the draft for ${w} to review. Without it the run counts as failed.`,
       NOT_DONE_LINE,
       ...(by.length ? [messageAlone(by, w, 'submit_draft', 'in journal()')] : []),
@@ -121,6 +122,12 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: Prompt
     ...p.user,
   ])
 }
+
+/** the evidence a draft names is a link where its URL is known, and never a guessed one */
+const LINKS_LINE = '- Before you submit, check each thing the draft names as evidence (a build, pipeline run, release or its failed stage or log, a PR, commit, work item, chat, mail or page). '
+  + 'Where you know its URL, write it as a Markdown link with the name as its text: [build 286944](url), not "build 286944" with the URL next to it or left out. '
+  + 'A URL you know is one you fetched while working, one the context or knowledge above gives, or one you build from a pattern a knowledge note gives. Never guess one. '
+  + 'Where you know no URL, leave the plain name.'
 
 /** a draft that only says in words that the step is not done is accepted as done; the outcome is what the console reads */
 const NOT_DONE_LINE = '- If the step is not finished, or a check or a test failed, call submit_draft with outcome not_done or failed, '
@@ -136,6 +143,7 @@ export function manualText(x: T.Ctx, j: Job, step: string, q: string, o: PromptI
       `- Everything above was read for this step just now: work from it.`,
       ...(o.images ? [`- [image N] in the text is the picture labelled [image N] before this text.`] : []),
       `- You never send anything to a source (no chat posts, mails, votes, comments or state changes): ${w} sends after review.`,
+      LINKS_LINE,
       `- Finish by calling submit_draft {id: "${j.id}", step: "${step}", output} on the work-console MCP server exactly once, with the draft for ${w} to review; files the step expects go in its artifacts as {name, content}.`,
       NOT_DONE_LINE,
       ...(by.length ? [messageAlone(by, w, "submit_draft's output", 'in this session, not in the draft')] : []),

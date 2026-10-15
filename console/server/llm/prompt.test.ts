@@ -100,6 +100,24 @@ test('a hand-made session on a step whose draft a later step sends is told to su
   assert.doesNotMatch(manualText(x, j, 'tr', 'go', {}), /word for word/)
 })
 
+test('a run and a hand-made session are told to link what the draft names, right before submitting, and never to guess a URL', () => {
+  const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
+  for (const t of [buildPrompt(x, j, 'tr', 'go', {}), manualText(x, j, 'tr', 'go', {})]) {
+    assert.match(t, /- Before you submit, check each thing the draft names as evidence \(a build, pipeline run, release .*PR, commit, work item, chat, mail or page\)/)
+    assert.match(t, /write it as a Markdown link with the name as its text: \[build 286944\]\(url\)/)
+    assert.match(t, /Never guess one\. Where you know no URL, leave the plain name\./)
+    const links = t.indexOf('- Before you submit'), submit = t.search(/- Finish by calling submit_draft/)
+    assert.ok(links > 0 && links < submit, 'the links line comes right before the submit line')
+  }
+})
+
+test('a step whose draft is sent is told to put links on the names in the message, not as bare URLs', () => {
+  const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
+  for (const t of [buildPrompt(x, j, 'dr', 'go', {}), manualText(x, j, 'dr', 'go', {})])
+    assert.match(t, /word for word.*Links go on the names in the message itself \(the visible text is the name\), never as a list of bare URLs\./)
+  assert.doesNotMatch(buildPrompt(x, j, 'tr', 'go', {}), /bare URLs/)
+})
+
 test('a run and a hand-made session are told to report a step that is not done, with return_to, instead of a draft that only says so', () => {
   const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
   for (const t of [buildPrompt(x, j, 'tr', 'go', {}), manualText(x, j, 'tr', 'go', {})]) {

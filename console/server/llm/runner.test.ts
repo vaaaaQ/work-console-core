@@ -416,6 +416,7 @@ const PROMPT = [
   '- You never send anything to a source (no chat posts, mails, votes, comments or state changes): the user sends after review.',
   '- Write progress with the run tool journal(observed, changed, next) at meaningful points.',
   '- Save files the step expects with add_artifact(name, content), or with add_artifact_file(path) for a file already under your working dir; images show on the page.',
+  '- Before you submit, check each thing the draft names as evidence (a build, pipeline run, release or its failed stage or log, a PR, commit, work item, chat, mail or page). Where you know its URL, write it as a Markdown link with the name as its text: [build 286944](url), not "build 286944" with the URL next to it or left out. A URL you know is one you fetched while working, one the context or knowledge above gives, or one you build from a pattern a knowledge note gives. Never guess one. Where you know no URL, leave the plain name.',
   '- Finish by calling submit_draft(text) exactly once with the draft for the user to review. Without it the run counts as failed.',
   '- If the step is not finished, or a check or a test failed, call submit_draft with outcome not_done or failed, and name in return_to the earlier step the job should go back to, if any (id or exact title), with why: accepting such a draft never marks the step done.',
   '',

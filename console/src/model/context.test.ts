@@ -86,6 +86,18 @@ test('the context section heads each item and marks the unreadable ones', () => 
   assert.equal(badItem(W, 'ok', 'empty').status, 'source_error')
 })
 
+test("an item keeps the reply's http(s) link and the section gives it first under the heading", () => {
+  const w = okItem(W, { title: 'Export', link: 'https://ci.example/acme/_workitems/edit/603' })
+  assert.equal(w.link, 'https://ci.example/acme/_workitems/edit/603')
+  assert.equal(contextSection('acme', [w]), '## Context\n### Work item ACME-603 (last 2 comments)\nLink: https://ci.example/acme/_workitems/edit/603\nWork item ACME-603: Export\n\nNo comments.\n')
+  for (const link of ['javascript:alert(1)', 'file:///c:/x', 'ftp://a.example/', 42, '', undefined]) {
+    const r = okItem(W, { link })
+    assert.equal('link' in r, false, `no link from ${String(link)}`)
+    assert.doesNotMatch(contextSection('acme', [r]), /Link:/)
+  }
+  assert.doesNotMatch(contextSection('acme', [badItem(W, 'signin_required', 'sign in')]), /Link:/)
+})
+
 /* ===== the job's list ===== */
 test('a new job gets its context from its key and its chat', () => {
   const both = freshJob(X, 'J-9010', { t: 'x', key: 'ACME-512', pb: 'action', prj: 'platform', ws: 'acme', chat: 'c4', chatName: 'Sam Rivera' })
