@@ -58,12 +58,12 @@ beforeEach(async () => {
   cdp.addTab('https://mail.example/inbox', { DATA: { mail: [mail('m1')], chat: [chat('c1')] } })
 })
 
-function make(o: { grants?: GrantsFn; browser?: BrowserStatus; tickMs?: number } = {}) {
+function make(o: { grants?: GrantsFn; browser?: BrowserStatus; tickMs?: number; packsDir?: string | string[] } = {}) {
   const bus = new Bus(), events: Ev[] = []
   bus.on((e) => events.push(e))
   const br = stubBrowser(cdp, o.browser)
   const src = localSource(CFG, {
-    bus, ws: 'w', grants: o.grants ?? grants(), docs: memDocs(), browser: br.b, packsDir: FIXTURE_PACKS, tickMs: o.tickMs ?? 20,
+    bus, ws: 'w', grants: o.grants ?? grants(), docs: memDocs(), browser: br.b, packsDir: o.packsDir ?? FIXTURE_PACKS, tickMs: o.tickMs ?? 20,
     runtime: { evalMs: 500, actMs: 500, settleMs: 10 },
   })
   live.push(src)
@@ -265,4 +265,16 @@ test("a granted pack's tabs open on its own hosts with grants.hosts empty", asyn
   const r = (await src.read(['work'])).work as { status: string }
   assert.equal(r.status, 'ok')
   assert.equal(src.status().packs.fixture, 'loaded')
+})
+
+test("a workspace pack's host that grants.hosts leaves out does not load and no tab opens; granted, it does", async () => {
+  const core = tempDir('packs')
+  const off = make({ grants: grants({ hosts: ['board.example'] }), packsDir: [core, FIXTURE_PACKS] }).src
+  const r = (await off.read(['work'])).work as { status: string; message: string }
+  assert.equal(r.status, 'source_error')
+  assert.match(r.message, /mail\.example is not granted/)
+  assert.equal(cdp.tabs.length, 2)
+  assert.equal(reads(board).length, 0)
+  const on = make({ packsDir: [core, FIXTURE_PACKS] }).src
+  assert.equal(((await on.read(['work'])).work as { status: string }).status, 'ok')
 })

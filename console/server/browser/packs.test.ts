@@ -111,6 +111,23 @@ test('a catalog reads core packs first, then the workspace ones; a workspace pac
   assert.deepEqual(r.problems, {})
 })
 
+test('a catalog entry from the first folder is core, one from a later folder is not', () => {
+  const core = dirWith(), ws = dirWith(() => {}, 'mine')
+  assert.deepEqual(catalog([core, ws]).map((e) => [e.name, e.core]), [['fixture', true], ['mine', false]])
+  assert.deepEqual(catalog(core).map((e) => e.core), [true])
+})
+
+test("a workspace pack's hosts still need grants.hosts; a core pack's do not", () => {
+  const core = tempDir('packs'), ws = dirWith()
+  const off = grantedPacks(grants({ hosts: ['board.example'] }), [core, ws])
+  assert.deepEqual(off.packs, [])
+  assert.deepEqual(off.problems, { fixture: 'mail.example is not granted' })
+  assert.deepEqual(grantedPacks(grants({ hosts: [] }), [core, ws]).problems, { fixture: 'board.example, mail.example are not granted' })
+  const on = grantedPacks(grants(), [core, ws])
+  assert.deepEqual([on.problems, on.packs.map((p) => [p.name, p.core])], [{}, [['fixture', false]]])
+  assert.equal(grantedPacks(grants({ hosts: [] }), FIXTURE_PACKS).packs[0].core, true)
+})
+
 test('a pack with catalog false is not listed but loads when granted; its guide is read', () => {
   const d = dirWith((p) => { p.catalog = false; p.guide = 'guide.md' })
   writeFileSync(join(d, 'fixture', 'guide.md'), 'Use bridge_get on work items.')

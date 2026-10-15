@@ -12,7 +12,7 @@ export { PACKS_DIR }
 const NAME = /^[a-z][a-z0-9-]{0,40}$/
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]'])
 
-/** hosts: only the hosts outside any pack (a pack's own come with it);
+/** hosts: a core pack's own come with it, so these are the hosts outside the core packs;
     acts: the actions a person may run here; absent = every action a granted pack declares;
     scopes: the ids each scoped pack serves; a scoped pack absent from it serves none */
 export type PackGrants = { packs: string[]; hosts: string[]; config: Record<string, Record<string, unknown>>; acts?: string[]; scopes?: Record<string, string[]> }
@@ -38,24 +38,26 @@ export const grantsFrom = (g: { packs: readonly string[]; hosts: readonly string
 
 export type LoadedPack = {
   name: string; zone: string; script: string; config: PackConfig
+  /** from the core packs folder: its hosts come with it; a workspace pack's need grants.hosts */
+  core: boolean
   tabs: Record<string, { match: RegExp; open: string; host: string }>
   hosts: string[]
   concepts: Record<string, { tab: string; interval: number; cap: number; scope?: string }>
   actions: Record<string, { tab: string; concept: string; scope?: string }>
 }
 
-export type CatalogEntry = { name: string; dir: string; manifest: PackManifest | null; guide: string; listed: boolean; problem?: string }
+export type CatalogEntry = { name: string; dir: string; manifest: PackManifest | null; guide: string; listed: boolean; core: boolean; problem?: string }
 const dirList = (d: string | readonly string[]) => (typeof d === 'string' ? [d] : [...d])
 /** the core packs, then a workspace's own: where the catalog is read */
 export const wsPackDirs = (ws: string, root = CONSOLE): string[] => [PACKS_DIR, join(root, 'workspaces', ws, 'packs')]
 
-/** every pack in dirs, in order; a name already taken by an earlier dir is a problem, never a shadow */
+/** every pack in dirs, in order (core = the first dir's); a name already taken by an earlier dir is a problem, never a shadow */
 export function catalog(dirs: string | readonly string[], schemas = SCHEMAS_DIR): CatalogEntry[] {
   const out: CatalogEntry[] = [], seen = new Map<string, string>(), has = validator(schemas).has
-  for (const root of dirList(dirs)) {
+  for (const [i, root] of dirList(dirs).entries()) {
     if (!existsSync(root)) continue
     for (const name of readdirSync(root).sort()) {
-      const dir = join(root, name), bad = (problem: string) => out.push({ name, dir, manifest: null, guide: '', listed: true, problem })
+      const dir = join(root, name), bad = (problem: string) => out.push({ name, dir, manifest: null, guide: '', listed: true, core: i === 0, problem })
       if (!existsSync(join(dir, 'pack.json'))) continue
       const first = seen.get(name)
       if (first !== undefined) { bad(`${name} is already a pack in ${first}; rename this one`); continue }
@@ -64,7 +66,7 @@ export function catalog(dirs: string | readonly string[], schemas = SCHEMAS_DIR)
       try {
         const m = readPack(dir, has)
         if (m.name !== name) throw new Error(`pack.json names ${m.name}, not ${name}`)
-        out.push({ name, dir, manifest: m, guide: m.guide ? readFileSync(join(dir, m.guide), 'utf8') : '', listed: m.catalog !== false })
+        out.push({ name, dir, manifest: m, guide: m.guide ? readFileSync(join(dir, m.guide), 'utf8') : '', listed: m.catalog !== false, core: i === 0 })
       } catch (e) { bad((e as Error).message) }
     }
   }
@@ -81,7 +83,11 @@ function loadOne(e: CatalogEntry & { manifest: PackManifest }, g: PackGrants): L
     if (u.protocol !== 'https:' && !(u.protocol === 'http:' && LOOPBACK.has(u.hostname))) throw new Error(`tabs.${t}.open: https only, or http on 127.0.0.1`)
     tabs[t] = { ...spec, host: u.hostname }
   }
-  return { name, zone: m.zone, script: readFileSync(join(e.dir, m.script), 'utf8'), config, tabs, hosts: r.hosts, concepts: { ...m.concepts }, actions: { ...(m.actions ?? {}) } }
+  if (!e.core) {
+    const off = [...new Set([...Object.values(tabs).map((t) => t.host), ...r.hosts])].filter((h) => !g.hosts.includes(h))
+    if (off.length) throw new Error(`${off.join(', ')} ${off.length > 1 ? 'are' : 'is'} not granted`)
+  }
+  return { name, core: e.core, zone: m.zone, script: readFileSync(join(e.dir, m.script), 'utf8'), config, tabs, hosts: r.hosts, concepts: { ...m.concepts }, actions: { ...(m.actions ?? {}) } }
 }
 
 /** the granted packs that load here; problems: why each other did not; elsewhere: granted packs that run off this PC */

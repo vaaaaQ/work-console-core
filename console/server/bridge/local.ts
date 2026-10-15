@@ -106,8 +106,8 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
   const browser: Browser | null = !packs.length ? null : o.browser
     ?? sharedBrowser(profile, () => edgeBrowser({ dir: profile, exe: typeof cfg.edgePath === 'string' && cfg.edgePath ? cfg.edgePath : undefined, headless: cfg.edgeHeadless === true }))
   const carrier = cdpCarrier(() => browser?.endpoint() ?? null)
-  // a pack's own hosts come with it; grants.hosts adds the ones outside any pack
-  const allowed = new Set([...g.hosts, ...packs.flatMap((p) => [...Object.values(p.tabs).map((t) => t.host), ...p.hosts])])
+  // a core pack's own hosts come with it; grants.hosts covers the rest, a workspace pack's included
+  const allowed = new Set([...g.hosts, ...packs.filter((p) => p.core).flatMap((p) => [...Object.values(p.tabs).map((t) => t.host), ...p.hosts])])
   const pool = new TabPool(carrier, (h) => allowed.has(h))
 
   const cs = new Map<string, Concept>(), rts = new Map<string, PackRuntime>(), down = new Map<string, string>()
