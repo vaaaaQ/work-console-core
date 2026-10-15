@@ -1,0 +1,12 @@
+{
+  "name": "talk",
+  "title": "Talk",
+  "about": "chats of a talk site",
+  "scopeAbout": "a chat id, as in the talk site's address",
+  "zone": "UTC",
+  "script": "talk.js",
+  "hosts": ["talk.example"],
+  "tabs": { "talk": { "match": "^https://talk\\.example/", "open": "https://talk.example/app" } },
+  "concepts": { "chat": { "tab": "talk", "interval": 1, "cap": 50, "scope": "id" } },
+  "actions": { "talk.post": { "tab": "talk", "concept": "chat", "scope": "chat" } }
+}

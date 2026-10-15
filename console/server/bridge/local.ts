@@ -9,7 +9,7 @@ import { configGrants, grantedPacks, PACKS_DIR } from '../browser/packs.ts'
 import type { GrantsFn, LoadedPack } from '../browser/packs.ts'
 import { pgDocs } from '../browser/pgdocs.ts'
 import { checkItems, Projection } from '../browser/projection.ts'
-import type { Change } from '../browser/projection.ts'
+import type { Change, Item } from '../browser/projection.ts'
 import { PackRuntime, SourceFail, Unknown, Watched } from '../browser/runtime.ts'
 import { SCHEMAS_DIR, validator } from '../browser/schema.ts'
 import { fileDocs, STATE, StateB } from '../browser/state.ts'
@@ -22,7 +22,7 @@ import { HttpError } from '../events.ts'
 import { actionsOf } from './actions.ts'
 import type { Bus } from '../events.ts'
 import type { Source, WsConfig } from '../workspace.ts'
-import type { ActReq, ActRes, ConceptReply } from './wire.ts'
+import type { ActReq, ActRes, ConceptReply, PackReply } from './wire.ts'
 
 /* The Bridge served from the console itself: A from the workspace's packs running in tabs of the console's own Edge,
    B kept here. A workspace opts in by returning localSource(cfg, o) from its source(); tokens never leave the tabs. */
@@ -31,8 +31,10 @@ import type { ActReq, ActRes, ConceptReply } from './wire.ts'
 export type LocalStatus = {
   browser: BrowserStatus; packs: Record<string, string>; tabs: { key: string; host: string; signin: boolean }[]; mcp: string | null; mcpError?: string
 }
+/** concepts: this pack's state per concept it serves; names: id to name from its chat items, to show scopes by name */
+export type PackState = { concepts: Record<string, PackReply>; names: Record<string, string> }
 /** actions: what the loaded packs declare, less what the grants leave out; mcp = it serves the run MCP once started */
-export type LocalSource = Source & { status(): LocalStatus; front(host: string): Promise<void>; actions(): ReadonlySet<string>; local: true; mcp: boolean }
+export type LocalSource = Source & { status(): LocalStatus; front(host: string): Promise<void>; actions(): ReadonlySet<string>; packStates(): Record<string, PackState>; local: true; mcp: boolean }
 export type LocalOptions = {
   bus: Bus; ws: string
   /** default: configGrants, the workspace config's packs, hosts, packConfig and acts */
@@ -56,8 +58,9 @@ export type LocalOptions = {
   backoffMs?: number[]
 }
 
-type Concept = {
-  name: string; pack: LoadedPack; rt: PackRuntime; tab: string; everyMs: number; cap: number; proj: Projection
+/** one pack's read of one concept */
+type Feed = {
+  concept: string; pack: LoadedPack; rt: PackRuntime; tab: string; everyMs: number; cap: number; proj: Projection
   nextAt: number; busy: Promise<void> | null; again: boolean; first: Promise<void>; settle: () => void
 }
 
@@ -110,24 +113,30 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
   const allowed = new Set([...g.hosts, ...packs.filter((p) => p.core).flatMap((p) => [...Object.values(p.tabs).map((t) => t.host), ...p.hosts])])
   const pool = new TabPool(carrier, (h) => allowed.has(h))
 
-  const cs = new Map<string, Concept>(), rts = new Map<string, PackRuntime>(), down = new Map<string, string>()
+  const cs = new Map<string, Feed[]>(), rts = new Map<string, PackRuntime>(), down = new Map<string, string>()
   for (const p of packs) {
     const rt = new PackRuntime(p, pool, carrier, { ...o.runtime, log })
     rts.set(p.name, rt)
-    for (const [name, spec] of Object.entries(p.concepts)) {
+    for (const [concept, spec] of Object.entries(p.concepts)) {
       let settle = () => {}
       const first = new Promise<void>((ok) => { settle = ok })
-      cs.set(name, { name, pack: p, rt, tab: spec.tab, everyMs: spec.interval * tickMs, cap: spec.cap, proj: new Projection(), nextAt: 0, busy: null, again: false, first, settle })
+      cs.set(concept, [...(cs.get(concept) ?? []), { concept, pack: p, rt, tab: spec.tab, everyMs: spec.interval * tickMs, cap: spec.cap, proj: new Projection(), nextAt: 0, busy: null, again: false, first, settle }])
     }
+  }
+  const feeds = () => [...cs.values()].flat()
+  const tagged = (f: Feed, items: readonly Item[]): Item[] => items.map((i) => ({ ...i, pack: f.pack.name }))
+  const packReply = (f: Feed): PackReply => {
+    const r = f.proj.reply()
+    return r.status === 'ok' ? { status: 'ok' } : { status: r.status, message: r.message, ...(r.host ? { host: r.host } : {}) }
   }
   for (const [name, problem] of Object.entries(problems))
     for (const c of declared(packsDir, name)) if (!cs.has(c) && !STATE.includes(c)) down.set(c, `pack ${name} did not load: ${problem}`)
 
   /** the ids a scoped pack serves; a pack the scopes leave out serves none */
   const scopeOf = (p: LoadedPack): ReadonlySet<string> => new Set(g.scopes?.[p.name] ?? [])
-  const conceptScope = (c: Concept) => {
-    const field = c.pack.concepts[c.name].scope
-    return field ? { field, ids: scopeOf(c.pack) } : null
+  const conceptScope = (f: Feed) => {
+    const field = f.pack.concepts[f.concept].scope
+    return field ? { field, ids: scopeOf(f.pack) } : null
   }
 
   const reset = (c: string) => { if (cs.has(c)) bus.emit({ kind: 'source', concept: c, upserts: [], removes: [], reset: true }) }
@@ -147,7 +156,7 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
 
   const concepts = (): Record<string, string> => {
     const out: Record<string, string> = {}
-    for (const [n, c] of cs) out[n] = c.proj.state === 'ready' ? 'ready' : c.proj.state
+    for (const [n, fs] of cs) out[n] = fs.some((f) => f.proj.state === 'ready') ? 'ready' : fs[0].proj.state
     for (const n of down.keys()) out[n] = 'source_error'
     for (const n of STATE) out[n] = b.ready ? 'ready' : 'warming_up'
     return out
@@ -159,49 +168,50 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
     bus.emit({ kind: 'bridge', state, concepts: cur, via: 'store', ...(state === 'ok' ? {} : { why: bWhy }) })
   }
   // chat's join sorts and caps the threads, so a chat change is re-read whole
-  const emitSource = (name: string, ch: Change) => {
-    if (name === 'chat') return reset('chat')
-    bus.emit({ kind: 'source', concept: name, upserts: name === 'mail' ? b.join('mail', ch.upserts) : ch.upserts, removes: ch.removes })
+  const emitSource = (f: Feed, ch: Change) => {
+    if (f.concept === 'chat') return reset('chat')
+    const up = tagged(f, ch.upserts)
+    bus.emit({ kind: 'source', concept: f.concept, upserts: f.concept === 'mail' ? b.join('mail', up) : up, removes: ch.removes })
   }
 
-  const poll = (c: Concept): Promise<void> => {
-    if (c.busy) { c.again = true; return c.busy }
-    c.busy = (async () => {
+  const poll = (f: Feed): Promise<void> => {
+    if (f.busy) { f.again = true; return f.busy }
+    f.busy = (async () => {
       try {
-        const sc = conceptScope(c), call = { verb: 'read', concept: c.name, watch: watched.snapshot() }
-        let raw = await c.rt.read(c.tab, sc ? { ...call, scope: [...sc.ids] } : call)
+        const sc = conceptScope(f), call = { verb: 'read', concept: f.concept, watch: watched.snapshot() }
+        let raw = await f.rt.read(f.tab, sc ? { ...call, scope: [...sc.ids] } : call)
         // the console's own filter: a pack that reads past its scope still serves nothing outside it
         if (sc && Array.isArray(raw)) raw = raw.filter((it) => inScope(sc.ids, (it as Record<string, unknown> | null)?.[sc.field]))
-        const items = checkItems(raw, c.cap, (it) => val.item(c.name, it))
-        const was = c.proj.state, ch = c.proj.apply(items)
-        if (ch) emitSource(c.name, ch)
-        if (was !== c.proj.state) emitBridge()
+        const items = checkItems(raw, f.cap, (it) => val.item(f.concept, it))
+        const was = f.proj.state, ch = f.proj.apply(items)
+        if (ch) emitSource(f, ch)
+        if (was !== f.proj.state) emitBridge()
       } catch (e) {
-        let f = e instanceof SourceFail ? e : new SourceFail('source_error', (e as Error).message)
+        let x = e instanceof SourceFail ? e : new SourceFail('source_error', (e as Error).message)
         const s = browser?.status()
-        if (s && s.state !== 'up') f = new SourceFail('source_unavailable', why(s))
-        if (c.proj.fail(f.code, f.message, f.host)) emitBridge()
-        if (f.code === 'rate_limited') c.nextAt = Date.now() + (f.retryAfter ?? 60) * 1000
+        if (s && s.state !== 'up') x = new SourceFail('source_unavailable', why(s))
+        if (f.proj.fail(x.code, x.message, x.host)) emitBridge()
+        if (x.code === 'rate_limited') f.nextAt = Date.now() + (x.retryAfter ?? 60) * 1000
       } finally {
-        c.nextAt = Math.max(c.nextAt, Date.now() + c.everyMs)
-        c.busy = null
-        c.settle()
-        if (c.again && running) { c.again = false; void poll(c) }
+        f.nextAt = Math.max(f.nextAt, Date.now() + f.everyMs)
+        f.busy = null
+        f.settle()
+        if (f.again && running) { f.again = false; void poll(f) }
       }
     })()
-    return c.busy
+    return f.busy
   }
   const tick = () => {
     if (!running || browser?.status().state !== 'up') return
     const t = Date.now()
-    for (const c of cs.values()) if (!c.busy && t >= c.nextAt) void poll(c)
+    for (const f of feeds()) if (!f.busy && t >= f.nextAt) void poll(f)
   }
   const onBrowser = (s: BrowserStatus) => {
     if (!running) return
     if (s.state === 'up') return tick()
     if (s.state !== 'unavailable') return
     let changed = false
-    for (const c of cs.values()) { changed = c.proj.fail('source_unavailable', why(s)) || changed; c.settle() }
+    for (const f of feeds()) { changed = f.proj.fail('source_unavailable', why(s)) || changed; f.settle() }
     if (changed) emitBridge()
   }
   const backoff = o.backoffMs ?? BACKOFF
@@ -225,8 +235,8 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
     if (s.state !== 'up') return err('source_unavailable', why(s))
     try {
       const data = await rts.get(p.name)!.act(spec.tab, { verb: 'act', action: a.action, actionId: a.actionId, args, ...(ids ? { scope: [...ids] } : {}) })
-      const c = cs.get(spec.concept)
-      if (c) void poll(c)
+      const f = cs.get(spec.concept)?.find((x) => x.pack === p)
+      if (f) void poll(f)
       return data != null ? { status: 'ok', result: data } : { status: 'ok' }
     } catch (e) {
       if (e instanceof SourceFail) return err(e.code, e.message)
@@ -258,35 +268,49 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
     why: () => (b.ready ? '' : bWhy),
     actions: () => actionsOf(packs, g.acts),
     concepts,
+    packStates() {
+      const out: Record<string, PackState> = {}
+      for (const f of feeds()) {
+        const st = (out[f.pack.name] ??= { concepts: {}, names: {} })
+        st.concepts[f.concept] = packReply(f)
+        if (f.concept === 'chat') for (const i of f.proj.items) if (typeof i.name === 'string') st.names[i.id] = i.name
+      }
+      return out
+    },
     async read(names) {
       const out: Record<string, ConceptReply> = {}
       await Promise.all(names.map(async (n) => {
         if (STATE.includes(n)) { out[n] = b.reply(n); return }
-        const c = cs.get(n)
-        if (!c) { out[n] = { status: 'source_error', message: down.get(n) ?? `no granted pack serves ${n}` }; return }
+        const fs = cs.get(n)
+        if (!fs) { out[n] = { status: 'source_error', message: down.get(n) ?? `no granted pack serves ${n}` }; return }
         const s = browser!.status().state
-        if (c.proj.state === 'warming_up' && running && (s === 'up' || s === 'starting')) await within(c.first, firstReadMs)
-        const r = c.proj.reply()
-        out[n] = r.status === 'ok' ? { status: 'ok', rev: r.rev, items: b.join(n, c.proj.items) } : r
+        if (running && (s === 'up' || s === 'starting')) await Promise.all(fs.filter((f) => f.proj.state === 'warming_up').map((f) => within(f.first, firstReadMs)))
+        const per = Object.fromEntries(fs.map((f) => [f.pack.name, packReply(f)]))
+        const ok = fs.filter((f) => f.proj.state === 'ready')
+        // rev sums every feed's, so it only grows while any one of them moves
+        const rev = fs.reduce((sum, f) => sum + f.proj.rev, 0)
+        out[n] = ok.length
+          ? { status: 'ok', rev, items: b.join(n, ok.flatMap((f) => tagged(f, f.proj.items))), packs: per }
+          : { ...fs[0].proj.reply(), packs: per }
       }))
       return out
     },
     async get(concept, id, cursor) {
       if (STATE.includes(concept)) return b.get(concept, id)
-      const c = cs.get(concept)
-      if (!c) return { status: 'source_error', message: down.get(concept) ?? `no granted pack serves ${concept}` }
-      const sc = conceptScope(c)
+      const f = cs.get(concept)?.[0]
+      if (!f) return { status: 'source_error', message: down.get(concept) ?? `no granted pack serves ${concept}` }
+      const sc = conceptScope(f)
       // an id field is checked as given; any other field through the item the scoped read kept
-      if (sc && !(sc.field === 'id' ? inScope(sc.ids, id) : c.proj.items.some((x) => (x as { id?: unknown }).id === id)))
-        return { status: 'out_of_scope', message: `${concept} ${id} is not in this workspace's scope for ${c.pack.name}` }
+      if (sc && !(sc.field === 'id' ? inScope(sc.ids, id) : f.proj.items.some((x) => (x as { id?: unknown }).id === id)))
+        return { status: 'out_of_scope', message: `${concept} ${id} is not in this workspace's scope for ${f.pack.name}` }
       const s = browser!.status()
       if (s.state !== 'up') return { status: 'source_unavailable', message: why(s) }
       try {
-        const v = await c.rt.read(c.tab, { verb: 'get', concept, id, ...(cursor ? { cursor } : {}), ...(sc ? { scope: [...sc.ids] } : {}) })
+        const v = await f.rt.read(f.tab, { verb: 'get', concept, id, ...(cursor ? { cursor } : {}), ...(sc ? { scope: [...sc.ids] } : {}) })
         const errors = val.get(concept, v)
         if (errors.length) return { status: 'source_error', message: `${concept} ${id}: ${errors.slice(0, 3).join('; ')}` }
         watched.add(concept, id)
-        return { status: 'ok', rev: c.proj.rev, items: v }
+        return { status: 'ok', rev: f.proj.rev, items: v }
       } catch (e) {
         if (!(e instanceof SourceFail)) throw e
         return { status: e.code, message: e.message, ...(e.host ? { host: e.host } : {}) } as ConceptReply
@@ -323,7 +347,7 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
       packs: { ...Object.fromEntries(packs.map((p) => [p.name, 'loaded'])), ...problems },
       tabs: pool.keys().map((key) => ({
         key, host: pool.host(key),
-        signin: [...cs.values()].some((c) => `${c.pack.name}/${c.tab}` === key && c.proj.state === 'signin_required'),
+        signin: feeds().some((f) => `${f.pack.name}/${f.tab}` === key && f.proj.state === 'signin_required'),
       })),
       mcp: served ? `${served.url}/mcp` : null,
       ...(mcpError ? { mcpError } : {}),

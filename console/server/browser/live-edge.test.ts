@@ -70,7 +70,7 @@ test('a live read from a local test page through a real Edge on a temp profile',
     assert.equal(src.concepts().work, 'ready', JSON.stringify({ browser: browser.status(), status: src.status(), read: await src.read(['work']) }))
     const r = await src.read(['work'])
     assert.equal(r.work.status, 'ok')
-    assert.deepEqual(r.work.items, items())
+    assert.deepEqual(r.work.items, items().map((i) => ({ ...i, pack: 'live' })))
     assert.deepEqual(src.status().tabs, [{ key: 'live/app', host: '127.0.0.1', signin: false }])
   } finally {
     src.stop()

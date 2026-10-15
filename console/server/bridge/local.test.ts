@@ -25,6 +25,8 @@ const mail = (id: string) => ({
 const chat = (id: string) => ({ id, name: id, kind: 'group', unread: 0, lastAt: '2026-10-08T10:00:00Z', lastFrom: null, lastPreview: null, link: `https://mail.example/c/${id}`, mentioned: false })
 
 const grants = (o: Partial<PackGrants> = {}): GrantsFn => () => ({ packs: ['fixture'], hosts: ['board.example', 'mail.example'], config: { fixture: { org: 'acme' } }, ...o })
+const both = (o: Partial<PackGrants> = {}) => grants({ packs: ['fixture', 'talk'], scopes: { talk: ['t1', 't2'] }, ...o })
+const talkChat = (id: string, name = id) => ({ ...chat(id), name, link: `https://talk.example/c/${id}` })
 const memDocs = (): StateDocs => ({ load: async () => ({ docs: {}, seq: 0 }), put: async () => {}, seq: async () => {} })
 const plain = (v: unknown) => JSON.parse(JSON.stringify(v))
 const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms))
@@ -86,7 +88,7 @@ test("a read of work gives the tab's items with a rev, waiting for the first pol
   board.ctx.MODE = { work: async () => { await sleep(100); return null } }
   const { src } = make()
   const r = (await src.read(['work'])).work
-  assert.deepEqual(plain(r), { status: 'ok', rev: 1, items: [work('W-1')] })
+  assert.deepEqual(plain(r), { status: 'ok', rev: 1, items: [{ ...work('W-1'), pack: 'fixture' }], packs: { fixture: { status: 'ok' } } })
   assert.equal(src.concepts().work, 'ready')
 })
 
@@ -277,4 +279,44 @@ test("a workspace pack's host that grants.hosts leaves out does not load and no 
   assert.equal(reads(board).length, 0)
   const on = make({ packsDir: [core, FIXTURE_PACKS] }).src
   assert.equal(((await on.read(['work'])).work as { status: string }).status, 'ok')
+})
+
+test('two packs on chat: a read merges both, each item says its pack, and each pack has its own state', async () => {
+  const talk = cdp.addTab('https://talk.example/app', { DATA: { chat: [talkChat('t1', 'Brothers'), talkChat('t9', 'Outside')] } })
+  const { src } = make({ grants: both() })
+  await until(() => src.concepts().chat === 'ready' && reads(talk).length > 0)
+  await until(() => src.packStates().talk?.concepts.chat?.status === 'ok')
+  const r = plain((await src.read(['chat'])).chat)
+  assert.equal(r.status, 'ok')
+  assert.deepEqual(r.items.map((i: { id: string; pack: string }) => `${i.pack}:${i.id}`).sort(), ['fixture:c1', 'talk:t1'])
+  assert.deepEqual(r.packs, { fixture: { status: 'ok' }, talk: { status: 'ok' } })
+  assert.deepEqual(src.packStates().talk.names, { t1: 'Brothers' })
+})
+
+test('two packs on chat, one signed out: the concept stays ok with the other, and the signed-out pack names its host', async () => {
+  cdp.addTab('https://talk.example/app', { MODE: { chat: { ok: false, code: 'unauthorized', message: 'signed out' } } })
+  const { src } = make({ grants: both() })
+  await until(() => src.packStates().talk?.concepts.chat?.status === 'signin_required')
+  const r = plain((await src.read(['chat'])).chat)
+  assert.equal(r.status, 'ok')
+  assert.deepEqual(r.items.map((i: { pack: string }) => i.pack), ['fixture'])
+  assert.deepEqual([r.packs.talk.status, r.packs.talk.host], ['signin_required', 'talk.example'])
+  assert.equal(src.concepts().chat, 'ready')
+})
+
+test('a concept whose every pack fails answers the first failure, with the per-pack states', async () => {
+  cdp.addTab('https://talk.example/app', { MODE: { chat: { ok: false, code: 'unauthorized', message: 'signed out' } } })
+  const { src } = make({ grants: both({ packs: ['talk'] }) })
+  await until(() => src.concepts().chat === 'signin_required')
+  const r = plain((await src.read(['chat'])).chat)
+  assert.equal(r.status, 'signin_required')
+  assert.equal(r.packs.talk.status, 'signin_required')
+})
+
+test('a source event of work carries the pack on each upsert', async () => {
+  const { src, events } = make()
+  await src.read(['work'])
+  board.ctx.DATA = { work: [work('W-1', 'changed')] }
+  await until(() => sources(events, 'work').some((e) => e.upserts.length === 1))
+  assert.equal(plain(sources(events, 'work').find((e) => e.upserts.length === 1)!.upserts[0]).pack, 'fixture')
 })
