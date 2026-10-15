@@ -11,6 +11,7 @@ import { isLocal } from '../bridge/local.ts'
 import { catalog, configGrants } from '../browser/packs.ts'
 import { applyPackChange, settingsWrite, viewsFor } from '../browser/catalogView.ts'
 import type { Ops } from '../agent/ops.ts'
+import type { PackChange } from '../../src/model/packs.ts'
 import { keep, withKept, withKeptNames } from '../bridge/kept.ts'
 import { GatewayError, READY } from '../bridge/wire.ts'
 import type { ActRes, ConceptReply } from '../bridge/wire.ts'
@@ -507,8 +508,15 @@ export function createApp(d: Deps) {
       const cat = catalog(s.packDirs), e = cat.find((x) => x.name === r.p[0])
       if (!e) throw new HttpError(404, 'not_found', `no pack ${r.p[0]}`)
       const b = await r.body()
-      const list = (v: unknown) => (Array.isArray(v) && v.every((x) => typeof x === 'string') ? v as string[] : undefined)
-      const ch = { ...(typeof b.on === 'boolean' ? { on: b.on } : {}), ...(list(b.scopes) ? { scopes: list(b.scopes) } : {}), ...(list(b.acts) ? { acts: list(b.acts) } : {}), ...(list(b.llmActs) ? { llmActs: list(b.llmActs) } : {}) }
+      const ch: PackChange = {}
+      if (b.on !== undefined) { if (typeof b.on !== 'boolean') throw new HttpError(400, 'bad_args', 'on is true or false'); ch.on = b.on }
+      for (const k of ['scopes', 'acts', 'llmActs'] as const) {
+        const v = b[k]
+        if (v === undefined) continue
+        if (!Array.isArray(v) || !v.every((x) => typeof x === 'string')) throw new HttpError(400, 'bad_args', `${k} is a list of names`)
+        ch[k] = v
+      }
+      if (!Object.keys(ch).length) throw new HttpError(400, 'bad_args', 'send on, scopes, acts or llmActs')
       const next = applyPackChange(s.grants, e, ch, cat, configGrants(s.cfg).config)
       if (!next) return { managed: true, packs: viewsFor(s) }
       const w = await settingsWrite(gw, s.id, next.grants, next.reason)

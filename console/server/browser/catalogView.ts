@@ -29,6 +29,13 @@ function stateOf(e: CatalogEntry, on: boolean, st: StatusIn): Pick<PackView, 'st
   return { state: bad.status, message: bad.message, ...(bad.host ? { host: bad.host } : {}) }
 }
 
+/** an mcp server as one line: its url, or its command with the args */
+export function mcpLine(c: Record<string, unknown> | undefined): string {
+  if (typeof c?.url === 'string') return c.url
+  const args = Array.isArray(c?.args) ? c.args.map(String) : []
+  return [typeof c?.command === 'string' ? c.command : '', ...args].filter(Boolean).join(' ')
+}
+
 export function packViews(cat: CatalogEntry[], g: GrantsLike, st: StatusIn): PackView[] {
   return cat.map((e, i) => {
     // a workspace copy of a core name is never the one that is on; a granted pack that fails to load is, with state error
@@ -41,7 +48,7 @@ export function packViews(cat: CatalogEntry[], g: GrantsLike, st: StatusIn): Pac
       scoped: Object.values(m?.concepts ?? {}).some((c) => !!(c as { scope?: string }).scope),
       scopes: (g.scopes?.[e.name] ?? []).map((id) => (names[id] ? { id, name: names[id] } : { id })),
       acts: actions.filter((a) => (g.acts ?? actions).includes(a)), llmActs: actions.filter((a) => (g.llmActs ?? []).includes(a)),
-      ...stateOf(e, on, st), ...(e.problem ? { problem: e.problem } : {}), guide: e.guide,
+      ...stateOf(e, on, st), ...(e.problem ? { problem: e.problem } : {}), ...(m && packKind(m) === 'mcp' ? { mcp: mcpLine(m.mcp) } : {}), guide: e.guide,
     }
   })
 }
@@ -56,13 +63,17 @@ export function viewsFor(s: { packDirs: string[]; grants: Grants | null; cfg: Ws
 const uniq = (xs: readonly string[]) => [...new Set(xs.map((x) => x.trim()).filter(Boolean))]
 const bad = (m: string) => new HttpError(400, 'bad_args', m)
 
-/** the hosts a pack's tabs and hosts name, with its settings put in; none when it does not render */
-export function packHosts(e: CatalogEntry, cfgs: Record<string, Record<string, unknown>> = {}): string[] {
+/** the hosts a pack's tabs and hosts name, with its settings put in; throws when its settings do not render */
+function hostsOrThrow(e: CatalogEntry, cfgs: Record<string, Record<string, unknown>>): string[] {
   if (!e.manifest) return []
-  try {
-    const r = renderPack(e.manifest, packConfig(e.manifest, cfgs[e.name]).config)
-    return uniq([...Object.values(r.tabs).map((t) => new URL(t.open).hostname), ...r.hosts])
-  } catch { return [] }
+  const { config, problems } = packConfig(e.manifest, cfgs[e.name])
+  if (problems.length) throw new Error(problems.join('; '))
+  const r = renderPack(e.manifest, config)
+  return uniq([...Object.values(r.tabs).map((t) => new URL(t.open).hostname), ...r.hosts])
+}
+/** the same, none when it does not render: a pack off or already granted needs no host to be worked out */
+export function packHosts(e: CatalogEntry, cfgs: Record<string, Record<string, unknown>> = {}): string[] {
+  try { return hostsOrThrow(e, cfgs) } catch { return [] }
 }
 
 /** the grants after one Settings change, and its reason; null when they are already so;
@@ -83,7 +94,11 @@ export function applyPackChange(g: Grants, e: CatalogEntry, ch: PackChange, cat:
   if (ch.on === true && !n.packs.includes(name)) {
     n = { ...n, packs: [...n.packs, name], acts: uniq([...n.acts, ...mine]) }
     if (packKind(m) === 'mcp') n.mcp = { ...n.mcp, [name]: structuredClone(m.mcp!) }
-    if (!e.core) n.hosts = uniq([...n.hosts, ...packHosts(e, cfgs)])
+    if (!e.core) {
+      let hs: string[]
+      try { hs = hostsOrThrow(e, cfgs) } catch (x) { throw bad(`${name}: fill its settings first (${(x as Error).message})`) }
+      n.hosts = uniq([...n.hosts, ...hs])
+    }
     why.push(`turn on ${name}`)
   }
   if (ch.on === false && n.packs.includes(name)) {

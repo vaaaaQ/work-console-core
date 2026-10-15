@@ -505,6 +505,30 @@ test('the packs catalog: a managed workspace lists it and a failed Settings writ
     assert.equal(bad.status, 409, bad.text); assert.equal(bad.json.error.code, 'grants_failed'); assert.match(bad.json.error.message, /git refused/)
     assert.deepEqual(seen, ['hold', 'release'])
     assert.equal((await call(lp, 'PUT', '/api/ws/acme/packs/nope', { body: { on: true } })).json.error.code, 'not_found')
+    for (const body of [{}, { scopes: 'x' }, { on: 'yes' }, { acts: [1] }, { other: true }]) {
+      const r = await call(lp, 'PUT', '/api/ws/acme/packs/m365-mail', { body })
+      assert.equal(r.status, 400, JSON.stringify(body)); assert.equal(r.json.error.code, 'bad_args')
+    }
+    assert.deepEqual(seen, ['hold', 'release'], 'a refused body writes nothing')
+  } finally { await stop() }
+})
+
+test('a Settings write that commits holds the restart until its reply has gone out', async () => {
+  const root = tempDir('root')
+  mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })
+  writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ packs: ['m365-mail'], hosts: [], acts: [] }))
+  const seen: string[] = []
+  const grantsWrite = {
+    ops: { acceptGrants: async (_ws: string, _g: unknown, why: string) => { seen.push(`commit ${why}`); return { ok: true as const, sha: 'abc', files: [], summary: why } } },
+    hold: () => { seen.push('hold'); return () => seen.push('release') },
+  }
+  const { lp, stop } = await setup({ root, grantsWrite })
+  try {
+    const r = await call(lp, 'PUT', '/api/ws/acme/packs/m365-mail', { body: { on: false } })
+    assert.equal(r.status, 200, r.text); assert.equal(r.json.managed, true)
+    assert.equal(r.json.packs.find((p: { name: string }) => p.name === 'm365-mail').on, false)
+    await until(() => seen.includes('release'))
+    assert.deepEqual(seen, ['hold', 'commit turn off m365-mail (Settings)', 'release'])
   } finally { await stop() }
 })
 

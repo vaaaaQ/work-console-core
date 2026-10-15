@@ -7,6 +7,8 @@ export interface PackView {
   concepts: string[]; actions: string[]; scoped: boolean; scopes: { id: string; name?: string }[]; acts: string[]; llmActs: string[]
   /** off · on · ok · warming_up · signin_required · error · another source state */
   state: string; message?: string; host?: string; problem?: string
+  /** an mcp pack: the server a click puts into the grants, as one line */
+  mcp?: string
   guide: string
 }
 export interface PackChange { on?: boolean; scopes?: string[]; acts?: string[]; llmActs?: string[] }

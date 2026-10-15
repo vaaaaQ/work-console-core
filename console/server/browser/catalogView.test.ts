@@ -87,3 +87,18 @@ test('a host another granted pack declares stays when a workspace pack goes off'
   const last = applyPackChange(down.grants, twin, { on: false }, [outside(), twin])!
   assert.deepEqual(last.grants.hosts, [])
 })
+
+test('a workspace pack whose settings leave its hosts unrendered cannot be turned on; a core pack can', () => {
+  const m = { ...entry('talk').manifest!, config: { site: { about: 'the site', required: true } }, hosts: ['{site}.example'] }
+  const ws = { ...entry('talk'), core: false, manifest: m }
+  assert.throws(() => applyPackChange(EMPTY_GRANTS, ws, { on: true }), /talk: fill its settings first \(config\.site: required\)/)
+  assert.deepEqual(applyPackChange(EMPTY_GRANTS, ws, { on: true }, [ws], { talk: { site: 'a' } })!.grants.hosts, ['talk.example', 'a.example'])
+  assert.deepEqual(applyPackChange(EMPTY_GRANTS, { ...ws, core: true }, { on: true })!.grants.hosts, [])
+})
+
+test('an mcp pack shows its server as one line', () => {
+  const base = entry('talk')
+  const mk = (name: string, mcp: Record<string, unknown>) => ({ ...base, name, manifest: { ...base.manifest!, name, kind: 'mcp' as const, mcp } })
+  const v = packViews([mk('stdio', { command: 'npx', args: ['-y', 'some-server'] }), mk('remote', { type: 'http', url: 'https://mcp.example/mcp' }), base], EMPTY_GRANTS, null)
+  assert.deepEqual([v[0].mcp, v[1].mcp, v[2].mcp], ['npx -y some-server', 'https://mcp.example/mcp', undefined])
+})
