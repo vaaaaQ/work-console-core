@@ -448,6 +448,22 @@ test('a concept reply keeps the state per pack, ready or not', async () => {
   } finally { await stop() }
 })
 
+test("an act by a local source's pack resolves a chat name only among that pack's chats", async () => {
+  const { lp, spaces, stop } = await setup({ one: true })
+  try {
+    const src = spaces.get('acme').source as unknown as Record<string, unknown>, acts: unknown[] = []
+    const items = [{ id: '19:a', name: 'Team Dev', pack: 'm365-teams' }, { id: 't1', name: 'Brothers', pack: 'telegram-web' }]
+    Object.assign(src, {
+      local: true, actionPack: (a: string) => (a === 'chat.post' ? 'm365-teams' : undefined),
+      read: async () => ({ chat: { status: 'ok', rev: 1, items } }), act: async (a: unknown) => { acts.push(a); return { status: 'ok' } },
+    })
+    const post = (chatName: string) => call(lp, 'POST', '/api/ws/acme/act', { body: { action: 'chat.post', args: { chatName, text: 'x' } } })
+    assert.equal((await post('Brothers')).json.error?.code, 'unknown_chat', "another pack's chat does not resolve")
+    assert.equal((await post('team dev')).status, 200)
+    assert.deepEqual((acts.at(-1) as { args: unknown }).args, { chat: '19:a', text: 'x' })
+  } finally { await stop() }
+})
+
 test("a managed workspace acts only through what its granted packs declare and its grants name", async () => {
   const root = tempDir('root')
   mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })

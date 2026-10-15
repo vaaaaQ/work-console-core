@@ -305,7 +305,9 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
       if (STATE.includes(concept)) return b.get(concept, id)
       const fs = cs.get(concept)
       if (!fs) return { status: 'source_error', message: down.get(concept) ?? `no granted pack serves ${concept}` }
-      const f = pack ? fs.find((x) => x.pack.name === pack) : fs.length === 1 ? fs[0] : undefined
+      // without a pack, the one feed that lists the id answers: ids kept in jobs carry no pack
+      const owners = pack || fs.length === 1 ? [] : fs.filter((x) => x.proj.items.some((i) => (i as { id?: unknown }).id === id))
+      const f = pack ? fs.find((x) => x.pack.name === pack) : fs.length === 1 ? fs[0] : owners.length === 1 ? owners[0] : undefined
       if (pack && !f) return { status: 'not_found', message: `no pack ${pack} serves ${concept}` }
       if (!f) return { status: 'ambiguous', message: `ambiguous: ${concept} served by ${fs.map((x) => x.pack.name).join(', ')}; give pack` }
       const sc = conceptScope(f)

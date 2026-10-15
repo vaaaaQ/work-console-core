@@ -297,13 +297,22 @@ test('get on a concept two packs serve needs pack; with it, the pack answers', a
   cdp.addTab('https://talk.example/app', { DATA: { chat: [talkChat('t1')] }, GETS: { chat: { t1: { messages: [], cursor: null } } } })
   const { src } = make({ grants: both() })
   await until(() => src.concepts().chat === 'ready')
-  assert.deepEqual(plain(await src.get('chat', 't1')), { status: 'ambiguous', message: 'ambiguous: chat served by fixture, talk; give pack' })
+  assert.deepEqual(plain(await src.get('chat', 'zz')), { status: 'ambiguous', message: 'ambiguous: chat served by fixture, talk; give pack' }, 'an id no pack lists')
   assert.deepEqual(plain(await src.get('chat', 't1', undefined, 'nope')), { status: 'not_found', message: 'no pack nope serves chat' })
   const r = plain(await src.get('chat', 't1', undefined, 'talk'))
   assert.deepEqual([r.status, r.items], ['ok', { messages: [], cursor: null }])
   assert.equal((await src.get('chat', 't9', undefined, 'talk')).status, 'out_of_scope')
   assert.equal(src.actionPack('talk.post'), 'talk')
   assert.equal(src.actionPack('chat.post'), undefined)
+})
+
+test('get without pack goes to the one pack that lists the id; an id both list is ambiguous', async () => {
+  cdp.addTab('https://talk.example/app', { DATA: { chat: [talkChat('t1'), talkChat('c1')] }, GETS: { chat: { t1: { messages: [], cursor: null } } } })
+  const { src } = make({ grants: both({ scopes: { talk: ['t1', 'c1'] } }) })
+  await until(() => src.concepts().chat === 'ready' && src.packStates().talk?.concepts.chat?.status === 'ok')
+  const r = plain(await src.get('chat', 't1'))
+  assert.deepEqual([r.status, r.items], ['ok', { messages: [], cursor: null }])
+  assert.equal((await src.get('chat', 'c1')).status, 'ambiguous')
 })
 
 test('two packs on chat, one signed out: the concept stays ok with the other, and the signed-out pack names its host', async () => {
