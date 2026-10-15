@@ -60,12 +60,12 @@ beforeEach(async () => {
   cdp.addTab('https://mail.example/inbox', { DATA: { mail: [mail('m1')], chat: [chat('c1')] } })
 })
 
-function make(o: { grants?: GrantsFn; browser?: BrowserStatus; tickMs?: number; packsDir?: string | string[] } = {}) {
+function make(o: { grants?: GrantsFn; browser?: BrowserStatus; tickMs?: number; packsDir?: string | string[]; firstReadMs?: number } = {}) {
   const bus = new Bus(), events: Ev[] = []
   bus.on((e) => events.push(e))
   const br = stubBrowser(cdp, o.browser)
   const src = localSource(CFG, {
-    bus, ws: 'w', grants: o.grants ?? grants(), docs: memDocs(), browser: br.b, packsDir: o.packsDir ?? FIXTURE_PACKS, tickMs: o.tickMs ?? 20,
+    bus, ws: 'w', grants: o.grants ?? grants(), docs: memDocs(), browser: br.b, packsDir: o.packsDir ?? FIXTURE_PACKS, tickMs: o.tickMs ?? 20, firstReadMs: o.firstReadMs,
     runtime: { evalMs: 500, actMs: 500, settleMs: 10 },
   })
   live.push(src)
@@ -319,4 +319,38 @@ test('a source event of work carries the pack on each upsert', async () => {
   board.ctx.DATA = { work: [work('W-1', 'changed')] }
   await until(() => sources(events, 'work').some((e) => e.upserts.length === 1))
   assert.equal(plain(sources(events, 'work').find((e) => e.upserts.length === 1)!.upserts[0]).pack, 'fixture')
+})
+
+test('one of two packs on chat signs out after a good read, then recovers: a chat event each way, and the read follows', async () => {
+  const talk = cdp.addTab('https://talk.example/app', { DATA: { chat: [talkChat('t1')] } })
+  const { src, events } = make({ grants: both() })
+  await until(() => src.packStates().talk?.concepts.chat?.status === 'ok')
+  await until(() => events.some((e) => e.kind === 'source' && e.concept === 'chat'))
+  const ids = async () => plain((await src.read(['chat'])).chat).items.map((i: { id: string }) => i.id).sort()
+  assert.deepEqual(await ids(), ['c1', 't1'])
+  await sleep(100)
+  let n = sources(events, 'chat').length
+  talk.ctx.MODE = { chat: { ok: false, code: 'unauthorized', message: 'signed out' } }
+  await until(() => src.packStates().talk.concepts.chat.status === 'signin_required')
+  await until(() => sources(events, 'chat').length > n)
+  assert.ok(sources(events, 'chat').slice(n).some((e) => e.reset))
+  assert.deepEqual(await ids(), ['c1'])
+  await sleep(100)
+  n = sources(events, 'chat').length
+  talk.ctx.MODE = {}
+  await until(() => src.packStates().talk.concepts.chat.status === 'ok')
+  await until(() => sources(events, 'chat').length > n)
+  assert.deepEqual(await ids(), ['c1', 't1'])
+})
+
+test('every pack of a concept failing or warming: the answer is the first one past warming_up, with the summed rev', async () => {
+  const mailTab = cdp.tabs.find((t) => t.url.startsWith('https://mail.example/'))!
+  mailTab.ctx.MODE = { chat: async () => { await sleep(300); return null } }
+  cdp.addTab('https://talk.example/app', { MODE: { chat: { ok: false, code: 'unauthorized', message: 'signed out' } } })
+  const { src } = make({ grants: both(), firstReadMs: 50 })
+  await until(() => src.packStates().talk?.concepts.chat?.status === 'signin_required')
+  const r = plain((await src.read(['chat'])).chat)
+  assert.equal(r.status, 'signin_required')
+  assert.deepEqual([r.packs.fixture.status, r.packs.talk.status], ['warming_up', 'signin_required'])
+  assert.equal(typeof r.rev, 'number')
 })

@@ -174,9 +174,13 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
     bus.emit({ kind: 'source', concept: f.concept, upserts: f.concept === 'mail' ? b.join('mail', up) : up, removes: ch.removes })
   }
 
+  // a concept several packs serve: which of them are ready decides what a read lists
+  const readyKey = (concept: string) => (cs.get(concept) ?? []).filter((x) => x.proj.state === 'ready').map((x) => x.pack.name).join()
+
   const poll = (f: Feed): Promise<void> => {
     if (f.busy) { f.again = true; return f.busy }
     f.busy = (async () => {
+      const before = readyKey(f.concept)
       try {
         const sc = conceptScope(f), call = { verb: 'read', concept: f.concept, watch: watched.snapshot() }
         let raw = await f.rt.read(f.tab, sc ? { ...call, scope: [...sc.ids] } : call)
@@ -193,6 +197,8 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
         if (f.proj.fail(x.code, x.message, x.host)) emitBridge()
         if (x.code === 'rate_limited') f.nextAt = Date.now() + (x.retryAfter ?? 60) * 1000
       } finally {
+        // one pack of a shared concept going or coming back changes the merged list without a delta: listeners re-read
+        if ((cs.get(f.concept)?.length ?? 0) > 1 && readyKey(f.concept) !== before) reset(f.concept)
         f.nextAt = Math.max(f.nextAt, Date.now() + f.everyMs)
         f.busy = null
         f.settle()
@@ -291,7 +297,7 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
         const rev = fs.reduce((sum, f) => sum + f.proj.rev, 0)
         out[n] = ok.length
           ? { status: 'ok', rev, items: b.join(n, ok.flatMap((f) => tagged(f, f.proj.items))), packs: per }
-          : { ...fs[0].proj.reply(), packs: per }
+          : { ...(fs.find((f) => f.proj.state !== 'warming_up') ?? fs[0]).proj.reply(), rev, packs: per }
       }))
       return out
     },
