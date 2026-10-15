@@ -333,7 +333,9 @@ export function createApp(d: Deps) {
     const chats = async () => {
       const c = (await s.source.read(['chat'])).chat
       const items = READY.has(c?.status) && Array.isArray(c.items) ? (c.items as { id: string; name: string; pack?: string }[]) : []
-      listed = withKeptNames(chatsOfPack(items, owner), await s.store.marks().catch(() => ({})))
+      const mine = chatsOfPack(items, owner), others = new Set(items.filter((i) => !mine.includes(i)).map((i) => i.id))
+      // a kept chat carries no pack: one that another pack's feed lists is not this pack's to resolve
+      listed = withKeptNames(mine, await s.store.marks().catch(() => ({}))).filter((c) => mine.some((m) => m.id === c.id) || !others.has(c.id))
       return listed
     }
     const a = await resolveAct(b as { action: string; actionId?: string; args?: Record<string, unknown> }, chats, s.acts)

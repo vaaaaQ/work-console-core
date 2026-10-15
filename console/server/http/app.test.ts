@@ -461,6 +461,12 @@ test("an act by a local source's pack resolves a chat name only among that pack'
     assert.equal((await post('Brothers')).json.error?.code, 'unknown_chat', "another pack's chat does not resolve")
     assert.equal((await post('team dev')).status, 200)
     assert.deepEqual((acts.at(-1) as { args: unknown }).args, { chat: '19:a', text: 'x' })
+    // kept chats carry no pack: another pack's kept chat stays out, one no feed lists any more still resolves
+    const s = spaces.get('acme')
+    await s.store.putMark('chat:t1', { kept: true, name: 'Brothers' }); await s.store.putMark('chat:gone', { kept: true, name: 'Old Chat' })
+    assert.equal((await post('Brothers')).json.error?.code, 'unknown_chat', "another pack's kept chat does not resolve")
+    assert.equal((await post('old chat')).status, 200)
+    assert.deepEqual((acts.at(-1) as { args: unknown }).args, { chat: 'gone', text: 'x' })
   } finally { await stop() }
 })
 
