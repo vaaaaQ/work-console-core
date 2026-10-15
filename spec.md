@@ -147,7 +147,6 @@ separate commit in the IAEA repo.
 - The IAEA pattern note takes org and project from a real IAEA run's reply.
 - The rule in A applies to every run, not only message steps.
 - Revise rounds keep the rule from the session's first prompt; `replyPrompt` does not change.
-
 - The Artifacts panel starts with two groups (Input, Produced), not tabs.
 - On IAEA, sending goes, as far as Valery knows, through the pack he named "Remont Agent" (written as heard, perhaps a
   remote-agent pack). It is not in this core: nothing here is named like it. Build checks it on iaea-pc first.
