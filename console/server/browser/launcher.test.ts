@@ -2,7 +2,7 @@ import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { edgeBrowser, findEdge, holdsProfile, keepBrowsers, parsePolicy, sharedBrowser } from './launcher.ts'
+import { edgeBrowser, findEdge, holdsProfile, keepBrowsers, launchArgs, parsePolicy, sharedBrowser } from './launcher.ts'
 import type { Browser, BrowserStatus } from './launcher.ts'
 import { tempDir } from '../testdirs.ts'
 
@@ -44,11 +44,19 @@ test("start launches Edge on port 0 with the console's own profile, scrubs secre
     assert.ok(r.args.includes(`--user-data-dir=${dir}`))
     assert.ok(r.args.includes('--remote-debugging-port=0'))
     assert.equal(r.args.at(-1), 'about:blank')
+    // a window covered by others is marked hidden by Windows and stops rendering: Telegram Web K never boots there
+    for (const a of ['--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling', '--disable-features=CalculateNativeWinOcclusion']) assert.ok(r.args.includes(a), a)
     assert.ok(r.env.includes('WC_PLAIN'))
     assert.ok(!r.env.includes('MY_TOKEN') && !r.env.includes('AZURE_CLIENT_ID'))
   } finally { await b.stop() }
   assert.equal(b.status().state, 'off')
   assert.equal(b.endpoint(), null)
+})
+
+test('launchArgs merges every --disable-features into one switch, the added features last', () => {
+  assert.deepEqual(launchArgs(['a', '--disable-features=X,Y', 'b', '--disable-features=Y,Z'], ['W']), ['a', 'b', '--disable-features=X,Y,Z,W'])
+  assert.deepEqual(launchArgs(['a'], []), ['a'])
+  assert.deepEqual(launchArgs(['--disable-features='], ['W']), ['--disable-features=W'])
 })
 
 test('a second browser on a live profile reattaches without launching; only the launcher stops that Edge', async () => {

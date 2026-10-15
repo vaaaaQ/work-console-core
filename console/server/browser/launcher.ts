@@ -34,6 +34,21 @@ export type EdgeOptions = {
 const MISSES = 3, MAX_RESTARTS = 3, WINDOW = 10 * 60_000
 const SECRET = new Set(['SECRET', 'TOKEN', 'PAT', 'PASSWORD', 'PWD', 'KEY', 'CONNECTION', 'CREDENTIAL'])
 const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms))
+/** a covered or minimized window keeps rendering and running timers: without these Windows marks it hidden and
+    a page such as Telegram Web K never finishes booting */
+const AWAKE = ['--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling']
+const AWAKE_OFF = ['CalculateNativeWinOcclusion']
+
+/** the args with every --disable-features merged into one switch, the given features added, so none is lost to another */
+export function launchArgs(args: string[], off: string[]): string[] {
+  const p = '--disable-features=', feats = new Set<string>(), rest: string[] = []
+  for (const a of args) {
+    if (a.startsWith(p)) for (const f of a.slice(p.length).split(',')) { if (f) feats.add(f) }
+    else rest.push(a)
+  }
+  for (const f of off) feats.add(f)
+  return feats.size ? [...rest, p + [...feats].join(',')] : rest
+}
 
 /** the given path, else an installed Edge; null = none */
 export function findEdge(path?: string | null): string | null {
@@ -103,7 +118,7 @@ export function edgeBrowser(o: EdgeOptions): Browser {
     if (child) await kill(child)
     mkdirSync(dir, { recursive: true })
     try { unlinkSync(portFile) } catch { /* none */ }
-    const args = [...(o.args ?? []), `--user-data-dir=${dir}`, '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check', ...(o.headless ? ['--headless=new'] : []), 'about:blank']
+    const args = [...launchArgs([...(o.args ?? []), ...AWAKE], AWAKE_OFF), `--user-data-dir=${dir}`, '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check', ...(o.headless ? ['--headless=new'] : []), 'about:blank']
     const c = spawn(o.exe as string, args, { env: scrub(o.env ?? process.env), detached: true, stdio: 'ignore', windowsHide: false })
     c.on('error', () => {})
     c.unref()
