@@ -217,8 +217,8 @@ export const packs = (ws: string) => wsCall<{ managed: boolean; packs: PackView[
 /** what a scoped pack could serve, read in its tab; only Settings asks */
 export const packCandidates = async (ws: string, name: string) =>
   (await wsCall<{ candidates: { id: string; name: string }[] }>(ws, 'GET', `/packs/${enc(name)}/candidates`, undefined, 30000)).candidates
-/** one Settings change: a grants.json commit, then the console restarts */
-export const putPack = (ws: string, name: string, ch: PackChange) => wsCall<{ managed: boolean; packs: PackView[] }>(ws, 'PUT', `/packs/${enc(name)}`, ch, 60000)
+/** one Settings change: a grants.json commit, then the console restarts (restart false = nothing changed, no restart) */
+export const putPack = (ws: string, name: string, ch: PackChange) => wsCall<{ managed: boolean; restart: boolean; packs: PackView[] }>(ws, 'PUT', `/packs/${enc(name)}`, ch, 60000)
 export type Person = { name: string; mail: string; title: string | null }
 /** people whose name or mail has q in it: the directory's, or else those the source ranks from chats, mail and meetings */
 export const people = async (ws: string, q: string, signal?: AbortSignal) =>

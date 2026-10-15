@@ -34,6 +34,7 @@ export function Packs({ ws }: { ws: string }) {
       const r = await api.putPack(ws, p.name, ch)
       if (gen.current !== my) return true
       setGot(r)
+      if (!r.restart) return true
       toast('Saved; the console restarts to apply it')
       // the old process may still answer until the restart: show the PUT result, and trust a GET only after one failed
       let down = false

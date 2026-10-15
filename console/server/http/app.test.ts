@@ -535,6 +535,12 @@ test('a Settings write that commits holds the restart until its reply has gone o
     assert.equal(r.json.packs.find((p: { name: string }) => p.name === 'm365-mail').on, false)
     await until(() => seen.includes('release'))
     assert.deepEqual(seen, ['hold', 'commit turn off m365-mail (Settings)', 'release'])
+    assert.equal(r.json.restart, true)
+    // a change the grants already hold writes nothing and says no restart follows
+    const same = await call(lp, 'PUT', '/api/ws/acme/packs/m365-mail', { body: { on: true } })
+    assert.equal(same.status, 200, same.text); assert.equal(same.json.restart, false)
+    assert.equal(same.json.packs.find((p: { name: string }) => p.name === 'm365-mail').on, true)
+    assert.deepEqual(seen, ['hold', 'commit turn off m365-mail (Settings)', 'release'])
   } finally { await stop() }
 })
 

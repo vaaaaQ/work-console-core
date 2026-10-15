@@ -520,12 +520,13 @@ export function createApp(d: Deps) {
       }
       if (!Object.keys(ch).length) throw new HttpError(400, 'bad_args', 'send on, scopes, acts or llmActs')
       const next = applyPackChange(s.grants, e, ch, cat, configGrants(s.cfg).config)
-      if (!next) return { managed: true, packs: viewsFor(s) }
+      // restart: whether the console restarts to apply it; false = the grants already held the change
+      if (!next) return { managed: true, restart: false, packs: viewsFor(s) }
       const w = await settingsWrite(gw, s.id, next.grants, next.reason)
       // the restart waits for this reply to go out
       r.res.once('finish', w.done); r.res.once('close', w.done)
       if (!w.applied.ok) { w.done(); throw new HttpError(409, 'grants_failed', [w.applied.error, ...(w.applied.failures ?? [])].join('\n')) }
-      return { managed: true, packs: viewsFor({ ...s, grants: next.grants }) }
+      return { managed: true, restart: true, packs: viewsFor({ ...s, grants: next.grants }) }
     }],
     ['GET', /^\/sources$/, (r, s) => sources(s, (r.q.get('concepts') || 'chat,mail,cal').split(',').map((x) => x.trim()).filter(Boolean))],
     ['GET', /^\/sources\/([^/]+)\/([^/]+)$/, async (r, s) => ({ item: await item(s, r.p[0], r.p[1], r.q.get('cursor') || undefined, r.q.get('pack') || undefined) })],
