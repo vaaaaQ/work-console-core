@@ -55,44 +55,89 @@ Without B, the J-0006 case (the job's own release or PR given as context) still 
 
 ### C. URL patterns per workspace (knowledge, not code)
 
-A workspace knowledge note, proposed through `knowledge_propose` for the IAEA workspace, not core: "ADO link
-patterns", with `{org}/{project}` verified against a link the pack returned:
+A knowledge note for the IAEA workspace, "ADO link patterns", proposed through `knowledge_propose` (not core).
+As Valery decided, Build takes `{org}/{project}` (and the release `environmentId` form) from the `link` a real IAEA
+run's ADO reply returned, and from nothing else:
 `_build/results?buildId={id}` (plus `&view=logs&j=…` for a log only when it was read),
 `_releaseProgress?releaseId={r}&_a=release-environment-logs&environmentId={e}`, `_git/{repo}/pullrequest/{id}`,
 `_git/{repo}/commit/{sha}`, `_workitems/edit/{id}`. The rule in A points at "a pattern a knowledge note gives". The
 core stays free of any workplace name, and a run builds links only from patterns that someone verified.
 
-### D. Delivery (decision needed, see Q1)
+### D. Delivery: links survive the send (in this job)
 
-The core's Teams and mail acts send plain text, so a link put on a name reaches the reader only through copy from the
-page. My proposal is a small, separate pack change: `chat.post` and `mail.send` turn `[text](http…)` into `<a href>`,
-escape everything else, and send `html` only when the text holds such a link. Plain messages go out exactly as today.
-Work item comments get the same conversion. PR comments stay Markdown.
+Today the core's Teams and mail acts send plain text, so a link put on a name arrives as literal `[name](url)`.
+
+- A helper in the packs, `mdLinks(text)`, finds `[text](https://…)` (also `http:` and `mailto:`). When there is
+  none, it returns null and the act sends exactly what it sends today. When there is one, it returns HTML: each link
+  becomes `<a href="url">text</a>`, every other character is escaped (`& < > "`), and line breaks become `<br>`.
+  Nothing else in Markdown is converted, so `**` stays as it is today. `[x](javascript:…)` stays as text.
+- `m365-teams` `chat.post`: `contentType: 'html'` with that HTML when there are links.
+- `m365-mail` `mail.send` (a new mail and a reply): `contentType: 'HTML'` the same way.
+- `azure-devops` `work.comment` (work item comments are HTML): the same conversion. `review.comment` (PR threads
+  are Markdown) stays as it is.
+- Packs load as single files in the tab, so the helper is copied into each one. Build checks whether they can share
+  one file instead. Nothing changes in `/api/act`, the bridge or the gateway protocol: the act still carries `text`.
+
+**How to check whether IAEA sends through the pack.** An act goes page → `/api/act` → the workspace's source → the
+pack that declares the action (`server/bridge/actions.ts`, `actionPacks`). So, on iaea-pc, in the IAEA consumer's console:
+
+1. `console/workspaces/iaea/server.ts`: its `source`. A gateway URL means the gateway's packs; loaded packs mean `packs/`.
+2. The workspace's `grants.json` → `packs`: which pack names are granted. Then, in `packs/<name>/` (or the gateway's
+   pack dir), which manifest declares `chat.post`. If it is the core's `m365-teams`, D covers it. If it is a pack of
+   IAEA's own, that pack needs the same `mdLinks` change, in the IAEA repo.
+3. `console/workspaces/iaea/ui.tsx`: whether a page-side act handler sends Teams messages some other way.
+
+Build does this check first, from an iaea-pc session, and writes the answer in the journal.
+
+### E. Plain web links in context, shown as artifacts you can open (added by Valery, 2026-10-15)
+
+Today a context item can only be a work item, chat, mail or note (`CtxKind`). A login page or any other site cannot go in.
+
+- **A new context kind `link`:** `{k: 'link', id: <http(s) URL>, name?: label}`. `ctxId` accepts only http(s) URLs
+  (no `javascript:` or `file:`). The console never fetches the URL, through the bridge or any other way. A run gets the
+  label and the URL (`### Link <name>` + `Link: <url>`), not the page. A run in a workspace with the runs' browser on
+  may open it there, within that browser's allowlist. No new reading path.
+- **Adding one:** on the page, the job's Context editor (`views/Context.tsx`, `actions/newjob.tsx`) gets "Link" next
+  to work/chat/mail/note, with a URL field and an optional label. When the job builder (`server/llm/builder.ts`)
+  gets a URL in the user's text, it puts it in `context` as a `link` item.
+- **In a playbook:** a playbook file (`PbFile`, `src/model/pbFormat.ts`) gets an optional `links: [{name, url}]` for
+  what every job of that kind needs, such as a login page. A job created from the playbook starts with those links in
+  its context. The builder's new-playbook form (`npb`) can fill them in.
+- **As artifacts you can open:** each link of the job (its own and its playbook's) shows in the step's artifact list
+  as an entry that opens the site in a new tab (`target=_blank`, `rel=noopener`). It does not open in the artifact
+  viewer, which fetches files from `/api/artifacts`. These entries come from the context, not from the `artifact` op,
+  so a run cannot add an external link through `add_artifact`, which keeps the "never guess a URL" rule.
 
 ## Then
 
 Commit on job/ad-0013, merge to the core, and sync the IAEA consumer with `sync-core.mjs` (`work-console: core <sha>`).
-`core-lock.test.ts` stays green because only core files change there.
+`core-lock.test.ts` stays green because only core files change there. An IAEA-own pack change, if Q7 finds one, is a
+separate commit in the IAEA repo.
 
 ## How it will be proven
 
 | What | Proof |
 |---|---|
-| The rule is in the prompt | `runner.test.ts` `PROMPT` pin gets the `LINKS_LINE` line in its place; `prompt.test.ts` asserts it in `manualText` as well, and the `messageAlone` clause only for a step whose draft is sent |
-| Context links | `context.test.ts`: an `okItem` with `link: 'https://ci.example/…'` renders `Link: https://ci.example/…` under its heading; a non-http link and a missing one render nothing |
-| No regressions | `npm test`, `npm run typecheck`, `node --test "packs/**/test/*.test.mjs"` |
-| D (if accepted) | pack tests: a text with `[x](https://a.example)` posts `contentType: 'html'` with `<a href="https://a.example">x</a>` and escaped `<`/`&`; a text without links posts `text`, exactly as today |
-| Done-when, live | After the sync, a fresh IAEA run that reports a build, release or PR (re-ask the J-0006 kind of step). Its draft shows each of them as a working link on the page without anyone asking, and I quote the draft and open one link of each kind |
+| The rule (A) | `runner.test.ts` `PROMPT` pin gets the `LINKS_LINE` line in its place; `prompt.test.ts` asserts it in `manualText` as well, and the `messageAlone` clause only for a step whose draft is sent |
+| Context links (B) | `context.test.ts`: an `okItem` with `link: 'https://ci.example/…'` renders `Link: https://ci.example/…` under its heading; a non-http link and a missing one render nothing |
+| Delivery (D) | pack tests: a text with `[x](https://a.example)` posts `contentType: 'html'` with `<a href="https://a.example">x</a>` and escaped `<`/`&`; a text without links posts exactly what it posts today (Teams, mail send and reply, ADO work comment); `[x](javascript:…)` stays as text |
+| Link context (E) | `transitions.test.ts`: `ctxAdd` with `k: 'link'` takes `https://login.example/` and refuses `javascript:` and `file:`; `prompt.test.ts`: the item renders its label and URL in Context; `pbFormat.test.ts`: a playbook's `links` reach a new job's context; `builder.test.ts`: a URL in the user's text becomes a `link` item; page test or smoke: the artifact entry has `href` = the URL and `target=_blank` |
+| No regressions | `npm test`, `npm run typecheck`, `npm run build && npm run smoke`, `node --test "packs/**/test/*.test.mjs"` |
+| Done-when, live | After the sync, a fresh IAEA run that reports a build, release or PR (the J-0006 kind of step). Its draft shows each of them as a working link without anyone asking; I quote the draft and open one link of each kind. If D covers IAEA's sending pack, a Teams message Valery sends shows the name as a link (Valery sends; I don't). A job with a login-page link in its context shows it as an artifact that opens the page |
+
+## Decided (Valery, 2026-10-15)
+
+- D is part of this job.
+- The IAEA pattern note takes org and project from a real IAEA run's reply.
+- The rule in A applies to every run, not only message steps.
+- Revise rounds keep the rule from the session's first prompt; `replyPrompt` does not change.
 
 ## Open questions (notes)
 
-- **Q1: Delivery (D).** Is D part of this job, or a follow-up? Without it, the "link on the name" requirement for an
-  outgoing Teams message holds only when Valery copies the message from the page. Does IAEA post through the core
-  `m365-teams` pack, or through its own? I could not read the iaea-pc console from here.
-- **Q2: The IAEA pattern note.** I can verify `{org}/{project}` and the release `environmentId` only from a link the
-  IAEA ADO pack returned. Should Build propose the note from a real IAEA run's reply, or do you have the org URL to put
-  in now?
-- **Q3: Wording placement.** One line in How to work for every run, including steps with no outgoing message, such as
-  an analysis like this one. Links there help too, so I would not limit it to message steps.
-- **Q4: Revise rounds.** The rule is in the session's first prompt, so a `revise` reply in the same session keeps it.
-  A run that is restarted (not resumed) gets it again from `buildPrompt`. I see nothing to add to `replyPrompt`.
+- **Q5: Job or playbook level for E?** I read "when creating a playbook" as both: a playbook can carry standard links
+  (the login page), and a job can add its own. If you meant only one of the two, I drop the other half.
+- **Q6: Which step shows the link artifacts?** I propose the current step, so they move along with the job. The
+  alternative is to pin them to the first step.
+- **Q7: IAEA's sending pack.** Answered by the check in D, which Build does first from iaea-pc. If IAEA has its own
+  Teams pack, its change lands in the IAEA repo.
+
