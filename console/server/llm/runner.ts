@@ -9,7 +9,7 @@ import { INTENTS } from '../../src/model/types.ts'
 import type { Cmd, DraftReport, Job, RunIntent, RunRec, Ws } from '../../src/model/types.ts'
 import { HttpError, downError } from '../events.ts'
 import type { Bus, Via } from '../events.ts'
-import type { ActReq, ActRes } from '../bridge/wire.ts'
+import type { ActReq, ActRes, ConceptReply } from '../bridge/wire.ts'
 import type { Jobs } from '../jobs/jobs.ts'
 import type { Notes } from '../knowledge/notes.ts'
 import type { Store } from '../store/port.ts'
@@ -31,8 +31,13 @@ const FEED_MAX = 200
 const FILE_MAX = 20 << 20
 /** the most jobs one run may create */
 const JOBS_MAX = 5, ACTS_MAX = 10
+/** the most source files one run saves */
+const FILES_MAX = 100
+const sizeText = (n: number) => (n < 1 << 20 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / (1 << 20)).toFixed(1)} MB`)
 /** the acts a workspace lets its runs call themselves, and the source that runs them under its grants and scopes */
 export type RunActs = { allowed: readonly string[]; act(a: ActReq): Promise<ActRes> }
+/** a file a source item carries, from the workspace's local source: {name, mime, size, base64} on ok */
+export type RunFiles = (concept: string, id: string, file: string, pack?: string) => Promise<ConceptReply>
 /** files a run's request to add to the grants; by = job/step; what came of it, in a line */
 export type RunAccess = (add: unknown, reason: string, by: string) => Promise<string>
 /** the most requests one run files */
@@ -77,6 +82,7 @@ export class Runner {
   private acts?: RunActs
   private sources?: () => string
   private access?: RunAccess
+  private files?: RunFiles
   /** reply =the reply's text has not reached its session yet */
   private queue: { id: string; resume?: string; reply?: boolean }[] = []
   private live = new Map<string, Live>()
@@ -105,9 +111,11 @@ export class Runner {
     sources?: () => string
     /** files a run's request_access; none = an unmanaged workspace, no such tool */
     access?: RunAccess
+    /** reads a source item's file; none = the source serves no files, no such tool */
+    files?: RunFiles
   }) {
     this.store = o.store; this.jobs = o.jobs; this.bus = o.bus; this.pick = pickOf(o.sdk); this.cwd = o.cwd
-    this.max = o.max ?? 3; this.gate = o.gate; this.via = o.via; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => ({ ctx: [], images: [] })); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot; this.jobTools = o.jobTools; this.notes = o.notes; this.sources = o.sources; this.access = o.access
+    this.max = o.max ?? 3; this.gate = o.gate; this.via = o.via; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => ({ ctx: [], images: [] })); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot; this.jobTools = o.jobTools; this.notes = o.notes; this.sources = o.sources; this.access = o.access; this.files = o.files
     this.autoResume = !!o.autoResume; this.browser = !!o.browser
     if (o.acts?.allowed.length) this.acts = o.acts
   }
@@ -212,7 +220,7 @@ export class Runner {
   private async input(j: Job, cwd: string): Promise<{ o: PromptIn; images: PromptImage[] }> {
     const c = await this.context(j), kn = this.notes
     const wd = this.workDir ? { workDir: cwd, branch: this.workDir.branch?.(j) } : {}
-    return { o: { ctx: c.ctx, images: c.images.length, pbNotes: kn ? await kn.forPlaybook(j.pb) : [], me: this.me, bridge: this.bridge, knowledge: !!kn, sources: this.sources?.() ?? '', ...wd }, images: c.images }
+    return { o: { ctx: c.ctx, images: c.images.length, pbNotes: kn ? await kn.forPlaybook(j.pb) : [], me: this.me, bridge: this.bridge, knowledge: !!kn, sources: this.sources?.() ?? '', files: !!this.files, ...wd }, images: c.images }
   }
 
   /** a step taken up by hand: the job, its step and title, its dir, and its newest session run with that run's provider */
@@ -398,9 +406,9 @@ export class Runner {
       if (!rel || rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error(`${p} is outside the work dir`)
       return real
     }
-    const shot = this.screenshot, jt = this.jobTools, kn = this.notes, ra = this.acts, acc = this.access
+    const shot = this.screenshot, jt = this.jobTools, kn = this.notes, ra = this.acts, acc = this.access, sf = this.files
     const input = (j: Job) => this.input(j, cwd)
-    let made = 0, acted = 0, asked = 0
+    let made = 0, acted = 0, asked = 0, saved = 0
     // a send that did not go out shows on the step with its text, so the user can send it by hand
     const notSent = async (action: string, args: Record<string, unknown>, why: string): Promise<never> => {
       const text = typeof args.text === 'string' ? `\n\n${args.text}` : ''
@@ -473,6 +481,27 @@ export class Runner {
           const r = await acc(add, reason, `${rec.job}/${rec.step}`)
           asked++
           return r
+        },
+      } : {}),
+      ...(sf ? {
+        saveSourceFile: async (o: { concept: string; id: string; file: string; pack?: string }) => {
+          if (saved >= FILES_MAX) throw new Error(`this run already saved ${FILES_MAX} files`)
+          const r = await sf(o.concept, o.id, o.file, o.pack)
+          if (r.status !== 'ok') throw new Error(`${r.status}: ${r.message ?? 'no file'}`)
+          const f = r.items as { name?: unknown; base64?: unknown } | undefined
+          if (typeof f?.name !== 'string' || typeof f.base64 !== 'string') throw new Error(`${o.concept} ${o.id}: the source sent no file`)
+          const name = safeName(f.name)
+          // checked on the base64 length first, so an oversized answer is never decoded
+          if (f.base64.length > Math.ceil(FILE_MAX / 3) * 4) throw new Error(`${name} is over 20 MB`)
+          const bytes = Buffer.from(f.base64, 'base64')
+          if (bytes.length > FILE_MAX) throw new Error(`${name} is over 20 MB`)
+          await keep(name, (p) => writeFile(p, bytes))
+          saved++
+          const local = join(cwd, '.source-files')
+          await mkdir(local, { recursive: true })
+          await writeFile(join(local, '.gitignore'), '*\n')
+          await writeFile(join(local, name), bytes)
+          return `saved ${name} (${sizeText(bytes.length)}) as an artifact; a copy is at .source-files/${name}`
         },
       } : {}),
       ...(kn ? {

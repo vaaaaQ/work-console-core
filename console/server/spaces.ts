@@ -245,6 +245,8 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     // the packs' state is read from the source at each run start
     sources: () => runSources({ packDirs, grants, cfg, source }),
     access,
+    // a local source serves the files its packs mark; a gateway serves none
+    files: rb.bridge !== false && source.file ? (c, i, f, p) => source.file!(c, i, f, p) : undefined,
   })
   const offAuto = autoAsk({ jobs, runner, ctx, on: cfg.autoAsk === true, delay: o.askDelay })
   // a workspace without a gateway gives the builder no sources to read

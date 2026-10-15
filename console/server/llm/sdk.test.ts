@@ -259,3 +259,15 @@ test("the agent's own tools come out by their bare names; built-ins and others' 
   for await (const e of sessionEvents(msgs() as never, 'agent')) got.push(e.k === 'tool' ? e.name : e.k)
   assert.deepEqual(got, ['session', 'apply', 'Edit', 'mcp__other__apply', 'result'])
 })
+
+test('save_source_file only when the run carries it; it hands its args on and answers what the run tool said', async () => {
+  const none = async () => {}
+  const base: RunTools = { submitDraft: none, addArtifact: none, addArtifactFile: none, journal: none }
+  assert.ok(!runToolDefs(base).some((d) => d.name === 'save_source_file'))
+  let got: unknown
+  const d = runToolDefs({ ...base, saveSourceFile: async (o) => { got = o; return 'saved a.pdf (1 KB)' } }).find((x) => x.name === 'save_source_file')!
+  assert.ok(ALLOW.includes(`mcp__run__${d.name}`))
+  const r = await (d.handler as (a: unknown, x: unknown) => Promise<{ content: { text: string }[] }>)({ concept: 'chat', id: '-1', file: '2' }, {})
+  assert.deepEqual(got, { concept: 'chat', id: '-1', file: '2' })
+  assert.match(r.content[0].text, /saved a\.pdf/)
+})

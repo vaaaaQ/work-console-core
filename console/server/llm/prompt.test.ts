@@ -108,3 +108,9 @@ test('a run and a hand-made session are told to report a step that is not done, 
     assert.match(t, /never marks the step done/)
   }
 })
+
+test('the save_source_file line only where runs can save source files', () => {
+  const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
+  assert.match(buildPrompt(x, j, 'dr', 'go', { files: true }), /save_source_file\(concept, id, file\)/)
+  assert.doesNotMatch(buildPrompt(x, j, 'dr', 'go', {}), /save_source_file/)
+})

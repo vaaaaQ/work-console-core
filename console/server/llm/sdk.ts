@@ -44,6 +44,8 @@ export interface RunTools {
   signinNeeded?(o: { site: string; url: string }): Promise<void>
   /** runs one of the acts the workspace lets runs call (grants.llmActs), under its scopes; what it answered, or throws why it was not sent */
   act?(action: string, args: Record<string, unknown>): Promise<string>
+  /** saves a file a source item carries as an artifact, with a copy under .source-files/; what it saved, or throws why not */
+  saveSourceFile?(o: { concept: string; id: string; file: string; pack?: string }): Promise<string>
   /** a reply run only: keeps what the user asked on the step for the blocker builder, and ends the run */
   openBlocker?(say: string): Promise<void>
   /** asks the person to add to what this workspace may reach; what came of it, in a line; only where grants manage the workspace */
@@ -68,7 +70,7 @@ export interface Sdk {
 
 const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status']
 export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__context', 'mcp__run__screenshot', 'mcp__run__create_job', 'mcp__run__start_job',
-  'mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose', 'mcp__run__open_blocker', 'mcp__run__signin_needed', 'mcp__run__request_access', 'mcp__run__act', ...BRIDGE]
+  'mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose', 'mcp__run__open_blocker', 'mcp__run__signin_needed', 'mcp__run__request_access', 'mcp__run__act', 'mcp__run__save_source_file', ...BRIDGE]
 export const DENY = [
   'mcp__bridge__bridge_act', 'mcp__work-console',
   'Read(~/.bridge/**)', 'Read(~/.work-console/**)', 'Read(**/.work-console/**)',
@@ -237,6 +239,9 @@ export function runToolDefs(tools: RunTools) {
     ...(tools.act ? [tool('act', "Run an act this workspace lets runs call by themselves (for example a post into an allowed chat), at most 10 a run. It goes out at once, without the user's review; only the chats or targets the workspace allows are accepted. A refusal or failure is shown on the step with the text; do not retry it.",
       { action: z.string().min(1), args: z.record(z.string(), z.unknown()) },
       (a) => answer(() => tools.act!(a.action, a.args))())] : []),
+    ...(tools.saveSourceFile ? [tool('save_source_file', "Save a file a source item lists in its files (concept, id, file; pack where the concept has more than one) as an artifact of this step, at most 20 MB and 100 a run. A copy lands at .source-files/<name> under your working dir for you to read. Download only when the file's content matters; its description is often enough.",
+      { concept: z.string().min(1), id: z.string().min(1), file: z.string().min(1), pack: z.string().optional() },
+      (a) => answer(() => tools.saveSourceFile!(a))())] : []),
   ]
 }
 

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, readFileSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import * as T from '../../src/model/transitions.ts'
@@ -1072,4 +1072,66 @@ test('providers: a hand-edited auto without auto fails the run as provider_unava
   const r = await runner.ask(t.job, t.step, 'x')
   await until(async () => (await state(runner, r.id)) === 'failed')
   assert.match((await runner.get(r.id))!.reason!, /^provider_unavailable/)
+})
+
+/** a run whose source answers files from `answer` and records each call */
+async function fileRun(answer: (concept: string, id: string, file: string, pack?: string) => ConceptReply) {
+  const calls: unknown[][] = []
+  const s = setup({ v: true }, { files: async (...a) => { calls.push(a); return answer(...a) } }), [t] = await targets(s.jobs, 1)
+  await s.runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  const arts = async () => (await s.jobs.get(t.job))!.flow[t.step].arts.map((a) => a.n)
+  return { s, t, calls, tools: s.sessions[0].tools, arts }
+}
+const pdf = Buffer.from('%PDF-1.4 acta')
+const okFile = (name = 'acta.pdf', bytes = pdf): ConceptReply => ({ status: 'ok', items: { name, mime: 'application/pdf', size: bytes.length, base64: bytes.toString('base64') } })
+
+test('save_source_file keeps the file as an artifact and copies it under .source-files, which git ignores', async () => {
+  const { s, t, calls, tools, arts } = await fileRun(() => okFile())
+  assert.equal(await tools.saveSourceFile!({ concept: 'chat', id: '-100', file: '20', pack: 'telegram-web' }), 'saved acta.pdf (1 KB) as an artifact; a copy is at .source-files/acta.pdf')
+  assert.deepEqual(calls, [['chat', '-100', '20', 'telegram-web']])
+  assert.ok((await arts()).includes('acta.pdf'))
+  assert.deepEqual(readFileSync(join(s.dir, 'arts', t.job, 'acta.pdf')), pdf)
+  assert.deepEqual(readFileSync(join(s.dir, '.source-files', 'acta.pdf')), pdf)
+  assert.equal(readFileSync(join(s.dir, '.source-files', '.gitignore'), 'utf8'), '*\n')
+})
+
+test('save_source_file: a name from the source stays inside the job folder and .source-files', async () => {
+  const { s, t, tools } = await fileRun(() => okFile('../../a:b.pdf'))
+  assert.match(await tools.saveSourceFile!({ concept: 'chat', id: '-100', file: '20' }), /^saved a_b\.pdf /)
+  assert.ok(existsSync(join(s.dir, 'arts', t.job, 'a_b.pdf')) && existsSync(join(s.dir, '.source-files', 'a_b.pdf')))
+})
+
+test('save_source_file: what the source refuses comes back as code and message, and nothing is kept', async () => {
+  const { tools, arts } = await fileRun(() => ({ status: 'too_large', message: 'tg: a.mp4 is 48.2 MB, the limit is 20 MB' }))
+  const before = await arts()
+  await assert.rejects(tools.saveSourceFile!({ concept: 'chat', id: '-100', file: '25' }), /^Error: too_large: tg: a\.mp4 is 48\.2 MB, the limit is 20 MB$/)
+  assert.deepEqual(await arts(), before)
+})
+
+test('save_source_file: an answer over 20 MB or without bytes is refused before anything is written', async () => {
+  const big = Buffer.alloc((20 << 20) + 1)
+  const { s, tools, arts } = await fileRun((_c, _i, f) => (f === 'big' ? okFile('big.bin', big) : { status: 'ok', items: { name: 'x.pdf' } }))
+  const before = await arts()
+  await assert.rejects(tools.saveSourceFile!({ concept: 'chat', id: '-100', file: 'big' }), /big\.bin is over 20 MB/)
+  await assert.rejects(tools.saveSourceFile!({ concept: 'chat', id: '-100', file: 'none' }), /sent no file/)
+  assert.deepEqual(await arts(), before)
+  assert.ok(!existsSync(join(s.dir, '.source-files', 'big.bin')))
+})
+
+test('save_source_file: at most 100 a run', async () => {
+  const { calls, tools } = await fileRun(() => okFile())
+  for (let i = 0; i < 100; i++) await tools.saveSourceFile!({ concept: 'chat', id: '-100', file: String(i) })
+  await assert.rejects(tools.saveSourceFile!({ concept: 'chat', id: '-100', file: '100' }), /this run already saved 100 files/)
+  assert.equal(calls.length, 100)
+})
+
+test('save_source_file: no tool, and no prompt line, without a source that serves files', async () => {
+  const s = setup(), [t] = await targets(s.jobs, 1)
+  await s.runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  assert.equal(s.sessions[0].tools.saveSourceFile, undefined)
+  assert.doesNotMatch(s.sessions[0].prompt, /save_source_file/)
+  const f = await fileRun(() => okFile())
+  assert.match(f.s.sessions[0].prompt, /save_source_file/)
 })

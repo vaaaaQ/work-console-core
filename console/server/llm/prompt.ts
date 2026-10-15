@@ -19,8 +19,9 @@ const JR_MAX = 20
     knowledge: the run has the knowledge tools.
     images: how many pictures come before the prompt's text.
     workDir, branch: the job's own dir and the branch it is on, when the workspace gives each job one.
-    sources: ## Sources, from the packs that are on */
-export interface PromptIn { ctx?: Resolved[]; pbNotes?: Note[]; me?: string; bridge?: boolean; knowledge?: boolean; images?: number; workDir?: string; branch?: string; sources?: string }
+    sources: ## Sources, from the packs that are on.
+    files: the run can save a source item's files */
+export interface PromptIn { ctx?: Resolved[]; pbNotes?: Note[]; me?: string; bridge?: boolean; knowledge?: boolean; images?: number; workDir?: string; branch?: string; sources?: string; files?: boolean }
 
 const who = (o: PromptIn) => o.me || 'the user'
 const block = (h: string, rows: string[]) => (rows.length ? `${h}\n${rows.join('\n')}` : '')
@@ -111,6 +112,7 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: Prompt
       `- You never send anything to a source (no chat posts, mails, votes, comments or state changes): ${w} sends after review.`,
       `- Write progress with the run tool journal(observed, changed, next) at meaningful points.`,
       `- Save files the step expects with add_artifact(name, content), or with add_artifact_file(path) for a file already under your working dir; images show on the page.`,
+      ...(o.files ? [`- A source message lists the files it carries in files; save one with save_source_file(concept, id, file) when its content matters to the step, then read the copy under .source-files/.`] : []),
       `- Finish by calling submit_draft(text) exactly once with the draft for ${w} to review. Without it the run counts as failed.`,
       NOT_DONE_LINE,
       ...(by.length ? [messageAlone(by, w, 'submit_draft', 'in journal()')] : []),
