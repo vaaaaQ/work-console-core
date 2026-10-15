@@ -251,13 +251,13 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
     {
       name: 'job_context',
       description: "Change what the job's LLM runs are given: add an item, set how many of a work item's or a chat's newest comments/messages go in, or remove it. "
-        + 'A mail goes in as its whole message and a knowledge note in full. Each run reads the items at its start and inlines them into its prompt; get_job lists them under context.',
+        + 'A mail goes in as its whole message and a knowledge note in full; a link goes in as its address only, never read. Each run reads the items at its start and inlines them into its prompt; get_job lists them under context.',
       inputSchema: {
         type: 'object', required: ['id', 'op', 'kind', 'item'],
         properties: {
           id: { type: 'string' }, op: { type: 'string', enum: ['add', 'set', 'del'] }, kind: { type: 'string', enum: Object.keys(KINDS) },
-          item: { type: 'string', description: 'work item key or id (ACME-512), chat id, mail id, or note id (knowledge_search)' },
-          count: { type: 'integer', description: `newest comments or messages; default ${KINDS.work.def}, max ${KINDS.work.max} for work, ${KINDS.chat.max} for a chat; a mail or a note takes none` },
+          item: { type: 'string', description: "work item key or id (ACME-512), chat id, mail id, note id (knowledge_search), or a link's http(s) address" },
+          count: { type: 'integer', description: `newest comments or messages; default ${KINDS.work.def}, max ${KINDS.work.max} for work, ${KINDS.chat.max} for a chat; a mail, a note or a link takes none` },
           name: { type: 'string', description: 'label for add' },
         },
       },

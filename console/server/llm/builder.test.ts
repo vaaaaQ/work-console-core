@@ -169,6 +169,24 @@ test("new steps pass Add playbook's checks, an output is one word, and a message
   ])
 })
 
+test("a web address in the user's words becomes a link item; one that is not http(s) is left out, saying why", () => {
+  assert.match(SYSTEM, /link \(a web page by its http\(s\) address, taken from the user's words, the sources or the playbook; the console never reads it\)/)
+  const f = checkForm({ ...ANS, context: [{ k: 'link', id: ' https://login.example/start ', name: 'Login page' }, { k: 'link', id: 'javascript:alert(1)' }] }, opts())
+  assert.deepEqual(f.ctx, [{ k: 'link', id: 'https://login.example/start', n: 1, name: 'Login page' }])
+  assert.deepEqual(f.why, ['Context link javascript:alert(1) was left out: javascript:alert(1) is not an http(s) address.'])
+})
+
+test('new steps carry the links each of their jobs starts with, and the form shows them back', () => {
+  const links = [{ name: 'Login page', url: 'https://login.example/start' }, { url: 'https://wiki.example/x' }]
+  const f = checkForm({ ...ANS, playbook: '', newPlaybook: { ...NEW, links: [...links, { url: '' }, { name: 'no url' }] } }, opts())
+  assert.deepEqual(f.npb!.file.links, links)
+  assert.deepEqual((formOut(f, HOME) as any).newPlaybook.links, links)
+  const none = checkForm({ ...ANS, playbook: '', newPlaybook: NEW }, opts())
+  assert.ok(!('links' in none.npb!.file))
+  assert.deepEqual(checkForm({ ...ANS, playbook: '', newPlaybook: { ...NEW, links: [{ url: 'file:///c:/x' }] } }, opts()).why,
+    ['New steps: links must be a list of {name?, url} with http(s) addresses.'])
+})
+
 test('a due as the session writes it: a day alone is 18:00, a time without an offset is home time, one with an offset is kept', () => {
   assert.equal(dueAt('2026-10-09', HOME), Date.parse('2026-10-09T21:00:00Z'))
   assert.equal(dueAt('2026-10-09T09:30', HOME), Date.parse('2026-10-09T12:30:00Z'))
@@ -306,7 +324,8 @@ test('a tool call as the page shows it', () => {
 test("the answer's schema: every field required, nothing else allowed, the context kinds the console knows", () => {
   assert.deepEqual(FORM_SCHEMA.required, ['title', 'key', 'project', 'playbook', 'description', 'context', 'due', 'problems'])
   assert.equal(FORM_SCHEMA.additionalProperties, false)
-  assert.deepEqual(FORM_SCHEMA.properties.context.items.properties.k.enum, ['work', 'chat', 'mail', 'note'])
+  assert.deepEqual(FORM_SCHEMA.properties.context.items.properties.k.enum, ['work', 'chat', 'mail', 'note', 'link'])
+  assert.deepEqual(FORM_SCHEMA.properties.newPlaybook.properties.links.items.required, ['url'])
   assert.equal(FORM_SCHEMA.properties.newPlaybook.additionalProperties, false)
 })
 

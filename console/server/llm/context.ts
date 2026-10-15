@@ -26,6 +26,7 @@ const FROM = new Map([['description', 'description'], ['reproSteps', 'repro step
 
 async function read(b: Getter, it: CtxItem, me?: string, notes?: NoteReader): Promise<{ r: Resolved; d?: unknown }> {
   try {
+    if (it.k === 'link') return { r: okItem(it, { link: it.id }, me) }
     const concept = KINDS[it.k].concept
     if (concept === null) return { r: notes ? okItem(it, await notes.read(it.id), me) : badItem(it, 'unavailable', 'this workspace has no notes') }
     const r = await b.get(concept, it.id)

@@ -28,7 +28,7 @@ export const PP_HELP = [
   '- stepDone {step, force?}: the step is done; force drops its open blockers',
   '- noteAdd {step, k: q question | c contradiction | d design note | p problem, t}',
   "- describe {d}: the job's description, Markdown",
-  "- ctxAdd {k: work | chat | mail | note, id, n?}, ctxDel {k, id}: what the job's LLM runs read",
+  "- ctxAdd {k: work | chat | mail | note | link, id, n?, name?} (a link's id is its http(s) address), ctxDel {k, id}: what the job's LLM runs read",
   'A proposal holds 1–30 cmds, applied in order and all or none; a new one replaces the open one.',
 ].join('\n')
 

@@ -98,3 +98,17 @@ test('a new mail keeps its cc and subject through re-add and download; only a ma
   f.phases[1].steps[0].messages = [{ via: 'chat', to: 'team chat', subject: 'x', text: 'hi' }]
   assert.ok(checkPb(f).some((e) => e.includes('only a mail with to has cc or a subject')))
 })
+
+test('links go through download and re-add; only http(s) addresses, each with an optional name', () => {
+  addPb({ ...blankFile(), links: [{ name: ' Login page ', url: ' https://login.example/start ' }, { url: 'https://wiki.example/x' }], key: 'lk' })
+  try {
+    assert.deepEqual(PB.lk.links, [{ name: 'Login page', url: 'https://login.example/start' }, { url: 'https://wiki.example/x' }])
+    const out = JSON.parse(JSON.stringify(pbToFile('lk')))
+    assert.deepEqual(out.links, [{ name: 'Login page', url: 'https://login.example/start' }, { url: 'https://wiki.example/x' }])
+    assert.ok(!('links' in toInternal(blankFile(), 'nl').pb))
+    assert.ok(!('links' in toInternal({ ...blankFile(), links: [] }, 'nl').pb))
+  } finally { delete PB.lk; delete TPL['lk/tell'] }
+  assert.deepEqual(checkPb({ ...blankFile(), links: [{ url: 'https://ok.example' }] }), [])
+  for (const links of [5, [{ url: 'javascript:alert(1)' }], [{ url: 'file:///c:/x' }], [{ name: 'x' }], ['https://a.example'], [{ url: 'https://a.example', name: 3 }]])
+    assert.deepEqual(checkPb({ ...blankFile(), links }), ['links must be a list of {name?, url} with http(s) addresses.'], JSON.stringify(links))
+})

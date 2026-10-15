@@ -303,7 +303,7 @@ function Count({ it }: { it: CtxItem }) {
 
 function CtxAdd({ f }: { f: Nj }) {
   const [open, setOpen] = React.useState(false), [k, setK] = React.useState<CtxKind>('work')
-  const [v, setV] = React.useState(''), [n, setN] = React.useState(String(KINDS.work.def)), [err, setErr] = React.useState('')
+  const [v, setV] = React.useState(''), [nm, setNm] = React.useState(''), [n, setN] = React.useState(String(KINDS.work.def)), [err, setErr] = React.useState('')
   if (!open) return <button type="button" className="btn ghost sm cx-add" onClick={() => setOpen(true)}><Ic n="plus" sm />Add</button>
   const K = KINDS[k], have = new Set(shownCtx(f).map((c) => `${c.k}/${c.id}`))
   const opts: [string, string][] = k === 'chat' ? (CHATS[f.ws] || []).map((c) => [c.id, c.name])
@@ -312,25 +312,28 @@ function CtxAdd({ f }: { f: Nj }) {
   const left = opts.filter(([id]) => !have.has(`${k}/${id}`)), pick = left.some(([id]) => id === v) ? v : left[0]?.[0] ?? ''
   const add = () => {
     if (!F) return
-    const id = k === 'work' ? v : pick
-    const g = ctxAdd(F, k, id, K.whole ? undefined : Number(n), k === 'work' ? undefined : opts.find(([x]) => x === id)?.[1])
+    const id = k === 'work' || k === 'link' ? v : pick
+    const g = ctxAdd(F, k, id, K.whole ? undefined : Number(n), k === 'work' ? undefined : k === 'link' ? nm.trim() || undefined : opts.find(([x]) => x === id)?.[1])
     if (typeof g === 'string') { setErr(g); return }
-    put(g); setV(''); setErr('')
+    put(g); setV(''); setNm(''); setErr('')
   }
   const enter = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); add() } }
-  const kind = (x: CtxKind) => { setK(x); setV(''); setN(String(KINDS[x].def)); setErr('') }
+  const kind = (x: CtxKind) => { setK(x); setV(''); setNm(''); setN(String(KINDS[x].def)); setErr('') }
   const none = k === 'note' ? 'No note left to add. Notes are written in Knowledge.' : `No ${K.l.toLowerCase()} left to add.`
   return <div className="nj-add">
     <div className="row">
       <select className="sel" value={k} onChange={(e) => kind(e.currentTarget.value as CtxKind)} aria-label="Kind">
         {(Object.keys(KINDS) as CtxKind[]).map((x) => <option key={x} value={x}>{KINDS[x].l}</option>)}</select>
-      {k === 'work'
+      {k === 'link'
+        ? <><input className="inp nj-grow" type="url" value={v} onChange={(e) => setV(e.currentTarget.value)} onKeyDown={enter} placeholder="https://" aria-label="Address" aria-invalid={err ? true : undefined} />
+          <input className="inp" value={nm} onChange={(e) => setNm(e.currentTarget.value)} onKeyDown={enter} placeholder="Name (optional)" aria-label="Name" /></>
+        : k === 'work'
         ? <input className="inp nj-grow" value={v} onChange={(e) => setV(e.currentTarget.value)} onKeyDown={enter} placeholder={PACKS[f.ws].keyPh} aria-label="Work item" aria-invalid={err ? true : undefined} />
         : left.length
           ? <select className="sel nj-grow" value={pick} onChange={(e) => setV(e.currentTarget.value)} aria-label={K.l}>{left.map(([id, l]) => <option key={id} value={id}>{l}</option>)}</select>
           : <span className="why nj-grow">{none}</span>}
       {K.whole ? null : <label className="why nj-n">last <input className="inp cx-n" type="number" min={1} max={K.max} value={n} onChange={(e) => setN(e.currentTarget.value)} onKeyDown={enter} aria-label={`How many ${K.unit}`} /> {K.unit}</label>}
-      <button type="button" className="btn sm" onClick={add} disabled={k !== 'work' && !left.length}><Ic n="plus" sm />Add</button>
+      <button type="button" className="btn sm" onClick={add} disabled={k !== 'work' && k !== 'link' && !left.length}><Ic n="plus" sm />Add</button>
       <button type="button" className="iconbtn cx-x" aria-label="Close adding" title="Close" onClick={() => { setOpen(false); setErr('') }}><Ic n="x" sm /></button>
     </div>
     {err ? <p className="nj-err" role="alert">{err}</p> : null}

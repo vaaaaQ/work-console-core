@@ -29,8 +29,11 @@ export type Start = 'hand' | 'self' | 'auto'
 export interface NewStep { t: string; x?: string; m: Mode; a?: string[]; start?: Start; ask?: 1; out?: string }
 export interface Phase { c: string; n: string; s: Step[] }
 /** ws = owning pack; none = core, offered in every workspace; needs = in plain words, the context its jobs need;
- *  once = one job's own steps, which no playbook list, catalog or list_playbooks shows */
-export interface Playbook { ws?: Ws; ks?: SrcKey; n: string; d?: string; ph: Phase[]; custom?: 1; needs?: string; once?: 1 }
+ *  once = one job's own steps, which no playbook list, catalog or list_playbooks shows;
+ *  links = web pages every job of it needs (such as a login page), put in each new job's context */
+export interface Playbook { ws?: Ws; ks?: SrcKey; n: string; d?: string; ph: Phase[]; custom?: 1; needs?: string; once?: 1; links?: PbLink[] }
+/** a web page a playbook's jobs start with: its http(s) address and the name it shows by */
+export interface PbLink { url: string; name?: string }
 
 export interface Src { n: string; item?: string }
 export interface Pack {
@@ -84,8 +87,9 @@ export type StepOverride = Partial<Pick<Flow, 's' | 'm' | 'arts' | 'b' | 'rv' | 
 /** l = outcome colour for the Today feed */
 export interface JournalEntry extends New { ts: string; a: string; o: string; c: string; n: string; l?: Lamp }
 /** a kind of context a job gives its LLM runs; each kind's reading lives in model/context.ts */
-export type CtxKind = 'work' | 'chat' | 'mail' | 'note'
-/** one context item: n = how many of its newest comments or messages a run gets (1 for a mail or a note, which go in whole), name = its label on the page */
+export type CtxKind = 'work' | 'chat' | 'mail' | 'note' | 'link'
+/** one context item: n = how many of its newest comments or messages a run gets (1 for a mail, a note or a link, which go in whole), name = its label on the page;
+    a link's id is its http(s) address, which the console never reads */
 export interface CtxItem { k: CtxKind; id: string; n: number; name?: string }
 /** at = current step, upd = minutes ago; ev = the calendar event it came from;
  *  due = when it is due (ISO); it needs you from midnight `lead` days before due (default 0), and

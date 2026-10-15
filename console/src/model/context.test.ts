@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { PB0 } from '../data/playbooks.ts'
 import { JOBS0, JR, OVR, TPL0 } from '../data/demo.ts'
 import { clone } from '../lib/util.ts'
-import { MAIL_MAX, badItem, contextSection, ctxOf, okItem, parseWorkId, renderChat, renderItem, renderMail, renderWork, workId } from './context.ts'
+import { MAIL_MAX, badItem, inputLinks, contextSection, ctxOf, okItem, parseWorkId, renderChat, renderItem, renderMail, renderWork, workId } from './context.ts'
 import { CmdError, apply, atOf, freshJob, isClosed, seedFlow } from './transitions.ts'
 import type { Ctx } from './transitions.ts'
 import type { CtxItem, Job } from './types.ts'
@@ -162,4 +162,46 @@ test('a job made before context lists starts from its defaults on the first edit
 test('a build or ticket job names no work item, though its key looks like an item id', () => {
   assert.deepEqual(ctxOf(find((x) => x.key === 'BUILD-1287')), [])
   assert.deepEqual(ctxOf(find((x) => x.key === 'SUP-77')), [])
+})
+
+/* ===== a web link ===== */
+const L: CtxItem = { k: 'link', id: 'https://login.example/start', n: 1, name: 'Login page' }
+
+test('a link item takes an http(s) address only, goes in whole and is labelled by its name or its host', () => {
+  const j = open()
+  const a = apply(X, j, { op: 'ctxAdd', k: 'link', id: ' https://login.example/start ', name: 'Login page' }).job
+  assert.deepEqual(a.ctx!.at(-1), L)
+  assert.equal(a.jr[0].o, 'Added link Login page to the context.')
+  assert.equal(a.jr[0].c, 'LLM runs get its address only.')
+  const bare = apply(X, j, { op: 'ctxAdd', k: 'link', id: 'http://wiki.example/a/b?c=1' }).job
+  assert.equal(bare.jr[0].o, 'Added link wiki.example to the context.')
+  for (const id of ['javascript:alert(1)', 'file:///c:/secret.txt', 'login.example', 'https://a b.example/', 'mailto:x@a.example'])
+    code(() => apply(X, j, { op: 'ctxAdd', k: 'link', id }), 'bad_args')
+  code(() => apply(X, a, { op: 'ctxSet', k: 'link', id: L.id, n: 2 }), 'bad_args')
+})
+
+test('a link reads as its label and address, never the page', () => {
+  const s = contextSection('acme', [okItem(L, { link: L.id })])
+  assert.equal(s, '## Context\n### Link Login page (its address only)\nLink: https://login.example/start\nThe console does not read this page; only its address is given.\n')
+})
+
+test("a playbook's links reach a new job's context, after what the key, the chat or the form give, once each", () => {
+  const PB = { ...PB0, lk: { ...PB0.action, links: [{ name: 'Login page', url: 'https://login.example/start' }, { url: 'https://wiki.example/x' }] } }
+  const Y: Ctx = { ...X, PB }
+  const login = { k: 'link', id: 'https://login.example/start', n: 1, name: 'Login page' }, wiki = { k: 'link', id: 'https://wiki.example/x', n: 1 }
+  assert.deepEqual(freshJob(Y, 'J-9020', { t: 'x', key: 'ACME-512', pb: 'lk', prj: 'platform', ws: 'acme' }).ctx,
+    [{ k: 'work', id: 'ACME-512', n: 10, name: 'ACME-512' }, login, wiki])
+  assert.deepEqual(freshJob(Y, 'J-9021', { t: 'x', key: 'NEW', pb: 'lk', prj: 'platform', ws: 'acme' }).ctx, [login, wiki])
+  assert.deepEqual(freshJob(Y, 'J-9022', { t: 'x', key: 'NEW', pb: 'lk', prj: 'platform', ws: 'acme', ctx: [{ k: 'link', id: 'https://wiki.example/x', n: 1, name: 'Wiki' }] }).ctx,
+    [{ k: 'link', id: 'https://wiki.example/x', n: 1, name: 'Wiki' }, login])
+  assert.equal(freshJob(Y, 'J-9023', { t: 'x', key: 'NEW', pb: 'action', prj: 'platform', ws: 'acme' }).ctx, undefined)
+})
+
+test("the Input group: the job's links, then its playbook's it does not have, each by its name or its host", () => {
+  const j = { ...open(), ctx: [W, { k: 'link', id: 'https://wiki.example/x', n: 1 }, L] as CtxItem[] }
+  const pb = { ...PB0.action, links: [{ name: 'Login', url: 'https://login.example/start' }, { name: 'Docs', url: 'https://docs.example/' }] }
+  assert.deepEqual(inputLinks(j, pb), [
+    { name: 'wiki.example', url: 'https://wiki.example/x' }, { name: 'Login page', url: 'https://login.example/start' }, { name: 'Docs', url: 'https://docs.example/' },
+  ])
+  assert.deepEqual(inputLinks({ ...j, ctx: [W] }, PB0.action), [])
 })

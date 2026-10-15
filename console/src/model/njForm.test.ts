@@ -141,3 +141,12 @@ test('buildForm carries the blocker; mergeBuild keeps a plan edited during the b
   const edited = { ...f0, bl: { ...bl, plan: 'mine' } }
   assert.deepEqual(mergeBuild(edited, sent, got, { say: ['x'], pbs: ['action'], prjs: ['ops'] }).bl, { ...bl, plan: 'mine', link: { j: 'A-7', why: 'same' } })
 })
+
+test('the context list takes a link by its http(s) address and an optional name; anything else says why', () => {
+  const f = start({})
+  const l = ok(ctxAdd(f, 'link', ' https://login.example/start ', undefined, 'Login page'))
+  assert.deepEqual(l.ctx!.at(-1), { k: 'link', id: 'https://login.example/start', n: 1, name: 'Login page' })
+  assert.equal(ctxAdd(l, 'link', 'https://login.example/start'), 'That link is already in the context.')
+  assert.equal(ctxAdd(f, 'link', ' '), 'Pick a link.')
+  assert.equal(ctxAdd(f, 'link', 'javascript:alert(1)'), 'javascript:alert(1) is not an http(s) address')
+})

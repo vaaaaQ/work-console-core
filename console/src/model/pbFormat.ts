@@ -1,5 +1,6 @@
 import { slugify } from '../lib/util.ts'
-import type { Mode, MsgHead, Playbook, Step, Tpl, Ws } from './types.ts'
+import { httpUrl } from './context.ts'
+import type { Mode, MsgHead, PbLink, Playbook, Step, Tpl, Ws } from './types.ts'
 
 /* ===== the playbook file: what Download writes and Add playbook reads =====
    Plain functions over plain data, so the backend checks the builder's steps by the rules Add playbook uses. */
@@ -19,17 +20,22 @@ export interface PbStepFile {
   /** the console action the step offers */
   act?: string
 }
-/** needs = in plain words, the context the playbook's jobs need */
+/** needs = in plain words, the context the playbook's jobs need; links = web pages each of its jobs starts with */
 export interface PbFile {
-  format?: string; key?: string; name: string; description?: string; needs?: string; workspace?: Ws | null
+  format?: string; key?: string; name: string; description?: string; needs?: string; workspace?: Ws | null; links?: PbLink[]
   phases: { code: string; name: string; steps: PbStepFile[] }[]
 }
 
 /** added playbooks get step ids prefixed with their key, so they never collide with another playbook's */
+/** a file's links as a playbook keeps them: trimmed, a blank name left out */
+export const linksOf = (ls: PbLink[] | undefined): PbLink[] => (ls ?? []).map((l) => {
+  const name = (l.name || '').trim()
+  return { ...(name ? { name } : {}), url: l.url.trim() }
+})
 export function toInternal(o: PbFile, k: string) {
-  const tpl: Record<string, Tpl[]> = {}
+  const tpl: Record<string, Tpl[]> = {}, links = linksOf(o.links)
   const pb: Playbook = {
-    n: o.name.trim(), d: (o.description || '').trim(), ...(o.needs?.trim() ? { needs: o.needs.trim() } : {}), ws: o.workspace || undefined, custom: 1,
+    n: o.name.trim(), d: (o.description || '').trim(), ...(o.needs?.trim() ? { needs: o.needs.trim() } : {}), ws: o.workspace || undefined, custom: 1, ...(links.length ? { links } : {}),
     ph: o.phases.map((ph) => ({
       c: String(ph.code).toUpperCase(), n: ph.name.trim(), s: ph.steps.map((s) => {
         const id = k + '/' + s.id, st: Step = { id, fid: s.id, t: s.title.trim(), m: s.who, x: s.doneWhen.trim() }
@@ -52,6 +58,9 @@ export function checkPb(o: unknown): string[] {
   if (f.format != null && f.format !== FMT) e.push(`Unknown format “${f.format}”; expected ${FMT}.`)
   if (!str(f.name)) e.push('Add a name.')
   if (f.needs != null && typeof f.needs !== 'string') e.push('needs must be words: the context its jobs need.')
+  if (f.links != null && !(Array.isArray(f.links) && f.links.every((l: any) => l && typeof l === 'object' && typeof l.url === 'string' && httpUrl(l.url)
+    && (l.name == null || typeof l.name === 'string'))))
+    e.push('links must be a list of {name?, url} with http(s) addresses.')
   if (!Array.isArray(f.phases) || !f.phases.length) { e.push('Add at least one phase.'); return e }
   const ids = new Set<string>()
   f.phases.forEach((ph: any, i: number) => {

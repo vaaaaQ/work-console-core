@@ -3,7 +3,7 @@ import { WORK0 } from '../data/demo.ts'
 import { PACKS } from '../data/packs.ts'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
-import { KINDS, badItem, ctxLabel, ctxOf, okItem, parseWorkId, workId } from '../model/context.ts'
+import { KINDS, badItem, ctxLabel, ctxOf, httpUrl, okItem, parseWorkId, workId } from '../model/context.ts'
 import type { Resolved } from '../model/context.ts'
 import { md } from '../lib/md.ts'
 import { DESC_MAX } from '../model/transitions.ts'
@@ -59,6 +59,7 @@ function demoItem(j: Job, it: CtxItem): Resolved {
   const me = pageOf(j.ws)?.me
   if (it.k === 'work') return WORK0[it.id] ? okItem(it, WORK0[it.id], me) : badItem(it, 'source_error', `no work item ${it.id} in the demo`)
   if (it.k === 'note') return badItem(it, 'source_error', 'the demo has no notes')
+  if (it.k === 'link') return okItem(it, { link: it.id }, me)
   if (it.k === 'mail') {
     const m = (MAIL[j.ws] || []).find((x) => x.id === it.id)
     return m ? okItem(it, { body: m.body, attachments: [] }, me) : badItem(it, 'source_error', `no mail ${it.id} in the demo`)
@@ -79,6 +80,7 @@ function Preview({ j, it }: { j: Job; it: CtxItem }) {
   }, [j.id, it.k, it.id, it.n])
   if (st.err) return <p className="why cx-t">Could not read it: {st.err}</p>
   if (!st.r) return <p className="why cx-t">Reading…</p>
+  if (st.r.status === 'ok' && st.r.link) return <div className="cx-t"><p style={{ margin: 0 }}><a href={st.r.link} target="_blank" rel="noopener noreferrer">{st.r.link}</a></p><pre>{st.r.text}</pre></div>
   return st.r.status === 'ok' ? <pre className="cx-t">{st.r.text}</pre> : <p className="why cx-t"><Ic n="warn" sm /> Unavailable: {st.r.text}</p>
 }
 
@@ -135,7 +137,9 @@ function AddBody({ j }: { j: Job }) {
       ? <label className="field"><span>Work item</span><input className="inp" name="id" placeholder={PACKS[j.ws]?.keyPh} data-autofocus /></label>
       : k === 'chat' ? pick('Chat', left('chat', CHATS[j.ws] || []).map((c) => [c.id, c.name]), 'Every loaded chat is already in the context.')
         : k === 'mail' ? pick('Mail', left('mail', MAIL[j.ws] || []).map((m) => [m.id, mailName(m)]), 'Every loaded mail is already in the context.')
-          : pick('Note', left('note', notesOf(j)).map((n) => [n.id, n.title]), 'No note left to add. Notes are written in Knowledge.')}
+          : k === 'note' ? pick('Note', left('note', notesOf(j)).map((n) => [n.id, n.title]), 'No note left to add. Notes are written in Knowledge.')
+            : <><label className="field"><span>Address</span><input className="inp" name="id" type="url" placeholder="https://" data-autofocus /></label>
+              <label className="field"><span>Name (optional)</span><input className="inp" name="name" placeholder="Login page" /></label></>}
     {K.whole ? <p className="why" style={{ margin: 0 }}>Runs get {K.whole}.</p> : <label className="field"><span>Newest {K.unit}, up to {K.max}</span>
       <input key={k} className="inp" type="number" name="n" min={1} max={K.max} defaultValue={K.def} /></label>}
   </>
@@ -149,9 +153,9 @@ export function addCtx(j0: Job) {
     foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n="plus" sm />Add</button></>,
     onSubmit: (fd, f) => {
       const k = String(fd.get('k')) as CtxKind, raw = String(fd.get('id') || '').trim(), K = KINDS[k]
-      const item = k === 'work' ? parseWorkId(j0.ws, raw) : raw
+      const item = k === 'work' ? parseWorkId(j0.ws, raw) : k === 'link' ? httpUrl(raw) : raw
       if (!item) { const i = f.querySelector<HTMLInputElement>('[name=id]'); if (i) { i.focus(); i.setAttribute('aria-invalid', 'true') } return }
-      const name = k === 'work' ? (workId(j0.ws, raw) ? raw : undefined) : nameOf(j0, k, item)
+      const name = k === 'work' ? (workId(j0.ws, raw) ? raw : undefined) : k === 'link' ? String(fd.get('name') || '').trim() || undefined : nameOf(j0, k, item)
       closeModal()
       const lb = name || ctxLabel(j0.ws, { k, id: item })
       void doCmd(id, { op: 'ctxAdd', k, id: item, ...(K.whole ? {} : { n: Number(fd.get('n')) }), ...(name ? { name } : {}) }, `Added ${K.l.toLowerCase()} ${lb} to the context`)

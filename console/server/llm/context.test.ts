@@ -44,6 +44,14 @@ function bridge(work: Record<string, object>, pics: Record<string, () => Concept
   }
 }
 
+test('a link is never read: no bridge get, no notes; the run gets its address', async () => {
+  const asked: string[] = []
+  const b = { get: async (concept: string, id: string): Promise<ConceptReply> => { asked.push(`${concept}/${id}`); return { status: 'ok', rev: 1, items: {} } } }
+  const r = await resolveItem(b, { k: 'link', id: 'https://login.example/start', n: 1, name: 'Login page' })
+  assert.deepEqual([r.status, r.link], ['ok', 'https://login.example/start'])
+  assert.deepEqual(asked, [])
+})
+
 test("a work item's pictures come with the run, numbered across the prompt as its text names them; one that cannot be read says so", async () => {
   const b = bridge({
     'W-1': { description: 'See [image 2] and [image 1].', acceptanceCriteria: 'Like [image 1] again.',

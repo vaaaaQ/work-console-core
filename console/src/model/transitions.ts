@@ -3,7 +3,7 @@ import { PACKS } from '../data/packs.ts'
 import { clone, slugify, tfmt } from '../lib/util.ts'
 import { fromWall, midnight, offsetAt } from '../lib/zone.ts'
 import { openOf, reaches, settled, waitsM } from './blockers.ts'
-import { KINDS, ctxDefaults, ctxLabel, ctxOf, ctxUnit, parseWorkId } from './context.ts'
+import { KINDS, ctxDefaults, ctxLabel, ctxOf, ctxUnit, httpUrl, parseWorkId } from './context.ts'
 import type { Kind } from './context.ts'
 import { CMD_MAX, CMDS_MAX, OUTCOMES, PP_OPS } from './types.ts'
 import type {
@@ -127,6 +127,11 @@ function descOf(v: unknown): string | undefined {
   if (d.length > DESC_MAX) throw new CmdError('bad_args', `the description is longer than ${DESC_MAX} characters`)
   return d || undefined
 }
+/** the playbook's links after the list, each one the list does not have yet */
+function withPbLinks(x: Ctx, pb: string, list: CtxItem[]): CtxItem[] {
+  const add = (x.PB[pb].links ?? []).filter((l) => !list.some((c) => c.k === 'link' && c.id === l.url))
+  return [...list, ...add.map((l): CtxItem => ({ k: 'link', id: l.url, n: 1, ...(l.name ? { name: l.name } : {}) }))]
+}
 export function freshJob(x: Ctx, id: string, o: NewJob): Job {
   if (!x.PB[o.pb] || !steps(x, o.pb).length) throw new CmdError('bad_args', `unknown playbook ${o.pb}`)
   if (!o.t.trim()) throw new CmdError('bad_args', 'a job needs a title')
@@ -147,10 +152,10 @@ export function freshJob(x: Ctx, id: string, o: NewJob): Job {
     if (!Array.isArray(o.ctx)) throw new CmdError('bad_args', 'ctx is not a list')
     const list: CtxItem[] = []
     for (const c of o.ctx) { const it = ctxItem(j.ws, c ?? {}); if (!list.some((y) => y.k === it.k && y.id === it.id)) list.push(it) }
-    j.ctx = list
+    j.ctx = withPbLinks(x, o.pb, list)
     return j
   }
-  const ctx = ctxDefaults(j.ws, j.key, j.chat, typeof o.chatName === 'string' ? o.chatName.trim().slice(0, 120) || undefined : undefined)
+  const ctx = withPbLinks(x, o.pb, ctxDefaults(j.ws, j.key, j.chat, typeof o.chatName === 'string' ? o.chatName.trim().slice(0, 120) || undefined : undefined))
   if (ctx.length) j.ctx = ctx
   return j
 }
@@ -163,6 +168,7 @@ function ctxId(ws: Ws, k: CtxKind, v: unknown) {
   const id = typeof v === 'string' ? v.trim() : ''
   if (!id || id.length > 1000) throw new CmdError('bad_args', 'a context item needs an id')
   if (k === 'work' && parseWorkId(ws, id) !== id) throw new CmdError('bad_args', `${id} is not a work item id`)
+  if (k === 'link' && httpUrl(id) !== id) throw new CmdError('bad_args', `${id} is not an http(s) address`)
   return id
 }
 function ctxCount(K: Kind, v: unknown) {

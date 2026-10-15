@@ -12,7 +12,7 @@ export type { PbFile, PbMsgFile, PbStepFile } from './pbFormat.ts'
 export function pbToFile(k: string): PbFile {
   const p = PB[k]
   return {
-    format: FMT, key: k, name: p.n, description: p.d || '', ...(p.needs ? { needs: p.needs } : {}), workspace: p.ws || null,
+    format: FMT, key: k, name: p.n, description: p.d || '', ...(p.needs ? { needs: p.needs } : {}), ...(p.links?.length ? { links: p.links.map((l) => ({ ...l })) } : {}), workspace: p.ws || null,
     phases: p.ph.map((ph) => ({
       code: ph.c, name: ph.n, steps: ph.s.map((s) => {
         const o: PbStepFile = { id: s.fid || s.id, title: s.t, who: s.m, doneWhen: s.x }

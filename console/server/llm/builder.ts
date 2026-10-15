@@ -101,6 +101,7 @@ export const FORM_SCHEMA = {
       type: 'object', additionalProperties: false, required: ['once', 'key', 'name', 'description', 'phases'],
       properties: {
         once: { type: 'boolean' }, key: S, name: S, description: S, needs: S,
+        links: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['url'], properties: { name: S, url: S } } },
         phases: {
           type: 'array',
           items: { type: 'object', additionalProperties: false, required: ['code', 'name', 'steps'], properties: { code: S, name: S, steps: { type: 'array', items: STEP } } },
@@ -136,8 +137,9 @@ function stepOf(s: Record<string, unknown>): PbStepFile {
 /** new steps as a playbook file of this workspace */
 function fileOf(np: Record<string, unknown>, key: string, ws: string): PbFile {
   const needs = str(np.needs).trim()
+  const links = arr(np.links).map(obj).filter((l) => str(l.url).trim()).map((l) => ({ ...(str(l.name).trim() ? { name: str(l.name).trim() } : {}), url: str(l.url).trim() }))
   return {
-    format: FMT, key, name: str(np.name).trim(), description: str(np.description).trim(), ...(needs ? { needs } : {}), workspace: ws,
+    format: FMT, key, name: str(np.name).trim(), description: str(np.description).trim(), ...(needs ? { needs } : {}), ...(links.length ? { links } : {}), workspace: ws,
     phases: arr(np.phases).map((p) => { const ph = obj(p); return { code: str(ph.code).trim(), name: str(ph.name).trim(), steps: arr(ph.steps).map((s) => stepOf(obj(s))) } }),
   }
 }
@@ -217,10 +219,10 @@ Answer with the whole form. A field the user's words do not touch keeps its valu
 - key: the key of the work item the job is about when the user names one, written as the workspace writes keys; otherwise a short slug of the title, such as weekly-report.
 - project: one of the workspace's projects.
 - playbook: the key of the catalog playbook that fits the job. When none fits, leave it empty and write newPlaybook. Leave both empty to keep the form's choice.
-- newPlaybook: steps for a job no catalog playbook fits. once: true for steps of this job only, false when such jobs will recur and the steps should be saved as a playbook. key: a short slug. Each phase has a code of 1 to 4 letters or digits, a name and at least one step. Each step has an id (letters, digits and dashes, unique), a title, who ("you" for the user, "llm" for an LLM run) and doneWhen. An llm step that drafts a text names its output, one word such as reply; a step that sends it carries messages whose text is "{reply}", via chat (the job's chat), work (a comment on its work item) or mail. A mail without to replies to the job's mail; a new mail has to and cc, mail addresses separated by commas, and a subject, and its drafted text is the body alone. The user reviews and sends every message.
+- newPlaybook: steps for a job no catalog playbook fits. once: true for steps of this job only, false when such jobs will recur and the steps should be saved as a playbook. key: a short slug. Each phase has a code of 1 to 4 letters or digits, a name and at least one step. Each step has an id (letters, digits and dashes, unique), a title, who ("you" for the user, "llm" for an LLM run) and doneWhen. An llm step that drafts a text names its output, one word such as reply; a step that sends it carries messages whose text is "{reply}", via chat (the job's chat), work (a comment on its work item) or mail. A mail without to replies to the job's mail; a new mail has to and cc, mail addresses separated by commas, and a subject, and its drafted text is the body alone. The user reviews and sends every message. links: web pages every job of these steps needs, such as a login page, each {name, url}; only addresses the user gave or a source shows.
 - A job whose result is a new mail needs a step that sends one: a catalog playbook whose send step does not, gets newPlaybook instead. Take the addresses from the sources or the user's words; a person whose address you could not find goes in problems.
 - description: Markdown, in English: what the job is for, what done looks like, and what the user said that a run will need. No attachments and no copies of the context items: those go in context.
-- context: what every LLM run of the job reads. When the chosen playbook says what its jobs need, give that; otherwise choose what the job needs. Kinds: work (a work item by its id; n = its newest comments, 10 by default, at most 20), chat (by its id; n = its newest messages, 10 by default, at most 50), mail (by its id, read whole), note (a knowledge note by its id, read whole). name: how the item reads to the user, such as a chat's name. A note whose playbooks list the chosen playbook reaches every run already. Take ids from source_list, the note index or the user's words; never invent one.
+- context: what every LLM run of the job reads. When the chosen playbook says what its jobs need, give that; otherwise choose what the job needs. Kinds: work (a work item by its id; n = its newest comments, 10 by default, at most 20), chat (by its id; n = its newest messages, 10 by default, at most 50), mail (by its id, read whole), note (a knowledge note by its id, read whole), link (a web page by its http(s) address, taken from the user's words, the sources or the playbook; the console never reads it). name: how the item reads to the user, such as a chat's name. A note whose playbooks list the chosen playbook reaches every run already. Take ids from source_list, the note index or the user's words; never invent one.
 - due: only when the user named a deadline: ISO 8601 with the home zone's offset, a day without a time meaning 18:00 that day; otherwise the form's.
 - problems: what you could not settle, a few words each; empty when nothing.
 - blocker: only when the prompt has a "# Blocker" section: the user wants a job that a step of the waiting job waits for. step: the waiting job's step it blocks, the one the user named, else the one the section names. plan: a sentence or two on what that step does with the blocker's outcome, from the user's words, such as "if Imre confirms, set the connection string; if not, ask him for the secret name". link: when an open job already does what the user asks, its id and why, and leave the rest of the form as it is. Otherwise pick the catalog playbook that fits the kind of blocker, or write newPlaybook with once false, so the next blocker of that kind reuses it. A message the blocker sends goes into a step's messages; the user reviews and sends it.`
@@ -242,7 +244,7 @@ export function formOut(f: BuildForm, tz: string) {
   const t = Date.parse(f.due), file = f.npb?.file
   return {
     title: f.t, key: f.key, project: f.prj, playbook: f.npb ? '' : f.pb,
-    ...(f.npb && file ? { newPlaybook: { once: f.npb.once, key: f.pb, name: file.name, description: file.description ?? '', ...(file.needs ? { needs: file.needs } : {}), phases: file.phases } } : {}),
+    ...(f.npb && file ? { newPlaybook: { once: f.npb.once, key: f.pb, name: file.name, description: file.description ?? '', ...(file.needs ? { needs: file.needs } : {}), ...(file.links?.length ? { links: file.links } : {}), phases: file.phases } } : {}),
     description: f.d, context: f.ctx.map((c) => ({ k: c.k, id: c.id, n: c.n, ...(c.name ? { name: c.name } : {}) })),
     due: Number.isFinite(t) ? zoneIso(t, tz) : f.due,
     ...(f.bl ? { blocker: { step: f.bl.step, plan: f.bl.plan, ...(f.bl.link ? { link: { job: f.bl.link.j, why: f.bl.link.why } } : {}) } } : {}),

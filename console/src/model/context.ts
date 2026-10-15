@@ -1,11 +1,11 @@
 import { itemOf, pageOf } from '../data/registry.ts'
-import type { CtxItem, CtxKind, Job, Ws } from './types.ts'
+import type { CtxItem, CtxKind, Job, Playbook, Ws } from './types.ts'
 
 /* What a job gives its LLM runs. Each kind reads one bridge item, or one of the workspace's notes, and turns
    it into prompt text; the run's prompt and the page's preview both use these renderers, so an expanded row
    shows what the run gets. */
 
-/** concept = the bridge concept its get reads; null = a note, read from the workspace's notes.
+/** concept = the bridge concept its get reads; null = a note, read from the workspace's notes, or a link, never read.
     unit, def, max = how many of its newest entries a run gets; whole = what a run gets of a kind without a count */
 export interface Kind { l: string; unit: string; def: number; max: number; ic: string; concept: string | null; whole?: string }
 export const KINDS: Record<CtxKind, Kind> = {
@@ -13,6 +13,7 @@ export const KINDS: Record<CtxKind, Kind> = {
   chat: { l: 'Chat', unit: 'messages', def: 10, max: 50, ic: 'message', concept: 'chat' },
   mail: { l: 'Mail', unit: '', def: 1, max: 1, ic: 'mail', concept: 'mail', whole: 'the whole message' },
   note: { l: 'Note', unit: '', def: 1, max: 1, ic: 'list', concept: null, whole: 'the whole note' },
+  link: { l: 'Link', unit: '', def: 1, max: 1, ic: 'external', concept: null, whole: 'its address only' },
 }
 export const ENTRY_MAX = 1500, MAIL_MAX = 20000
 
@@ -30,7 +31,14 @@ export function ctxDefaults(ws: Ws, key: string, chat?: string, chatName?: strin
   return out
 }
 export const ctxOf = (j: Pick<Job, 'ws' | 'key' | 'chat' | 'ctx'>): CtxItem[] => j.ctx ?? ctxDefaults(j.ws, j.key, j.chat)
-export const ctxLabel = (ws: Ws, it: Pick<CtxItem, 'k' | 'id' | 'name'>) => it.name || (it.k === 'work' ? (boardOf(ws)?.key(it.id) ?? it.id) : it.id)
+/** a link's host, or the address itself when it has none */
+export const hostOf = (url: string) => { try { return new URL(url).host || url } catch { return url } }
+export const ctxLabel = (ws: Ws, it: Pick<CtxItem, 'k' | 'id' | 'name'>) => it.name || (it.k === 'work' ? (boardOf(ws)?.key(it.id) ?? it.id) : it.k === 'link' ? hostOf(it.id) : it.id)
+/** what the job's Artifacts panel lists under Input: its link items, then its playbook's links it does not have, each by its name or its host */
+export function inputLinks(j: Pick<Job, 'ws' | 'key' | 'chat' | 'ctx'>, pb: Pick<Playbook, 'links'> | undefined): { name: string; url: string }[] {
+  const own = ctxOf(j).filter((c) => c.k === 'link').map((c) => ({ name: ctxLabel(j.ws, c), url: c.id }))
+  return [...own, ...(pb?.links ?? []).filter((l) => !own.some((o) => o.url === l.url)).map((l) => ({ name: l.name || hostOf(l.url), url: l.url }))]
+}
 export const ctxUnit = (it: Pick<CtxItem, 'k' | 'n'>) => KINDS[it.k].whole ?? `last ${it.n} ${KINDS[it.k].unit}`
 
 /* ===== reading a bridge item as text ===== */
@@ -82,11 +90,14 @@ export function renderMail(d: MailDetail): string {
   return att.length ? `${body}\n\nAttachments: ${att.join(', ')}` : body
 }
 export const renderNote = (d: NoteDetail) => (typeof d.text === 'string' && d.text.trim() ? d.text.trim() : 'The note is empty.')
+/** what a run gets of a link besides its address */
+export const LINK_TEXT = 'The console does not read this page; only its address is given.'
 export function renderItem(it: CtxItem, d: unknown, me?: string): string {
   const o = (d || {}) as object
   if (it.k === 'work') return renderWork(it, o as WorkDetail, me)
   if (it.k === 'mail') return renderMail(o as MailDetail)
   if (it.k === 'note') return renderNote(o as NoteDetail)
+  if (it.k === 'link') return LINK_TEXT
   return renderChat(it, o as ChatDetail, me)
 }
 

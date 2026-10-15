@@ -12,6 +12,8 @@ import { jobCloseAsk, jobReopen, jobStart, selBadge, selStep } from '../actions/
 import { Pill, useReplay } from '../ui/bits.tsx'
 import { ArtName, dlHref } from '../ui/artifact.tsx'
 import { Ic } from '../ui/Icon.tsx'
+import { InputGroup } from '../ui/inputGroup.ts'
+import { inputLinks } from '../model/context.ts'
 import { CtxPanel, DescPanel } from './Context.tsx'
 import { ProposalCard } from './Proposal.tsx'
 import { Rounds } from './Rounds.tsx'
@@ -96,11 +98,11 @@ export function JobView() {
         <div className="pb jr">{j.jr.map((e, i) => <Je key={j.jr.length - i} e={e} />)}</div></section>
       <div className="side"><DescPanel j={j} /><CtxPanel j={j} />
       <section className="panel"><header><Ic n="file" /><h3>Artifacts</h3><span className="src">{arts.filter((a) => a.ok).length}/{arts.length} ready</span></header>
-        <div className="pb">{arts.length ? <ul className="al">{arts.map((a, i) => (
+        <div className="pb"><InputGroup links={inputLinks(j, pb)} /><div className="ag"><h4>Produced</h4>{arts.length ? <ul className="al">{arts.map((a, i) => (
           <li key={i} className={a.ok ? undefined : 'gh'}><Ic n={artIc(a.n)} sm /><span className="mono">{LIVE.on && a.link ? <ArtName n={a.n} link={a.link} /> : a.n}</span><span className="why">{a.s.t}</span>
             <span className="st"><span className={'lamp ' + (a.ok ? 'ok' : 'hol')} />{a.ok ? 'ready' : 'planned'}</span>
             {LIVE.on && a.link ? <a className="iconbtn adl" href={dlHref(a.link)} download={a.n} aria-label={`Download ${a.n}`} title="Download"><Ic n="download" sm /></a> : <span />}</li>))}</ul>
-          : <p className="why" style={{ margin: 0 }}>This playbook produces no files.</p>}</div></section></div>
+          : <p className="why" style={{ margin: 0 }}>This playbook produces no files.</p>}</div></div></section></div>
     </div>
   </>
 }

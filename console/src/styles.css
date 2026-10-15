@@ -238,6 +238,10 @@ kbd{font:500 11px/1 var(--mono);padding:3px 5px;border:1px solid var(--line);bor
 .al li:last-child{border-bottom:0}
 .al li.gh{color:var(--faint)}
 .al .why{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* the Artifacts panel's groups: Input (the links the job started from) and Produced (what its steps made) */
+.ag h4{margin:0 0 2px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--faint)}
+.ag+.ag{margin-top:12px}
+.ag .al li{grid-template-columns:minmax(0,1fr) auto}
 .al .adl{width:26px;height:26px}
 /* the artifact viewer */
 .md{line-height:1.55;overflow-wrap:anywhere}
