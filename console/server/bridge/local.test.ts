@@ -386,3 +386,30 @@ test("candidates run the pack's candidates verb with no scope; a pack without on
   assert.equal((await src.candidates('fixture')).status, 'bad_args')
   assert.equal((await src.candidates('nope')).status, 'not_found')
 })
+
+test('candidates: signed out is signin_required with the host; 600 are capped at 500; a non-list is source_error; the browser down is source_unavailable', async () => {
+  const talk = cdp.addTab('https://talk.example/app', { DATA: { chat: [] }, CANDIDATES: Array.from({ length: 600 }, (_, i) => ({ id: `t${i}`, name: `n${i}` })) })
+  const { src } = make({ grants: both({ scopes: {} }) })
+  await until(() => src.concepts().chat === 'ready')
+  const big = plain(await src.candidates('talk'))
+  assert.deepEqual([big.status, big.items.length, big.items[499].id], ['ok', 500, 't499'])
+  talk.ctx.CANDIDATES = { not: 'a list' }
+  assert.equal((await src.candidates('talk')).status, 'source_error')
+  talk.ctx.MODE = { candidates: { ok: false, code: 'unauthorized', message: 'signed out' } }
+  const out = plain(await src.candidates('talk'))
+  assert.deepEqual([out.status, out.host], ['signin_required', 'talk.example'])
+  const down = make({ grants: both({ scopes: {} }), browser: { state: 'unavailable', reason: 'no Edge found' } }).src
+  assert.equal((await down.candidates('talk')).status, 'source_unavailable')
+})
+
+test("candidates: only a missing verb says 'type the ids'; any other bad_args keeps the pack's own message", async () => {
+  const talk = cdp.addTab('https://talk.example/app', { DATA: { chat: [] }, CANDIDATES: [] })
+  const { src } = make({ grants: both({ scopes: {} }) })
+  await until(() => src.concepts().chat === 'ready')
+  talk.ctx.MODE = { candidates: { ok: false, code: 'bad_args', message: 'config.host must be one of a.example' } }
+  const r = plain(await src.candidates('talk'))
+  assert.equal(r.status, 'bad_args')
+  assert.match(r.message, /config\.host must be one of a\.example/)
+  assert.doesNotMatch(r.message, /type the ids/)
+  assert.match((await src.candidates('fixture')).message!, /type the ids/)
+})

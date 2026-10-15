@@ -66,6 +66,8 @@ type Feed = {
 
 const WS = /^[a-z][a-z0-9-]{0,31}$/, PACK = /^[a-z][a-z0-9-]{0,40}$/
 const BACKOFF = [1000, 2000, 5000, 10_000, 30_000], DEDUPE_MS = 10 * 60_000, GATEWAY_PORT = 47821
+// a pack's answer to a verb it lacks: `unknown …` or `no verb …`, after the runtime's `tab: `
+const NO_VERB = /^[^:]*: (unknown|no verb)\b/
 const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms))
 const within = (p: Promise<void>, ms: number) => new Promise<void>((ok) => {
   const t = setTimeout(ok, ms)
@@ -340,7 +342,7 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
         return { status: 'ok', items: list.slice(0, 500).map(({ id, name: n }) => ({ id, name: n })) }
       } catch (e) {
         if (!(e instanceof SourceFail)) throw e
-        return { status: e.code, message: e.code === 'bad_args' ? `${name} lists no candidates; type the ids` : e.message, ...(e.host ? { host: e.host } : {}) } as ConceptReply
+        return { status: e.code, message: e.code === 'bad_args' && NO_VERB.test(e.message) ? `${name} lists no candidates; type the ids` : e.message, ...(e.host ? { host: e.host } : {}) } as ConceptReply
       }
     },
     actionPack: (a) => packs.find((p) => Object.hasOwn(p.actions, a))?.name,
