@@ -2,9 +2,11 @@ import * as React from 'react'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
 import type { ProviderId, ProviderInfo, ProviderSettings } from '../live/api.ts'
+import { S } from '../model/world.ts'
 import { commit } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
 import { toast } from '../ui/toasts.tsx'
+import { Packs } from './Packs.tsx'
 
 /* Which LLM app the console uses, set on the PC: auto runs by itself (runs, Ask by itself, replies,
    the New job builder), manual is what a step's Open button opens. The paths name the apps' own
@@ -12,7 +14,7 @@ import { toast } from '../ui/toasts.tsx'
 
 const box = (t: React.ReactNode) => <div className="pb"><p className="why" style={{ margin: 0 }}>{t}</p></div>
 const head = <div className="vh"><div><div className="eyebrow">Setup</div><h1>Settings</h1>
-  <p>Which LLM app the console runs by itself, and which one a step opens in when you take it up by hand.</p></div></div>
+  <p>Which LLM app the console uses, and which sources this workspace reads.</p></div></div>
 
 export function Settings() {
   const [got, setGot] = React.useState<{ settings: ProviderSettings; providers: ProviderInfo[] } | null>(null)
@@ -61,6 +63,7 @@ export function Settings() {
           <p className="why" style={{ margin: 0 }}>Leave a path empty to use the one found by itself. A path must name an existing file.</p>
         </div></section>
     </div>
+    {S.ws ? <div style={{ marginTop: 12 }}><Packs ws={S.ws} /></div> : null}
     <div className="row" style={{ marginTop: 12 }}>
       <button className="btn pri" disabled={busy || !changed} onClick={() => void save()}><Ic n="check" sm />Save</button>
       {changed ? <button className="btn ghost" disabled={busy} onClick={() => setForm(got.settings)}>Undo changes</button> : null}

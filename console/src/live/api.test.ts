@@ -78,6 +78,20 @@ test("Sign in and Done go to the workspace's runs' browser routes; a workspace w
   } finally { await m.close() }
 })
 
+test("the packs calls go to the workspace's packs routes", async () => {
+  const m = await backend()
+  try {
+    const seen = await paths(m.loopbackPort, async () => {
+      const r = await api.packs('acme')
+      assert.equal(r.managed, false)
+      assert.ok(Array.isArray(r.packs))
+      await assert.rejects(api.putPack('acme', 'telegram-web', { on: true }), (e: api.ApiError) => e.status === 404)
+      await api.packCandidates('acme', 'telegram-web').catch(() => {})
+    })
+    assert.deepEqual(seen, ['/api/ws/acme/packs', '/api/ws/acme/packs/telegram-web', '/api/ws/acme/packs/telegram-web/candidates'])
+  } finally { await m.close() }
+})
+
 test('only a part B did not give while the bridge is up counts as missing, per workspace', () => {
   const was = { ws: api.LIVE.ws }, sel = S.ws
   try {
