@@ -46,6 +46,22 @@ The console enforces the list, not the pack: a read keeps only listed items (bef
 or an act on another id answers `out_of_scope` without running the script. The script gets the list as
 `call.scope` on every scoped call, reads only those targets, and refuses any other id itself, as a second check.
 
+### Catalog fields
+
+Settings lists every pack a workspace can turn on. These optional fields say what it shows; none changes how
+the script runs (`checkPack`, `console/server/bridge/packs.ts`).
+
+| Field | Meaning |
+|---|---|
+| `kind` | `browser` (default: a tab on this PC), `remote-browser` (a tab on a work machine) or `mcp` (an MCP server). `token` is refused for now |
+| `title` | The name Settings shows. A non-empty string |
+| `about` | What the pack gives: one line, at most 200 characters |
+| `guide` | A `.md` file next to `pack.json`, at most 2000 characters. Every run of a workspace where the pack is on reads it, under `## Sources` after the pack's title, concepts, state, scopes and acts |
+| `scopeAbout` | What a scope id is and where to find it. Settings shows it as the hint for typing ids |
+| `catalog: false` | Keeps the pack out of the Settings list. It still loads when a workspace grants it (`packs/example/` does this) |
+
+A pack without a `title` shows under its name.
+
 ### Config and hosts
 
 A pack that serves more than one workplace names no organisation, project or site. It declares the
@@ -71,6 +87,9 @@ The console checks the workspace's values with `packConfig` and renders the temp
 `call.config`. It checks them again, because it runs on its own in the tab: a missing or malformed
 value answers `bad_args` naming `config.<key>`, before any request.
 
+Hosts follow from the pack, so turning it on grants them: a core pack's come with it, and for a workspace pack
+Settings writes them into `grants.hosts` and takes them out again with the pack unless another one names them.
+
 ## The call
 
 ```js
@@ -87,6 +106,18 @@ A scoped concept or action's call also has `scope`, the allowed ids.
 
 `watch` maps a concept to the ids that jobs follow. A read includes them even when they don't
 match the pack's default query. A get-only concept, such as `image`, answers a read with `[]`.
+
+### The `candidates` verb
+
+A scoped pack may answer one more verb, `candidates`, so Settings can offer a checklist instead of typed ids.
+
+| `call.verb` | Also has | Return `data` |
+|---|---|---|
+| `candidates` | nothing: no `scope`, no `concept` | `{id, name}[]` of everything the account could scope |
+
+Only Settings calls it, when the person presses "Pick from the account"; a run never does, and `## Sources`
+never lists candidates. The console keeps the first 500. A pack with no such verb answers `bad_args` (an
+`unknown …` or `no verb …` message): that means it has none, and Settings tells the person to type the ids.
 
 ## Errors
 

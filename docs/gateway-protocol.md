@@ -45,6 +45,7 @@ Every endpoint except `/api/events` and `/api/snapshot` answers `200` with one r
 ```
 
 - Source codes: `blank`, `unauthorized`, `rate_limited`, `not_found`, `bad_args`, `source_error`, `unknown`.
+- A `get` also has `ambiguous`: no `pack` was given on a concept that more than one pack serves.
 - State codes: `bad_request`, `not_found`, `conflict`, `too_large`.
 - An act also has `outcome_unknown`: the write may or may not have happened, and the backend
   will not retry it.
@@ -54,7 +55,7 @@ Every endpoint except `/api/events` and `/api/snapshot` answers `200` with one r
 | Method, path | Body or query | `items` on ok |
 |---|---|---|
 | `GET /api/snapshot?concepts=a,b` | empty means all | the whole answer is `{bridge:{state,at}, counts:{chatUnread, mailToReply}, concepts:{name: reply}}` |
-| `GET /api/items/{concept}/{id}` | optional `?cursor=` | the detail (`*.get` schema); for a B concept, the document |
+| `GET /api/items/{concept}/{id}` | optional `?cursor=`, `?pack=` | the detail (`*.get` schema); for a B concept, the document |
 | `POST /api/act` | `{action, actionId, args}` | the act's own result, or `null` |
 | `POST /api/state/put` | `{concept, id, doc \| null, expectV}` | `{doc, replaced}`; `conflict` carries `{current}` |
 | `POST /api/state/new-job-id` | none | `{id: 'J-0001'}`, always `J-NNNN`; a console renames it to its workspace's prefix and stores the job under that id, as `put` takes any id |
@@ -67,6 +68,14 @@ sends a new mail with `{to, cc?, subject, text}`, `to` and `cc` being lists of a
 `text` of `chat.post` and `mail.send` is the draft's Markdown, as written.
 `chat.open` takes `{to}`, a person's address or user id, and answers `{chat, name}`: the 1:1 with
 that person, the existing one when there is one. The chat list need not show it until a message is in it.
+
+Several packs may serve one concept (`chat` from Teams and Telegram). Each item then carries `pack`, the
+name of the pack it came from, and its `id` stays raw. A concept reply may carry
+`packs: {<pack>: {status, message?, host?}}`, the state of each serving pack; the concept's own `status` is
+`ok` while any of them is. `GET /api/items/{concept}/{id}` takes `pack` to say which pack answers. Without it,
+the pack whose list holds the id answers; a concept that more than one pack serves, where that does not settle
+it, answers `ambiguous`, naming the packs, and `pack` goes with the retry. A `pack` that does not serve the
+concept answers `not_found`.
 
 `people` is a get-only concept: `GET /api/items/people/{query}` answers `{src, people}`, at most 10
 people `{name, mail, title}` whose name or mail has the query in it, `src` being `directory` or
