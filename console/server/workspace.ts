@@ -45,7 +45,7 @@ export type FakeSeed = {
   concepts: Record<string, GatewayItem[]>; threads: Record<string, GatewayItem[]>
   get?: Record<string, (id: string, item: GatewayItem) => unknown>
 }
-export type SourceOpts = { bus: Bus; ws: string; home: string; grants?: GrantsFn; packsDir?: string }
+export type SourceOpts = { bus: Bus; ws: string; home: string; grants?: GrantsFn; packsDir?: string | readonly string[] }
 export interface WorkspaceServer {
   page: WorkspacePage; jobPrefix: string; defaults?: Partial<WsConfig>
   /** default: gatewaySource. ws, home: the workspace's id and the console's home; grants: a managed workspace's packs, hosts and acts */

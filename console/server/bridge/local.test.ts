@@ -49,7 +49,7 @@ function stubBrowser(cdp: FakeCdp, initial: BrowserStatus = { state: 'up' }) {
 let cdp: FakeCdp, board: FakeTab
 const live: LocalSource[] = []
 before(async () => { cdp = await startFakeCdp() })
-after(async () => { await cdp.close() })
+after(async () => { for (const s of live.splice(0)) s.stop(); await cdp.close() })
 beforeEach(async () => {
   for (const s of live.splice(0)) s.stop()
   for (const t of [...cdp.tabs]) cdp.closeTab(t.id)
@@ -260,13 +260,9 @@ test('front brings the tab of a host forward; an unknown host is refused', async
   await assert.rejects(src.front('elsewhere.example'), /no tab/)
 })
 
-test('a pack whose hosts are not all granted does not load: its concepts answer source_error naming the host, and no tab opens', async () => {
-  const { src } = make({ grants: grants({ hosts: ['board.example'] }) })
-  await until(() => src.available())
-  const r = (await src.read(['work'])).work as { status: string; message: string }
-  assert.equal(r.status, 'source_error')
-  assert.match(r.message, /mail\.example is not granted/)
-  assert.match(src.status().packs.fixture, /not granted/)
-  assert.equal(cdp.tabs.length, 2)
-  assert.equal(reads(board).length, 0)
+test("a granted pack's tabs open on its own hosts with grants.hosts empty", async () => {
+  const { src } = make({ grants: grants({ hosts: [] }) })
+  const r = (await src.read(['work'])).work as { status: string }
+  assert.equal(r.status, 'ok')
+  assert.equal(src.status().packs.fixture, 'loaded')
 })

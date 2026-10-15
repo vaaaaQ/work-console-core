@@ -17,7 +17,7 @@ export function actionsOf(packs: readonly Declares[], acts?: readonly string[]):
 
 /** a managed workspace's allowed set on a source that loads no packs itself: what its granted packs declare, less
     what its grants leave out; a pack that does not load under the grants gives nothing */
-export function grantedActs(g: PackGrants, dir?: string, schemas?: string, warn: (m: string) => void = console.error): ReadonlySet<string> {
+export function grantedActs(g: PackGrants, dir?: string | readonly string[], schemas?: string, warn: (m: string) => void = console.error): ReadonlySet<string> {
   const { packs, problems } = grantedPacks(g, dir, schemas)
   for (const [n, why] of Object.entries(problems)) warn(`pack ${n} gives no actions: ${why}`)
   return actionsOf(packs, g.acts)

@@ -43,7 +43,7 @@ export type LocalOptions = {
   needDb?: string
   /** default: the console's own Edge on <home>/browser, shared by every workspace of this process */
   browser?: Browser
-  packsDir?: string; schemasDir?: string; home?: string
+  packsDir?: string | readonly string[]; schemasDir?: string; home?: string
   /** a pack's interval is in ticks; 1000 = seconds */
   tickMs?: number
   /** how long a read waits for a concept's first poll */
@@ -83,10 +83,13 @@ function defaultDocs(cfg: WsConfig, home: string, ws: string, needDb?: string): 
   return fileDocs(join(home, 'state', `${ws}.json`))
 }
 
-/** the concept names a pack that did not load would have served, read from its pack.json when it can be */
-function declared(dir: string, name: string): string[] {
+/** the concept names a pack that did not load would have served, from the first dir whose pack.json says */
+function declared(dirs: string | readonly string[], name: string): string[] {
   if (!PACK.test(name)) return []
-  try { return Object.keys(JSON.parse(readFileSync(join(dir, name, 'pack.json'), 'utf8')).concepts ?? {}) } catch { return [] }
+  for (const dir of typeof dirs === 'string' ? [dirs] : dirs) {
+    try { return Object.keys(JSON.parse(readFileSync(join(dir, name, 'pack.json'), 'utf8')).concepts ?? {}) } catch { /* next dir */ }
+  }
+  return []
 }
 
 export function isLocal(s: Source): s is LocalSource { return (s as { local?: unknown }).local === true }
@@ -103,7 +106,9 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
   const browser: Browser | null = !packs.length ? null : o.browser
     ?? sharedBrowser(profile, () => edgeBrowser({ dir: profile, exe: typeof cfg.edgePath === 'string' && cfg.edgePath ? cfg.edgePath : undefined, headless: cfg.edgeHeadless === true }))
   const carrier = cdpCarrier(() => browser?.endpoint() ?? null)
-  const pool = new TabPool(carrier, (h) => g.hosts.includes(h))
+  // a pack's own hosts come with it; grants.hosts adds the ones outside any pack
+  const allowed = new Set([...g.hosts, ...packs.flatMap((p) => [...Object.values(p.tabs).map((t) => t.host), ...p.hosts])])
+  const pool = new TabPool(carrier, (h) => allowed.has(h))
 
   const cs = new Map<string, Concept>(), rts = new Map<string, PackRuntime>(), down = new Map<string, string>()
   for (const p of packs) {

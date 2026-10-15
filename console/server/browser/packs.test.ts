@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { cpSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { PACKS_DIR, configGrants, grantedPacks, grantsFrom } from './packs.ts'
+import { PACKS_DIR, catalog, configGrants, grantedPacks, grantsFrom } from './packs.ts'
 import type { PackGrants } from './packs.ts'
 import { validator } from './schema.ts'
 import type { WsConfig } from '../workspace.ts'
@@ -13,6 +13,13 @@ const grants = (o: Partial<PackGrants> = {}): PackGrants => ({ packs: ['fixture'
 /** a packs dir holding the fixture pack, its pack.json changed by edit */
 const dirWith = (edit: (p: any) => void = () => {}, name = 'fixture') => {
   const d = tempDir('packs')
+  cpSync(join(FIXTURE_PACKS, 'fixture'), join(d, name), { recursive: true })
+  const f = join(d, name, 'pack.json'), p = JSON.parse(readFileSync(f, 'utf8'))
+  p.name = name; edit(p); writeFileSync(f, JSON.stringify(p))
+  return d
+}
+/** copies the fixture pack into d as name, its pack.json changed by edit */
+const addPack = (d: string, name: string, edit: (p: any) => void = () => {}) => {
   cpSync(join(FIXTURE_PACKS, 'fixture'), join(d, name), { recursive: true })
   const f = join(d, name, 'pack.json'), p = JSON.parse(readFileSync(f, 'utf8'))
   p.name = name; edit(p); writeFileSync(f, JSON.stringify(p))
@@ -45,14 +52,8 @@ test('a config value is escaped in a match and encoded in an open url', () => {
   assert.equal(p.tabs.board.open, 'https://board.example/a.b/R%26D%20(Ops)')
 })
 
-test('a host the grants do not list keeps the pack from loading, naming the host', () => {
-  const { packs, problems } = grantedPacks(grants({ hosts: ['board.example'] }), FIXTURE_PACKS)
-  assert.equal(packs.length, 0)
-  assert.match(problems.fixture, /mail\.example is not granted/)
-})
-
 test('a pack the grants do not list is not loaded at all', () => {
-  assert.deepEqual(grantedPacks(grants({ packs: [] }), FIXTURE_PACKS), { packs: [], problems: {} })
+  assert.deepEqual(grantedPacks(grants({ packs: [] }), FIXTURE_PACKS), { packs: [], problems: {}, elsewhere: [] })
 })
 
 test('a missing required config value is a problem', () => {
@@ -67,7 +68,7 @@ test('a pack name that is not a plain name is a problem and no file is read', ()
 })
 
 test('an absent pack is a problem', () => {
-  assert.match(grantedPacks(grants({ packs: ['nope'] }), FIXTURE_PACKS).problems.nope, /pack\.json/)
+  assert.match(grantedPacks(grants({ packs: ['nope'] }), FIXTURE_PACKS).problems.nope, /no pack nope in the catalog/)
 })
 
 test('an unknown tab, a zero interval and a missing script are problems', () => {
@@ -82,16 +83,48 @@ test('an open url that is plain http off loopback is a problem; http on 127.0.0.
   try { assert.deepEqual(grantedPacks(grants({ hosts: ['board.example', '127.0.0.1'] }), d).problems, {}) } finally { rmSync(d, { recursive: true }) }
 })
 
-test('a concept two granted packs both serve is a problem for the later one', () => {
-  const d = dirWith()
-  cpSync(join(d, 'fixture'), join(d, 'twin'), { recursive: true })
-  const f = join(d, 'twin', 'pack.json'), p = JSON.parse(readFileSync(f, 'utf8'))
-  p.name = 'twin'; p.concepts = { work: p.concepts.work }; p.actions = {}; writeFileSync(f, JSON.stringify(p))
-  try {
-    const r = grantedPacks(grants({ packs: ['fixture', 'twin'], config: { fixture: { org: 'acme' }, twin: { org: 'acme' } } }), d)
-    assert.deepEqual(r.packs.map((x) => x.name), ['fixture'])
-    assert.match(r.problems.twin, /work is served by fixture/)
-  } finally { rmSync(d, { recursive: true }) }
+test('hosts follow from the pack: a granted pack loads with no hosts granted', () => {
+  const { packs, problems } = grantedPacks(grants({ hosts: [] }), FIXTURE_PACKS)
+  assert.deepEqual(problems, {})
+  assert.deepEqual(packs.map((p) => p.name), ['fixture'])
+})
+
+test('two packs on one concept both load; an action two packs both run is a problem for the later one', () => {
+  const d = addPack(dirWith(), 'talk', (p) => { p.concepts = { chat: p.concepts.chat }; p.actions = { 'talk.post': { tab: 'mail', concept: 'chat' } } })
+  addPack(d, 'twin')
+  const cfg = { fixture: { org: 'acme' }, talk: { org: 'acme' }, twin: { org: 'acme' } }
+  const r = grantedPacks(grants({ packs: ['fixture', 'talk', 'twin'], config: cfg }), d)
+  assert.deepEqual(r.packs.map((p) => p.name), ['fixture', 'talk'])
+  assert.deepEqual(r.problems, { twin: 'work.comment is served by fixture' })
+})
+
+test('a catalog reads core packs first, then the workspace ones; a workspace pack with a core name is a problem and the core pack still loads', () => {
+  const core = dirWith(), ws = addPack(dirWith(() => {}, 'mine'), 'fixture', (p) => { p.about = 'the workspace copy' })
+  const cat = catalog([core, ws])
+  assert.deepEqual(cat.map((e) => [e.name, e.dir, e.problem ?? null]), [
+    ['fixture', join(core, 'fixture'), null],
+    ['fixture', join(ws, 'fixture'), `fixture is already a pack in ${core}; rename this one`],
+    ['mine', join(ws, 'mine'), null],
+  ])
+  const r = grantedPacks(grants({ packs: ['fixture'] }), [core, ws])
+  assert.equal(r.packs[0].script.startsWith('// A test pack'), true)
+  assert.deepEqual(r.problems, {})
+})
+
+test('a pack with catalog false is not listed but loads when granted; its guide is read', () => {
+  const d = dirWith((p) => { p.catalog = false; p.guide = 'guide.md' })
+  writeFileSync(join(d, 'fixture', 'guide.md'), 'Use bridge_get on work items.')
+  const [e] = catalog(d)
+  assert.deepEqual([e.listed, e.guide], [false, 'Use bridge_get on work items.'])
+  assert.deepEqual(grantedPacks(grants(), d).packs.map((p) => p.name), ['fixture'])
+})
+
+test('a granted mcp pack goes to elsewhere; an ungranted catalog pack is not loaded; a missing one is a problem', () => {
+  const d = addPack(dirWith(), 'srv', (p) => {
+    for (const k of ['script', 'tabs', 'concepts', 'actions', 'hosts', 'config', 'zone']) delete p[k]
+    Object.assign(p, { kind: 'mcp', title: 'Srv', about: 'a server', mcp: { type: 'http', url: 'http://127.0.0.1:1/mcp' } })
+  })
+  assert.deepEqual(grantedPacks(grants({ packs: ['srv', 'gone'] }), d), { packs: [], problems: { gone: 'no pack gone in the catalog' }, elsewhere: ['srv'] })
 })
 
 test('configGrants reads packs, hosts, packConfig and acts from the workspace config, empty when absent', () => {

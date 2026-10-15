@@ -14,7 +14,7 @@ import { GATEWAY_ACTIONS, grantedActs } from './bridge/actions.ts'
 import { keepJobChats } from './bridge/kept.ts'
 import { isLocal } from './bridge/local.ts'
 import { browserPlugin } from './browser/plugin.ts'
-import { grantsFrom } from './browser/packs.ts'
+import { grantsFrom, wsPackDirs } from './browser/packs.ts'
 import { startFakeGateway } from './bridge/fake.ts'
 import type { FakeGateway } from './bridge/fake.ts'
 import { READY } from './bridge/wire.ts'
@@ -58,6 +58,8 @@ export interface Space {
   agent: AgentSession | null
   /** the actions the page may send: a gateway's eight, or what a managed workspace's grants allow */
   acts: ReadonlySet<string>
+  /** where this workspace's catalog is read: core packs, then its own */
+  packDirs: string[]
   bus: Bus; source: Source; store: Store; jobs: Jobs; runner: Runner
   /** the workspace's knowledge folder */
   notes: Notes
@@ -166,11 +168,12 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   const cfg: WsConfig = { ...o.cfg, ...(fake ? { gatewayUrl: fake.url } : {}), ...(grants ? { runTools: grants.runTools } : {}) }
   const mcp = grants ? grants.mcp : w.llm?.mcp
   const packGrants = grants ? grantsFrom(grants) : undefined
+  const packDirs = o.packsDir ? [o.packsDir] : wsPackDirs(id, o.root)
   // the fake stands in for whatever source and store the workspace brings
   const source = fake ? gatewaySource(cfg, { bus, token: () => fake.token })
-    : w.source?.(cfg, { bus, ws: id, home: o.home, grants: packGrants, packsDir: o.packsDir }) ?? gatewaySource(cfg, { bus })
+    : w.source?.(cfg, { bus, ws: id, home: o.home, grants: packGrants, packsDir: packDirs }) ?? gatewaySource(cfg, { bus })
   // a local source acts through the packs it loaded; a managed one on a gateway through what its grants would load
-  const acts = isLocal(source) ? source.actions() : packGrants ? grantedActs(packGrants(cfg), o.packsDir) : GATEWAY_ACTIONS
+  const acts = isLocal(source) ? source.actions() : packGrants ? grantedActs(packGrants(cfg), packDirs) : GATEWAY_ACTIONS
   const builtins = { ...CORE_PB, ...w.page.playbooks }
   const store = (fake ? undefined : w.store?.(source, cfg, { bus, home: o.home, ws: id, prefix: w.jobPrefix, playbooks: builtins }))
     ?? bridgeStore({ bridge: source, bus, playbooks: builtins, prefix: w.jobPrefix })
@@ -283,7 +286,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   })
 
   return {
-    id, page: w.page, prefix: w.jobPrefix, cfg, grants, agent, acts, bus, source, store, jobs, runner, notes, ctx, known, fake, build,
+    id, page: w.page, prefix: w.jobPrefix, cfg, grants, agent, acts, packDirs, bus, source, store, jobs, runner, notes, ctx, known, fake, build,
     putPlaybook: async (pid, pb, tpl) => { await store.putPlaybook(pid, pb, tpl); await loadPbs() },
     start: startItem({ jobs, ctx, bridge: source, page: w.page }),
     plugins: [...browserPlugin(source), ...runBrowserPlugin(runBr), ...w.plugins?.({ id, cfg, home: o.home, jobs, source, artifactsDir: o.artifactsDir, http: guardedHttp(grants?.hosts ?? null) }) ?? []],
