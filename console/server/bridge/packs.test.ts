@@ -141,3 +141,11 @@ test('readPack checks the guide file and its length, and fills an mcp pack with 
   const r = readPack(m, all)
   assert.deepEqual([r.script, r.tabs, r.concepts, packKind(r)], ['', {}, {}, 'mcp'])
 })
+
+test('files on a concept is true or false; anything else is a problem', () => {
+  const p = sound() as any
+  p.concepts.work.files = true
+  assert.deepEqual(checkPack(p, all), [])
+  p.concepts.work.files = 'yes'
+  assert.ok(checkPack(p, all).some((m) => /concepts\.work: files is not true or false/.test(m)), checkPack(p, all).join('; '))
+})

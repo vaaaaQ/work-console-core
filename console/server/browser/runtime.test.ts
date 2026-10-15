@@ -148,3 +148,24 @@ test('watched keeps 50 ids per concept, the newest, and drops those older than 2
   t = 24 * 3600_000 + 51
   assert.deepEqual(w.snapshot(), { work: ['W-51'], chat: ['c1'] })
 })
+
+test('a file read waits fileMs, where a read of the same tab gives up after evalMs', async () => {
+  const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms))
+  const file = { name: 'a.pdf', mime: 'application/pdf', size: 3, base64: 'YWJj' }
+  const board = cdp.addTab('https://board.example/acme/core', { DATA: { work: WORK }, FILES: { work: { 'W-1/7': file } }, MODE: { work: async () => { await sleep(500); return null } } })
+  const carrier = cdpCarrier(() => cdp.url)
+  const rt = new PackRuntime(pack, new TabPool(carrier, (h) => h.endsWith('.example')), carrier, { evalMs: 300, fileMs: 2000, settleMs: 20, now: () => clock })
+  assert.deepEqual(plain(await rt.file('board', { verb: 'file', concept: 'work', id: 'W-1', file: '7' })), file)
+  assert.equal(board.reloads, 0)
+  const e = await failure(read(rt))
+  assert.equal(e.code, 'source_error')
+  assert.match(e.message, /within 300 ms/)
+})
+
+test('too_large passes through as itself, with no reload and no retry', async () => {
+  const { rt, board } = setup({ MODE: { work: { ok: false, code: 'too_large', message: 'a.mp4 is 48.2 MB, the limit is 20 MB' } } })
+  cdp.log.length = 0
+  const e = await failure(rt.file('board', { verb: 'file', concept: 'work', id: 'W-1', file: '7' }))
+  assert.deepEqual([e.code, board.reloads, evals()], ['too_large', 0, 1])
+  assert.match(e.message, /48\.2 MB/)
+})

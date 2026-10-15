@@ -42,7 +42,7 @@ export type LoadedPack = {
   core: boolean
   tabs: Record<string, { match: RegExp; open: string; host: string }>
   hosts: string[]
-  concepts: Record<string, { tab: string; interval: number; cap: number; scope?: string }>
+  concepts: Record<string, { tab: string; interval: number; cap: number; scope?: string; files?: boolean }>
   actions: Record<string, { tab: string; concept: string; scope?: string }>
 }
 

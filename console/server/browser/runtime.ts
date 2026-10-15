@@ -9,7 +9,7 @@ import type { TabPool } from './tabs.ts'
 export type Call = Record<string, unknown>
 type Envelope = { ok: boolean; data?: unknown; code?: unknown; message?: unknown; retryAfter?: unknown; tokenExpiresAt?: unknown }
 
-/** a wire error code: signin_required (with the tab's host), rate_limited, source_error, source_unavailable, bad_args, not_found */
+/** a wire error code: signin_required (with the tab's host), rate_limited, source_error, source_unavailable, bad_args, not_found, too_large */
 export class SourceFail extends Error {
   code: string; retryAfter?: number; host?: string
   constructor(code: string, message: string, o: { retryAfter?: number; host?: string } = {}) { super(message); this.code = code; this.retryAfter = o.retryAfter; this.host = o.host }
@@ -17,20 +17,20 @@ export class SourceFail extends Error {
 /** the act may or may not have run */
 export class Unknown extends Error {}
 
-const PASS = new Set(['bad_args', 'not_found'])
+const PASS = new Set(['bad_args', 'not_found', 'too_large'])
 const TOKEN_MARGIN = 5 * 60_000, REFRESH_GAP = 5 * 60_000, RECENT_RELOAD = 15_000, SIGNIN_QUIET = 10 * 60_000
 const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms))
 const msg = (e: Envelope | null) => (e && typeof e.message === 'string' ? e.message : 'no message')
 
 export class PackRuntime {
   private pack: LoadedPack; private pool: TabPool; private carrier: TabCarrier
-  private evalMs: number; private actMs: number; private settleMs: number; private now: () => number; private log: (l: string) => void
+  private evalMs: number; private actMs: number; private fileMs: number; private settleMs: number; private now: () => number; private log: (l: string) => void
   private reloadedAt = new Map<string, number>(); private signedOutAt = new Map<string, number>()
   private acting = new Map<string, number>(); private reloading = new Map<string, Promise<void>>()
 
-  constructor(pack: LoadedPack, pool: TabPool, carrier: TabCarrier, o: { evalMs?: number; actMs?: number; settleMs?: number; now?: () => number; log?: (l: string) => void } = {}) {
+  constructor(pack: LoadedPack, pool: TabPool, carrier: TabCarrier, o: { evalMs?: number; actMs?: number; fileMs?: number; settleMs?: number; now?: () => number; log?: (l: string) => void } = {}) {
     this.pack = pack; this.pool = pool; this.carrier = carrier
-    this.evalMs = o.evalMs ?? 5000; this.actMs = o.actMs ?? 20000; this.settleMs = o.settleMs ?? 3000
+    this.evalMs = o.evalMs ?? 5000; this.actMs = o.actMs ?? 20000; this.fileMs = o.fileMs ?? 120_000; this.settleMs = o.settleMs ?? 3000
     this.now = o.now ?? Date.now; this.log = o.log ?? (() => {})
     for (const [t, s] of Object.entries(pack.tabs)) pool.add(this.key(t), s)
   }
@@ -42,11 +42,11 @@ export class PackRuntime {
     return `(${this.pack.script})(${JSON.stringify(full)})`
   }
 
-  async read(tab: string, call: Call): Promise<unknown> {
+  async read(tab: string, call: Call, ms = this.evalMs): Promise<unknown> {
     const key = this.key(tab), expr = this.expression(call)
     let recovered = false
     for (;;) {
-      const [env, failure] = await this.evaluate(key, expr, this.evalMs, true)
+      const [env, failure] = await this.evaluate(key, expr, ms, true)
       const code = failure ?? this.code(env)
       if (code === null) {
         this.signedOutAt.delete(key)
@@ -59,18 +59,21 @@ export class PackRuntime {
         continue
       }
       if (code === 'unauthorized' && recovered) this.signedOutAt.set(key, this.now())
-      throw this.readFail(tab, key, code, env)
+      throw this.readFail(tab, key, code, env, ms)
     }
   }
 
-  private readFail(tab: string, key: string, code: string, env: Envelope | null): SourceFail {
+  /** a file's bytes as base64: a read that may take fileMs, since a download outlasts evalMs */
+  file(tab: string, call: Call): Promise<unknown> { return this.read(tab, call, this.fileMs) }
+
+  private readFail(tab: string, key: string, code: string, env: Envelope | null, ms: number): SourceFail {
     if (code === 'unauthorized') return new SourceFail('signin_required', `${tab}: sign-in required at ${this.pool.host(key)} (${msg(env)})`, { host: this.pool.host(key) })
     if (code === 'rate_limited') {
       const r = Number(env?.retryAfter)
       return new SourceFail('rate_limited', `${tab}: rate limited`, { retryAfter: Number.isFinite(r) && r > 0 ? Math.min(Math.max(r, 1), 3600) : 60 })
     }
     if (code === 'blank') return new SourceFail('source_error', `${tab}: the tab stays blank after a reload`)
-    if (code === 'timeout') return new SourceFail('source_error', `${tab}: no answer within ${this.evalMs} ms after a reload`)
+    if (code === 'timeout') return new SourceFail('source_error', `${tab}: no answer within ${ms} ms after a reload`)
     if (code === 'unreachable') return new SourceFail('source_unavailable', `${tab}: ${msg(env)}`)
     if (PASS.has(code)) return new SourceFail(code, `${tab}: ${msg(env)}`)
     return new SourceFail('source_error', `${tab}: ${code}: ${msg(env)}`)

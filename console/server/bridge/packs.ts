@@ -31,8 +31,8 @@ export interface PackManifest {
   /** every host the script may call, `{key}` templates allowed */
   hosts?: string[]
   tabs: Record<string, { match: string; open: string }>
-  /** scope: the item field a workspace's scopes list; a scoped concept serves only the listed ids */
-  concepts: Record<string, { tab: string; interval: number; cap: number; scope?: string }>
+  /** scope: the item field a workspace's scopes list; a scoped concept serves only the listed ids; files: the pack answers the file verb for this concept */
+  concepts: Record<string, { tab: string; interval: number; cap: number; scope?: string; files?: boolean }>
   /** scope: the arg that names the target; a scoped action runs only on a listed id */
   actions?: Record<string, { tab: string; concept: string; scope?: string }>
 }
@@ -111,6 +111,7 @@ export function checkPack(p: unknown, hasSchema: (key: string) => boolean = () =
     if (!(Number.isInteger(c.cap) && c.cap > 0)) out.push(`concepts.${n}: cap is not a positive integer`)
     if (!hasSchema(`${n}.item`)) out.push(`concepts.${n}: no schema ${n}.item`)
     if (c.scope !== undefined && (typeof c.scope !== 'string' || !FIELD.test(c.scope))) out.push(`concepts.${n}: scope is not a field name`)
+    if (c.files !== undefined && typeof c.files !== 'boolean') out.push(`concepts.${n}: files is not true or false`)
   }
   for (const [n, a] of Object.entries(isObj(p.actions) ? p.actions : {})) {
     if (!ACTION.test(n)) out.push(`actions.${n}: not an action name`)
