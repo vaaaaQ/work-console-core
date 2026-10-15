@@ -22,7 +22,7 @@ import type { Voice } from '../voice/whisper.ts'
 import { Settings } from '../settings.ts'
 import type { Plugin, WorkspaceServer, WsConfig } from '../workspace.ts'
 import { bridgeOf, createApp } from './app.ts'
-import type { Bridge } from './app.ts'
+import type { Bridge, Deps } from './app.ts'
 import { tempDir } from '../testdirs.ts'
 
 /* The whole backend over real sockets: two workspaces, each on its own fake gateway with its store in B,
@@ -69,7 +69,7 @@ function expectErrors(t: TestContext, ...pats: RegExp[]) {
 type Fakes = Record<string, FakeGateway>
 /** acme and beta (or acme alone), each on its own fake gateway; `before` runs before the sources start.
     A setup that fails partway closes what it opened, so a red run fails instead of hanging. */
-async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[]; before?: (f: Fakes) => void; voice?: Voice; format?: Format; root?: string; restart?: () => void } = {}) {
+async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[]; before?: (f: Fakes) => void; voice?: Voice; format?: Format; root?: string; restart?: () => void; grantsWrite?: Deps['grantsWrite'] } = {}) {
   const dir = tempDir('http'), web = join(dir, 'web')
   const list: Space[] = [], servers: Server[] = []
   let h: ReturnType<typeof createApp> | null = null, unhub = () => {}
@@ -93,7 +93,7 @@ async function setup(o: { page?: boolean; one?: boolean; betaPlugins?: Plugin[];
     const loop = createServer((q, s) => h!.loopback(q, s)), lanS = createServer((q, s) => h!.lan(q, s))
     servers.push(loop, lanS)
     const lp = await listen(loop), np = await listen(lanS)
-    h = createApp({ loopbackPort: lp, lanPort: 7411, pcName: 'pc', hub: bus, spaces, pairing, notify, staticDirs: [web], artifactsDir: join(dir, 'arts'), tz: 'Asia/Tokyo', settings: new Settings(dir), voice: o.voice, format: o.format,
+    h = createApp({ loopbackPort: lp, lanPort: 7411, pcName: 'pc', hub: bus, spaces, pairing, notify, staticDirs: [web], artifactsDir: join(dir, 'arts'), tz: 'Asia/Tokyo', settings: new Settings(dir), voice: o.voice, format: o.format, grantsWrite: o.grantsWrite,
       ...(o.restart ? { restart: { home: join(dir, 'home'), want: o.restart } } : {}) })
     o.before?.(fakes)
     for (const s of list) s.source.start()
@@ -480,6 +480,31 @@ test("a managed workspace acts only through what its granted packs declare and i
     const a = await call(lp, 'POST', '/api/ws/acme/act', { body: { action: 'chat.post', args: { chatName: chat.name, text: 'hello' } } })
     assert.equal(a.status, 200, a.text)
     assert.deepEqual(fakes.acme.acts.map((x) => x.action), ['chat.post'])
+  } finally { await stop() }
+})
+
+test('the packs catalog: a managed workspace lists it and a failed Settings write says why and lets go of the restart; an unmanaged one is read-only', async () => {
+  const root = tempDir('root')
+  mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })
+  writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ packs: ['m365-mail'], hosts: [], acts: [] }))
+  const seen: string[] = []
+  const grantsWrite = { ops: { acceptGrants: async () => ({ ok: false as const, error: 'git refused' }) }, hold: () => { seen.push('hold'); return () => seen.push('release') } }
+  const { lp, stop } = await setup({ root, grantsWrite })
+  try {
+    const g = await call(lp, 'GET', '/api/ws/acme/packs')
+    assert.equal(g.status, 200, g.text)
+    assert.equal(g.json.managed, true)
+    const on = (g.json.packs as { name: string; on: boolean }[]).filter((p) => p.on).map((p) => p.name)
+    assert.deepEqual(on, ['m365-mail'])
+    assert.ok(g.json.packs.length > 1, 'the catalog lists the packs that are off too')
+    const u = await call(lp, 'GET', '/api/ws/beta/packs')
+    assert.equal(u.json.managed, false)
+    const no = await call(lp, 'PUT', '/api/ws/beta/packs/m365-mail', { body: { on: true } })
+    assert.equal(no.status, 404); assert.equal(no.json.error.code, 'not_managed')
+    const bad = await call(lp, 'PUT', '/api/ws/acme/packs/m365-mail', { body: { on: false } })
+    assert.equal(bad.status, 409, bad.text); assert.equal(bad.json.error.code, 'grants_failed'); assert.match(bad.json.error.message, /git refused/)
+    assert.deepEqual(seen, ['hold', 'release'])
+    assert.equal((await call(lp, 'PUT', '/api/ws/acme/packs/nope', { body: { on: true } })).json.error.code, 'not_found')
   } finally { await stop() }
 })
 

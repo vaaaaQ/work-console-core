@@ -1,12 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { PackKind } from '../../src/model/packs.ts'
 import { coreDir } from '../config.ts'
 
+export type { PackKind }
 export const PACKS_DIR = coreDir('packs')
 
 /** one setting a pack takes from its workspace; the workspace's value reaches the script as call.config */
 export type ConfigKey = { about: string; list?: boolean; required?: boolean; pattern?: string; enum?: string[]; default?: string | string[] }
-export type PackKind = 'browser' | 'remote-browser' | 'mcp'
 export const GUIDE_MAX = 2000
 const KINDS: readonly string[] = ['browser', 'remote-browser', 'mcp']
 export interface PackManifest {

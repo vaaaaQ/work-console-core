@@ -8,6 +8,9 @@ import type { UpdateKind, UpdateView } from '../../src/model/update.ts'
 import type { Cmd, Job, Playbook, RunIntent, RunRec, Tpl } from '../../src/model/types.ts'
 import { chatsOfPack, resolveAct } from '../bridge/actions.ts'
 import { isLocal } from '../bridge/local.ts'
+import { catalog, configGrants } from '../browser/packs.ts'
+import { applyPackChange, settingsWrite, viewsFor } from '../browser/catalogView.ts'
+import type { Ops } from '../agent/ops.ts'
 import { keep, withKept, withKeptNames } from '../bridge/kept.ts'
 import { GatewayError, READY } from '../bridge/wire.ts'
 import type { ActRes, ConceptReply } from '../bridge/wire.ts'
@@ -50,6 +53,8 @@ export interface Deps {
   /** every space's events on one bus, each tagged with its workspace id */
   hub: Bus
   spaces: Spaces
+  /** how Settings commits grants.json (the agent's ops, held across the restart); none = Settings writes nothing */
+  grantsWrite?: { ops: Pick<Ops, 'acceptGrants'>; hold(): () => void }
   pairing: Pairing; notify?: Notify
   staticDirs: string[]; artifactsDir: string
   /** the PC's zone, for /api/state's home */
@@ -488,6 +493,29 @@ export function createApp(d: Deps) {
     ['POST', /^\/board\/([^/]+)\/start$/, async (r, s) => {
       const b = await r.body()
       return s.start(r.p[0], typeof b.pb === 'string' && b.pb ? b.pb : undefined, 'page')
+    }],
+    ['GET', /^\/packs$/, (_r, s) => ({ managed: s.grants !== null, packs: viewsFor(s) })],
+    ['GET', /^\/packs\/([^/]+)\/candidates$/, async (r, s) => {
+      if (!isLocal(s.source)) throw new HttpError(404, 'not_local', `workspace ${s.id} reads no packs on this PC`)
+      const c = await s.source.candidates(r.p[0])
+      if (c.status !== 'ok') throw new HttpError(c.status === 'not_found' ? 404 : 503, c.status, c.message || c.status)
+      return { candidates: c.items }
+    }],
+    ['PUT', /^\/packs\/([^/]+)$/, async (r, s) => {
+      const gw = d.grantsWrite
+      if (s.grants === null || !gw) throw new HttpError(404, 'not_managed', `workspace ${s.id} has no grants.json: its packs are set in its config`)
+      const cat = catalog(s.packDirs), e = cat.find((x) => x.name === r.p[0])
+      if (!e) throw new HttpError(404, 'not_found', `no pack ${r.p[0]}`)
+      const b = await r.body()
+      const list = (v: unknown) => (Array.isArray(v) && v.every((x) => typeof x === 'string') ? v as string[] : undefined)
+      const ch = { ...(typeof b.on === 'boolean' ? { on: b.on } : {}), ...(list(b.scopes) ? { scopes: list(b.scopes) } : {}), ...(list(b.acts) ? { acts: list(b.acts) } : {}), ...(list(b.llmActs) ? { llmActs: list(b.llmActs) } : {}) }
+      const next = applyPackChange(s.grants, e, ch, cat, configGrants(s.cfg).config)
+      if (!next) return { managed: true, packs: viewsFor(s) }
+      const w = await settingsWrite(gw, s.id, next.grants, next.reason)
+      // the restart waits for this reply to go out
+      r.res.once('finish', w.done); r.res.once('close', w.done)
+      if (!w.applied.ok) { w.done(); throw new HttpError(409, 'grants_failed', [w.applied.error, ...(w.applied.failures ?? [])].join('\n')) }
+      return { managed: true, packs: viewsFor({ ...s, grants: next.grants }) }
     }],
     ['GET', /^\/sources$/, (r, s) => sources(s, (r.q.get('concepts') || 'chat,mail,cal').split(',').map((x) => x.trim()).filter(Boolean))],
     ['GET', /^\/sources\/([^/]+)\/([^/]+)$/, async (r, s) => ({ item: await item(s, r.p[0], r.p[1], r.q.get('cursor') || undefined, r.q.get('pack') || undefined) })],

@@ -148,7 +148,7 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
   }
 
   app = createApp({
-    loopbackPort, lanPort: lanPort ?? cfg.lanPort, pcName: cfg.pcName, hub: bus, spaces, pairing, notify,
+    loopbackPort, lanPort: lanPort ?? cfg.lanPort, pcName: cfg.pcName, hub: bus, spaces, grantsWrite: agent, pairing, notify,
     staticDirs: [join(PKG, 'dist'), join(PKG, 'public')], artifactsDir, tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
     mcp: mcpHandler({ tools: jobTools({ spaces }), token: () => readToken(mcpToken) }),
     settings: new Settings(cfg.home),
