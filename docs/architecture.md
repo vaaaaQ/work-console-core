@@ -226,6 +226,30 @@ playbooks, marks) in PostgreSQL rows of kind `state` (`server/browser/pgdocs.ts`
 | Acts kept | an act's id is kept with its result, a refusal included, so one Send is never sent twice |
 | Run MCP | the read tools a run gets as `bridge`, served by the source itself when the workspace asks (`mcp: true`); never on the gateway's port 47821, and `gatewayUrl` with port 0 takes a free one. The template asks once its grants list a pack, on a free port and `<home>/llm-<id>.token`; with no pack granted its runs get no bridge tools |
 
+### Grants in Settings
+
+A managed workspace's `grants.json` is also edited on the PC's Settings page, each change one commit through the
+agent's `acceptGrants` and a restart that waits for the reply, so there is no Save button.
+
+```mermaid
+flowchart LR
+  run[run] -->|request_access| q[(access-requests/#lt;id#gt;.json)]
+  ag[agent] -->|propose_grants| pend[agent pending]
+  q --> req[Settings · Requests<br/>and Approvals]
+  pend --> req
+  req -->|accept| g[(grants.json commit)]
+  acc[Settings · Packs, Access] -->|each change| g
+  req -->|reject + reason| j[job journal / agent]
+```
+*Runs and the agent only ask; a person's click writes. Packs and Access write directly.*
+
+| Piece | What |
+|---|---|
+| Packs | `GET /packs`, `PUT /packs/<name> {on, scopes, acts, llmActs}` (`server/browser/catalogView.ts`) |
+| Access | `GET /grants`, `PUT /grants {hosts, runTools, mcp, browser}`: each field given replaces the grants' own. A granted pack's own MCP server is changed only in Packs; `bridge`, `run`, `agent` and `browser` are refused as MCP names (`server/access.ts`) |
+| Run requests | a run's `request_access {add: {packs, hosts, runTools, browser}, reason}`, at most 3 a run: only additions, never an MCP config (an MCP server comes as an `mcp` pack). It is refused when the grants already hold it all; the same add from another step joins the waiting request; at most 20 wait, in `<home>/access-requests/<id>.json`. The run then hands in `not_done`. Manual sessions do not get the tool |
+| Decide | `POST /grants/requests/<id> {accept, reason}`: accept commits what the add changes now (packs turned on as Packs would); reject needs a reason. Either way each asking job gets a journal line. A new request is a `source` event of concept `access`, which the page reloads and Web Push announces once |
+
 ### Workspace agent
 
 A workspace with `workspaces/<id>/grants.json` is **managed**: it has an agent, one multi-turn conversation that

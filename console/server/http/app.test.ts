@@ -544,6 +544,71 @@ test('a Settings write that commits holds the restart until its reply has gone o
   } finally { await stop() }
 })
 
+test('Settings → Access: hosts, runTools, MCP and browser are one grants.json commit each; an unmanaged workspace is read-only', async () => {
+  const root = tempDir('root')
+  mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })
+  writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ packs: ['m365-mail'], hosts: ['graph.microsoft.com'], acts: [] }))
+  const seen: string[] = []
+  const grantsWrite = {
+    ops: { acceptGrants: async (_ws: string, _g: unknown, why: string) => { seen.push(`commit ${why}`); return { ok: true as const, sha: 'abc1234def', files: [], summary: why } } },
+    hold: () => () => seen.push('release'),
+  }
+  const { lp, stop } = await setup({ root, grantsWrite })
+  try {
+    const g = await call(lp, 'GET', '/api/ws/acme/grants')
+    assert.equal(g.status, 200, g.text)
+    assert.deepEqual([g.json.managed, g.json.grants.hosts, g.json.requests], [true, ['graph.microsoft.com'], []])
+    const u = await call(lp, 'GET', '/api/ws/beta/grants')
+    assert.deepEqual([u.json.managed, u.json.grants], [false, null])
+    const no = await call(lp, 'PUT', '/api/ws/beta/grants', { body: { hosts: ['x.example'] } })
+    assert.equal(no.status, 404); assert.equal(no.json.error.code, 'not_managed')
+    const r = await call(lp, 'PUT', '/api/ws/acme/grants', { body: { hosts: ['graph.microsoft.com', 'api.example.org'], browser: { allow: ['portal.example.org'] } } })
+    assert.equal(r.status, 200, r.text); assert.equal(r.json.restart, true)
+    assert.deepEqual(r.json.grants.hosts, ['graph.microsoft.com', 'api.example.org'])
+    await until(() => seen.includes('release'))
+    assert.deepEqual(seen, ['commit + host api.example.org; + browser allowlist: portal.example.org (Settings)', 'release'])
+    const same = await call(lp, 'PUT', '/api/ws/acme/grants', { body: { hosts: ['graph.microsoft.com'] } })
+    assert.equal(same.json.restart, false, 'the grants this process holds already say so')
+    for (const body of [{}, { hosts: 'x' }, { mcp: { agent: { command: 'x' } } }, { browser: { allow: [] } }]) {
+      const b = await call(lp, 'PUT', '/api/ws/acme/grants', { body })
+      assert.equal(b.status, 400, JSON.stringify(body)); assert.equal(b.json.error.code, 'bad_args')
+    }
+    assert.equal(seen.length, 2, 'a refused body writes nothing')
+  } finally { await stop() }
+})
+
+test("a run's access request: Accept commits what it adds and tells the step; Reject needs a reason and tells it too", async () => {
+  const root = tempDir('root')
+  mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })
+  writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ packs: [], hosts: [], acts: [] }))
+  const seen: string[] = []
+  const grantsWrite = {
+    ops: { acceptGrants: async (_ws: string, _g: unknown, why: string) => { seen.push(why); return { ok: true as const, sha: 'abc1234def', files: [], summary: why } } },
+    hold: () => () => {},
+  }
+  const { lp, spaces, stop } = await setup({ root, grantsWrite })
+  try {
+    const { job, step } = await openStep(lp)
+    const rs = spaces.get('acme').requests!
+    const id = rs.add({ hosts: ['api.example.org'] }, 'reads the API', `${job.id}/${step}`, ['+ host api.example.org'])
+    const g = await call(lp, 'GET', '/api/ws/acme/grants')
+    assert.deepEqual(g.json.requests.map((x: { id: string; lines: string[] }) => [x.id, x.lines]), [[id, ['+ host api.example.org']]])
+    const ok = await call(lp, 'POST', `/api/ws/acme/grants/requests/${id}`, { body: { accept: true } })
+    assert.equal(ok.status, 200, ok.text); assert.equal(ok.json.restart, true); assert.deepEqual(ok.json.requests, [])
+    assert.deepEqual(seen, [`+ host api.example.org: reads the API (asked by ${job.id}/${step})`])
+    const jr = () => spaces.get('acme').jobs.get(job.id).then((j) => j!.jr.map((e) => e.o))
+    assert.ok((await jr()).some((o) => /^Access granted in abc1234/.test(o)), JSON.stringify(await jr()))
+    assert.equal((await call(lp, 'POST', `/api/ws/acme/grants/requests/${id}`, { body: { accept: true } })).status, 404)
+    const id2 = rs.add({ runTools: ['Bash'] }, 'runs a script', `${job.id}/${step}`, ['+ runTool Bash'])
+    const why = await call(lp, 'POST', `/api/ws/acme/grants/requests/${id2}`, { body: { accept: false } })
+    assert.equal(why.status, 400)
+    const no = await call(lp, 'POST', `/api/ws/acme/grants/requests/${id2}`, { body: { accept: false, reason: 'use the act instead' } })
+    assert.equal(no.status, 200, no.text); assert.equal(no.json.restart, false)
+    assert.ok((await jr()).some((o) => o.startsWith('Access request rejected: use the act instead')))
+    assert.equal(seen.length, 1, 'a rejection writes nothing')
+  } finally { await stop() }
+})
+
 test("calendar times read in the workspace's team zone; a workspace without one gets none", async () => {
   const { lp, stop } = await setup()
   try {

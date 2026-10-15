@@ -15,7 +15,9 @@ import { keepJobChats } from './bridge/kept.ts'
 import { isLocal } from './bridge/local.ts'
 import { browserPlugin } from './browser/plugin.ts'
 import { viewsFor } from './browser/catalogView.ts'
-import { grantsFrom, wsPackDirs } from './browser/packs.ts'
+import { catalog, configGrants, grantsFrom, wsPackDirs } from './browser/packs.ts'
+import { accessAddIn, accessRequests, addLines } from './access.ts'
+import type { AccessRequests } from './access.ts'
 import { startFakeGateway } from './bridge/fake.ts'
 import type { FakeGateway } from './bridge/fake.ts'
 import { READY } from './bridge/wire.ts'
@@ -36,6 +38,7 @@ import type { Notes } from './knowledge/notes.ts'
 import { autoAsk } from './llm/autoAsk.ts'
 import { resolveContext } from './llm/context.ts'
 import { Runner } from './llm/runner.ts'
+import type { RunAccess } from './llm/runner.ts'
 import { sourcesSection } from './llm/sources.ts'
 import { providerPick } from './llm/providers.ts'
 import { Settings } from './settings.ts'
@@ -65,6 +68,8 @@ export interface Space {
   bus: Bus; source: Source; store: Store; jobs: Jobs; runner: Runner
   /** the workspace's knowledge folder */
   notes: Notes
+  /** the runs' requests to add to the grants; null = an unmanaged workspace */
+  requests: AccessRequests | null
   ctx(): T.Ctx; putPlaybook(id: string, pb: Playbook | null, tpl?: Record<string, Tpl[]>): Promise<void>
   start: ReturnType<typeof startItem>; plugins: Plugin[]; known: Map<string, Job>; fake: FakeGateway | null
   /** fills the New job form from what the user said; it only reads */
@@ -201,6 +206,17 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   })
 
   const jobs = new Jobs({ store, bus, ctx, gate, via: source.via })
+  // a run asks; the person decides in Settings or Approvals, and the page and the push hear of it as a source
+  const requests = grants ? accessRequests(join(o.home, 'access-requests', `${id}.json`), (upserts, removes) => bus.emit({ kind: 'source', concept: 'access', upserts, removes })) : null
+  const access: RunAccess | undefined = grants && requests ? async (x, reason, by) => {
+    const add = accessAddIn(x), why = reason.replace(/\s+/g, ' ').trim()
+    if (!why) throw new Error('a reason is needed')
+    const lines = addLines(grants, add, catalog(packDirs), configGrants(cfg).config)
+    if (lines[0]?.startsWith('! ')) throw new Error(lines[0].slice(2))
+    if (!lines.length) throw new Error('the workspace already grants all of it; what fails is something else')
+    requests.add(add, why, by, lines)
+    return `asked for ${lines.join(', ')}; it waits for the user in Settings and Approvals. Now submit_draft with outcome not_done.`
+  } : undefined
   // a new run takes the auto provider the settings name now; a resume or a reply the one its run recorded
   const settings = new Settings(o.home), rb = runBridge(w, source, cfg)
   // the runs' browser: a managed workspace's grants say, else its server.ts; Edge or Chrome as the settings name at each launch
@@ -228,6 +244,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     acts: grants?.llmActs ? { allowed: grants.llmActs.filter((a) => acts.has(a)), act: (a) => source.act(a) } : undefined,
     // the packs' state is read from the source at each run start
     sources: () => runSources({ packDirs, grants, cfg, source }),
+    access,
   })
   const offAuto = autoAsk({ jobs, runner, ctx, on: cfg.autoAsk === true, delay: o.askDelay })
   // a workspace without a gateway gives the builder no sources to read
@@ -296,7 +313,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   })
 
   return {
-    id, page: w.page, prefix: w.jobPrefix, cfg, grants, agent, acts, packDirs, bus, source, store, jobs, runner, notes, ctx, known, fake, build,
+    id, page: w.page, prefix: w.jobPrefix, cfg, grants, agent, acts, packDirs, bus, source, store, jobs, runner, notes, requests, ctx, known, fake, build,
     putPlaybook: async (pid, pb, tpl) => { await store.putPlaybook(pid, pb, tpl); await loadPbs() },
     start: startItem({ jobs, ctx, bridge: source, page: w.page }),
     plugins: [...browserPlugin(source), ...runBrowserPlugin(runBr), ...w.plugins?.({ id, cfg, home: o.home, jobs, source, artifactsDir: o.artifactsDir, http: guardedHttp(grants?.hosts ?? null) }) ?? []],

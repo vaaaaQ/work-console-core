@@ -6,6 +6,7 @@ import type { TrackerView } from '../model/tracker.ts'
 import type { BuildForm } from '../model/njForm.ts'
 import type { UpdateKind, UpdateView } from '../model/update.ts'
 import type { PackChange, PackView } from '../model/packs.ts'
+import type { AccessChange, AccessRequest, AccessView } from '../model/access.ts'
 import type { BoardItem } from '../data/board.ts'
 import type { TimeItem } from '../data/time.ts'
 import { S } from '../model/world.ts'
@@ -91,10 +92,12 @@ export interface LiveWs {
   /** managed = the agent may change the workspace's code; agent = the newest general conversation, null before the
       first; agents = every conversation the tab holds, by id; convs = the list of them all, the latest changed first */
   managed: boolean; agent: AgentRec | null; agents: Record<string, AgentRec>; convs: AgentConv[]
+  /** the runs' requests to add to the grants, waiting in Settings and Approvals */
+  requests: AccessRequest[]
 }
 export const blankWs = (): LiveWs => ({
   bridge: 'ok', concepts: {}, via: 'gateway', why: '', sources: {}, signin: {}, cal: [], time: [], board: [],
-  notes: [], proposals: [], kn: 'loading', parts: { jobs: 'ok', runs: 'ok' }, plugins: {}, managed: false, agent: null, agents: {}, convs: [],
+  notes: [], proposals: [], kn: 'loading', parts: { jobs: 'ok', runs: 'ok' }, plugins: {}, managed: false, agent: null, agents: {}, convs: [], requests: [],
 })
 
 /** what the page knows about the backend: on = live mode, pc = opened on the PC itself (pairing, devices) */
@@ -219,6 +222,12 @@ export const packCandidates = async (ws: string, name: string) =>
   (await wsCall<{ candidates: { id: string; name: string }[] }>(ws, 'GET', `/packs/${enc(name)}/candidates`, undefined, 30000)).candidates
 /** one Settings change: a grants.json commit, then the console restarts (restart false = nothing changed, no restart) */
 export const putPack = (ws: string, name: string, ch: PackChange) => wsCall<{ managed: boolean; restart: boolean; packs: PackView[] }>(ws, 'PUT', `/packs/${enc(name)}`, ch, 60000)
+export type { AccessChange, AccessRequest, AccessView, GrantsView } from '../model/access.ts'
+export const grants = (ws: string) => wsCall<AccessView>(ws, 'GET', '/grants')
+/** restart = the console restarts to apply it; false = the grants already held it */
+export const putGrants = (ws: string, ch: AccessChange) => wsCall<AccessView & { restart: boolean }>(ws, 'PUT', '/grants', ch, 60000)
+export const decideRequest = (ws: string, id: string, accept: boolean, reason?: string) =>
+  wsCall<AccessView & { restart: boolean }>(ws, 'POST', `/grants/requests/${enc(id)}`, { accept, ...(reason ? { reason } : {}) }, 60000)
 export type Person = { name: string; mail: string; title: string | null }
 /** people whose name or mail has q in it: the directory's, or else those the source ranks from chats, mail and meetings */
 export const people = async (ws: string, q: string, signal?: AbortSignal) =>

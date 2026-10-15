@@ -10,6 +10,8 @@ import { chatsOfPack, resolveAct } from '../bridge/actions.ts'
 import { isLocal } from '../bridge/local.ts'
 import { catalog, configGrants } from '../browser/packs.ts'
 import { applyPackChange, settingsWrite, viewsFor } from '../browser/catalogView.ts'
+import { accessChangeIn, addLines, applyAccessChange, applyAdd } from '../access.ts'
+import { grantsDiff } from '../grants.ts'
 import type { Ops } from '../agent/ops.ts'
 import type { PackChange } from '../../src/model/packs.ts'
 import { keep, withKept, withKeptNames } from '../bridge/kept.ts'
@@ -239,6 +241,27 @@ export function createApp(d: Deps) {
   const codeAgentOf = (s: Space) => {
     if (s.grants === null) throw new HttpError(404, 'not_managed', `workspace ${s.id} has no grants.json: its agent changes no code`)
     return agentOf(s)
+  }
+  /** how Settings commits a managed workspace's grants.json */
+  const grantsWriter = (s: Space) => {
+    if (s.grants === null || !d.grantsWrite) throw new HttpError(404, 'not_managed', `workspace ${s.id} has no grants.json: what it reaches is set in its config`)
+    return d.grantsWrite
+  }
+  /** Settings → Access: the grants, the packs that own an MCP server, and the runs' requests with what each adds now */
+  const accessView = (s: Pick<Space, 'grants' | 'requests' | 'packDirs' | 'cfg'>) => {
+    const g = s.grants, cat = catalog(s.packDirs), cfgs = configGrants(s.cfg).config
+    return {
+      managed: g !== null, grants: g, packMcp: g ? g.packs.filter((p) => Object.hasOwn(g.mcp, p)) : [],
+      requests: g ? (s.requests?.list() ?? []).map((x) => ({ ...x, lines: addLines(g, x.add, cat, cfgs) })) : [],
+    }
+  }
+  /** a journal line on each job/step that asked */
+  const tellSteps = async (s: Space, by: string[], o: string, c: string, n: string) => {
+    for (const b of by) {
+      const i = b.indexOf('/'), job = i > 0 ? b.slice(0, i) : b, step = i > 0 ? b.slice(i + 1) : ''
+      await s.jobs.cmd(job, { op: 'journal', o: step ? `${o} (asked by “${step}”)` : o, c, n, a: 'console' }, undefined, 'console')
+        .catch((e) => console.error(`telling ${job} about its access request:`, (e as Error).message))
+    }
   }
   /** job and conv from the query or the body; a job must be one of this workspace's */
   const targetOf = async (s: Space, o: { job?: unknown; conv?: unknown }) => {
@@ -527,6 +550,42 @@ export function createApp(d: Deps) {
       r.res.once('finish', w.done); r.res.once('close', w.done)
       if (!w.applied.ok) { w.done(); throw new HttpError(409, 'grants_failed', [w.applied.error, ...(w.applied.failures ?? [])].join('\n')) }
       return { managed: true, restart: true, packs: viewsFor({ ...s, grants: next.grants }) }
+    }],
+    ['GET', /^\/grants$/, (_r, s) => accessView(s)],
+    ['PUT', /^\/grants$/, async (r, s) => {
+      const gw = grantsWriter(s)
+      const next = applyAccessChange(s.grants!, accessChangeIn(await r.body()))
+      if (!next) return { ...accessView(s), restart: false }
+      const w = await settingsWrite(gw, s.id, next.grants, next.reason)
+      r.res.once('finish', w.done); r.res.once('close', w.done)
+      if (!w.applied.ok) { w.done(); throw new HttpError(409, 'grants_failed', [w.applied.error, ...(w.applied.failures ?? [])].join('\n')) }
+      return { ...accessView({ ...s, grants: next.grants }), restart: true }
+    }],
+    // a run's request: accept commits what it adds, reject tells the steps that asked why
+    ['POST', /^\/grants\/requests\/([^/]+)$/, async (r, s) => {
+      const gw = grantsWriter(s)
+      const rq = s.requests?.get(r.p[0])
+      if (!rq) throw new HttpError(404, 'not_found', `no access request ${r.p[0]}: it was decided already`)
+      const b = await r.body(), why = typeof b.reason === 'string' ? b.reason.trim() : ''
+      if (b.accept !== true) {
+        if (!why) throw new HttpError(400, 'bad_args', 'a rejection needs a reason')
+        s.requests!.remove(rq.id)
+        await tellSteps(s, rq.by, `Access request rejected: ${why}`, `asked for ${rq.lines.join('; ') || 'access'}`, 'do the step without it, or say in the draft what is missing')
+        return { ...accessView(s), restart: false }
+      }
+      const next = applyAdd(s.grants!, rq.add, catalog(s.packDirs), configGrants(s.cfg).config)
+      if (!next) {
+        s.requests!.remove(rq.id)
+        await tellSteps(s, rq.by, 'Access request: the grants already hold it.', '-', 'run the step again')
+        return { ...accessView(s), restart: false }
+      }
+      const lines = grantsDiff(s.grants!, next)
+      const w = await settingsWrite(gw, s.id, next, `${lines.join('; ')}: ${rq.reason} (asked by ${rq.by.join(', ')})`)
+      r.res.once('finish', w.done); r.res.once('close', w.done)
+      if (!w.applied.ok) { w.done(); throw new HttpError(409, 'grants_failed', [w.applied.error, ...(w.applied.failures ?? [])].join('\n')) }
+      s.requests!.remove(rq.id)
+      await tellSteps(s, rq.by, `Access granted in ${w.applied.sha.slice(0, 7)}${why ? `: ${why}` : ''}; the console restarts with it.`, lines.join('; '), 'run the step again')
+      return { ...accessView({ ...s, grants: next }), restart: true }
     }],
     ['GET', /^\/sources$/, (r, s) => sources(s, (r.q.get('concepts') || 'chat,mail,cal').split(',').map((x) => x.trim()).filter(Boolean))],
     ['GET', /^\/sources\/([^/]+)\/([^/]+)$/, async (r, s) => ({ item: await item(s, r.p[0], r.p[1], r.q.get('cursor') || undefined, r.q.get('pack') || undefined) })],

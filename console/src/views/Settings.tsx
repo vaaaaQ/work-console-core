@@ -7,6 +7,9 @@ import { commit } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
 import { toast } from '../ui/toasts.tsx'
 import { Packs } from './Packs.tsx'
+import { Access, RequestCard } from './Access.tsx'
+import { GrantsCard } from './Approvals.tsx'
+import { L } from '../live/boot.ts'
 
 /* Which LLM app the console uses, set on the PC: auto runs by itself (runs, Ask by itself, replies,
    the New job builder), manual is what a step's Open button opens. The paths name the apps' own
@@ -14,7 +17,7 @@ import { Packs } from './Packs.tsx'
 
 const box = (t: React.ReactNode) => <div className="pb"><p className="why" style={{ margin: 0 }}>{t}</p></div>
 const head = <div className="vh"><div><div className="eyebrow">Setup</div><h1>Settings</h1>
-  <p>Which LLM app the console uses, and which sources this workspace reads.</p></div></div>
+  <p>Which LLM app the console uses, and what this workspace reads and reaches.</p></div></div>
 
 export function Settings() {
   const [got, setGot] = React.useState<{ settings: ProviderSettings; providers: ProviderInfo[] } | null>(null)
@@ -46,8 +49,12 @@ export function Settings() {
       <input className="inp mono" value={form[k] ?? ''} placeholder={ph} spellCheck={false} onChange={(e) => set(k, e.target.value)} /></label>
   )
   const changed = JSON.stringify(form) !== JSON.stringify(got.settings)
+  // what waits for a decision about the grants: the agent's change and the runs' requests, also in Approvals
+  const G = S.ws ? L().agent?.pending : undefined, R = S.ws ? L().requests : []
   return <>
     {head}
+    {G || R.length ? <section className="panel" style={{ marginBottom: 12 }}><header><Ic n="inbox" /><h3>Requests</h3></header>
+      <div className="pb dl">{G ? <GrantsCard ws={S.ws} conv={L().agent!.id} p={G} /> : null}{R.map((r) => <RequestCard key={r.id} ws={S.ws} r={r} />)}</div></section> : null}
     <div className="cols">
       <section className="panel"><header><Ic n="bot" /><h3>LLM app</h3></header>
         <div className="pb" style={{ display: 'grid', gap: 12 }}>
@@ -64,6 +71,7 @@ export function Settings() {
         </div></section>
     </div>
     {S.ws ? <div style={{ marginTop: 12 }}><Packs ws={S.ws} /></div> : null}
+    {S.ws ? <div style={{ marginTop: 12 }}><Access ws={S.ws} /></div> : null}
     <div className="row" style={{ marginTop: 12 }}>
       <button className="btn pri" disabled={busy || !changed} onClick={() => void save()}><Ic n="check" sm />Save</button>
       {changed ? <button className="btn ghost" disabled={busy} onClick={() => setForm(got.settings)}>Undo changes</button> : null}

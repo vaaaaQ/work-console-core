@@ -132,8 +132,16 @@ export async function loadKnowledge(ws: Ws = S.ws) {
   }
 }
 
+/** the runs' access requests; a workspace that cannot say keeps the ones it had */
+export async function loadRequests(ws: Ws = S.ws) {
+  try {
+    const r = await api.grants(ws)
+    commit(() => { const l = LIVE.ws[ws]; if (l) l.requests = r.requests })
+  } catch { /* the next event or reload tries again */ }
+}
+
 /** every served workspace's sources and knowledge */
-function loadAll() { for (const ws of Object.keys(LIVE.ws)) { void loadSources(ws); void loadKnowledge(ws); void loadConvs(ws) } }
+function loadAll() { for (const ws of Object.keys(LIVE.ws)) { void loadSources(ws); void loadKnowledge(ws); void loadRequests(ws); void loadConvs(ws) } }
 
 /* a thread or a mail body is fetched when it is first shown; keys are workspace + id */
 const loaded = { chat: new Set<string>(), mail: new Set<string>() }
@@ -213,6 +221,8 @@ export function onEvent(e: Ev) {
     soon(`${e.ws}/${e.concept}`, () => void loadSources(e.ws, [e.concept]))
   } else if (e.kind === 'source' && LIVE.ws[e.ws] && KNOWLEDGE.includes(e.concept)) {
     soon(`${e.ws}/knowledge`, () => void loadKnowledge(e.ws))
+  } else if (e.kind === 'source' && LIVE.ws[e.ws] && e.concept === 'access') {
+    soon(`${e.ws}/access`, () => void loadRequests(e.ws))
   }
 }
 

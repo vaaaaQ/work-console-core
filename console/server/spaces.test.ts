@@ -399,6 +399,34 @@ test("a managed workspace's runs get exactly its grants' runTools, and its plugi
   } finally { await plain.close() }
 })
 
+test("a managed workspace's run asks for access into its request file and the bus; what it already grants or names wrongly is refused", async () => {
+  install([{ page: acme }])
+  const dir = tempDir('spaces'), root = join(dir, 'console'), f = fakeSdk()
+  mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })
+  writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ hosts: ['api.example.com'], runTools: ['Read'] }))
+  const space = await makeSpace(acmeServer, { cfg: wsCfg(dir), home: dir, artifactsDir: join(dir, 'arts'), sdk: f.sdk, fake: true, push: async () => {}, root })
+  const heard: string[] = []
+  const off = space.bus.on((e) => { if (e.kind === 'source' && e.concept === 'access') heard.push(`${e.upserts.length}/${(e.removes ?? []).length}`) })
+  try {
+    space.source.start()
+    await until(() => space.source.available())
+    const j = await space.jobs.create({ t: 'S', key: 'NEW', pb: 'action', prj: acme.pack.prj[0], ws: space.id })
+    await space.jobs.cmd(j.id, { op: 'start' })
+    const step = T.atOf(space.ctx(), (await space.jobs.get(j.id))!)!
+    await space.runner.ask(j.id, step, 'go')
+    await until(() => f.sessions.length === 1)
+    const ask = f.sessions[0].tools.requestAccess!
+    assert.match(await ask({ hosts: ['new.example.com'], runTools: ['Bash'] }, 'calls the new API'), /^asked for \+ host new\.example\.com, \+ runTool Bash; .*submit_draft with outcome not_done/)
+    await assert.rejects(ask({ hosts: ['api.example.com'] }, 'r'), /already grants all of it/)
+    await assert.rejects(ask({ packs: ['nope'] }, 'r'), /no pack nope/)
+    await assert.rejects(ask({ mcp: {} }, 'r'), /only for packs, hosts, runTools or browser/)
+    const [r] = space.requests!.list()
+    assert.deepEqual([r.by, r.reason, r.lines], [[`${j.id}/${step}`], 'calls the new API', ['+ host new.example.com', '+ runTool Bash']])
+    assert.deepEqual(heard, ['1/0'])
+    f.sessions[0].end()
+  } finally { off(); await space.close() }
+})
+
 test('a run gets ## Sources only where packs load, and the Off line only where grants manage them', async () => {
   install([{ page: acme }])
   const dir = tempDir('spaces'), f = fakeSdk()

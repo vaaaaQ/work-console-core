@@ -121,6 +121,11 @@ export class Notify {
         if (this.proposals.has(k(i.id))) continue
         this.proposals.add(k(i.id))
         await this.push(`Knowledge: ${String(i.title ?? i.id)}`, cut(`${i.by ? `${i.by}: ` : ''}${first(i.reason)}`), withWs('/?view=approvals', ws))
+      } else if (concept === 'access') {
+        // a request another step joined is pushed once, when it first waits
+        if (this.proposals.has(k(`access:${i.id}`))) continue
+        this.proposals.add(k(`access:${i.id}`))
+        await this.push('Access request', cut(`${Array.isArray(i.by) ? `${i.by[0]}: ` : ''}${first(i.reason)}`), withWs('/?view=approvals', ws))
       } else if (concept === 'review' || concept === 'ci') {
         const j = this.jobFor([i.title, i.branch, i.pipeline, i.id].map((v) => String(v ?? '')).join(' '), ws)
         if (!j) continue

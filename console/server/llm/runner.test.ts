@@ -458,6 +458,22 @@ test("a runner told who the user is puts the name in a new run's prompt", async 
   assert.match(blank.sessions[0].prompt, /in the user's Work Console/)
 })
 
+test("a run's request_access is signed by its job and step, at most 3 a run; without access there is none", async () => {
+  const s = setup(), [t] = await targets(s.jobs, 1), seen: string[] = []
+  const access = async (_add: unknown, reason: string, by: string) => { seen.push(`${by} ${reason}`); return 'asked' }
+  const runner = new Runner({ store: s.store, jobs: s.jobs, bus: s.bus, sdk: fakeSdk(s.sessions).sdk, cwd: s.dir, gate: () => true, artifactsDir: join(s.dir, 'arts'), ctx: demoCtx, access })
+  await runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  const tools = s.sessions[0].tools
+  for (let i = 0; i < 3; i++) assert.equal(await tools.requestAccess!({ hosts: ['a.example'] }, `r${i}`), 'asked')
+  await assert.rejects(tools.requestAccess!({ hosts: ['a.example'] }, 'r3'), /already asked 3 times/)
+  assert.deepEqual(seen, [0, 1, 2].map((i) => `${t.job}/${t.step} r${i}`))
+  const plain = setup(), [u] = await targets(plain.jobs, 1)
+  await plain.runner.ask(u.job, u.step, 'q')
+  await until(() => plain.sessions.length === 1)
+  assert.equal(plain.sessions[0].tools.requestAccess, undefined)
+})
+
 test("a run's knowledge tools search and read its workspace's notes, and a proposal is signed by the run; without notes there are none", async () => {
   const s = setup(), [t] = await targets(s.jobs, 1)
   const notes = notesStore(join(s.dir, 'kn'))

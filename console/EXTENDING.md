@@ -23,7 +23,8 @@ workspace may reach waits for the person in Approvals.*
 - Core files: everything `core.lock.json` lists. The drift test fails on an edit, and the next
   update refuses to sync over it. A core change is made in the core repo and arrives by update.
 - `core.lock.json` itself.
-- `grants.json`: written only by an accepted grants change (`propose_grants`).
+- `grants.json`: written only by the person: an accepted grants change (`propose_grants`), Settings → Packs
+  and Access, or an accepted run's `request_access`.
 - The registries `workspaces/page.ts` and `workspaces/server.ts`: only `install.mjs` and
   `create_workspace` add a line.
 - Another workspace's folder.
@@ -100,7 +101,7 @@ person acts on it.*
 ### Pack config
 
 ```
- grants.json   packs ['azure-devops']  hosts ['dev.azure.com']           via propose_grants
+ grants.json   packs ['azure-devops']  hosts ['dev.azure.com']           via propose_grants or Settings
  server.ts     defaults: { packConfig: { 'azure-devops': { org: 'my-org', project: 'Web' } } }
 ```
 

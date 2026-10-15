@@ -24,7 +24,7 @@ export function navDef(): [string, NavItem[]][] {
 
 function counts(): Partial<Record<View, number>> {
   return {
-    jobs: wsJobs().filter(needsYou).length, approvals: approvals().length + proposals().length + (LIVE.on ? L().proposals.length + (L().agent?.pending ? 1 : 0) : 0),
+    jobs: wsJobs().filter(needsYou).length, approvals: approvals().length + proposals().length + (LIVE.on ? L().proposals.length + L().requests.length + (L().agent?.pending ? 1 : 0) : 0),
     chats: (CHATS[S.ws] || []).reduce((a, c) => a + c.unread, 0), mail: (MAIL[S.ws] || []).filter((m) => m.cat === 'reply' && !m.done).length,
   }
 }

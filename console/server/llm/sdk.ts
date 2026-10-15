@@ -46,6 +46,8 @@ export interface RunTools {
   act?(action: string, args: Record<string, unknown>): Promise<string>
   /** a reply run only: keeps what the user asked on the step for the blocker builder, and ends the run */
   openBlocker?(say: string): Promise<void>
+  /** asks the person to add to what this workspace may reach; what came of it, in a line; only where grants manage the workspace */
+  requestAccess?(add: unknown, reason: string): Promise<string>
 }
 export type KnowledgeIn = Omit<ProposalIn, 'by'>
 /** a result's t = the session's final text */
@@ -66,7 +68,7 @@ export interface Sdk {
 
 const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status']
 export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__context', 'mcp__run__screenshot', 'mcp__run__create_job', 'mcp__run__start_job',
-  'mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose', 'mcp__run__open_blocker', 'mcp__run__signin_needed', 'mcp__run__act', ...BRIDGE]
+  'mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose', 'mcp__run__open_blocker', 'mcp__run__signin_needed', 'mcp__run__request_access', 'mcp__run__act', ...BRIDGE]
 export const DENY = [
   'mcp__bridge__bridge_act', 'mcp__work-console',
   'Read(~/.bridge/**)', 'Read(~/.work-console/**)', 'Read(**/.work-console/**)',
@@ -222,6 +224,11 @@ export function runToolDefs(tools: RunTools) {
     ...(tools.signinNeeded ? [tool('signin_needed', "The runs' browser is signed out of a site this step needs (its sign-in page shows where the content should be). site = its name, url = the page to sign in on. It ends this run on a draft that asks the user to sign in; the user replies when done and you go on. Stop after it.",
       { site: z.string().min(1), url: z.string().min(1) },
       (a) => wrap(() => tools.signinNeeded!(a), 'the user is asked to sign in; stop here')())] : []),
+    ...(tools.requestAccess ? [tool('request_access', "This workspace does not let runs reach something this step needs: a pack, a host, a tool or a site in the runs' browser. "
+      + "Ask the user to add it: add = {packs, hosts (exact or *.domain), runTools (tool names), browser (hosts the runs' browser must open)}, only what is missing; reason = why, one line for the user. "
+      + 'It waits for the user in Settings and Approvals and adds nothing now. Then call submit_draft with outcome not_done naming what is missing; the step is run again once it is granted.',
+      { add: z.object({ packs: z.array(z.string()).optional(), hosts: z.array(z.string()).optional(), runTools: z.array(z.string()).optional(), browser: z.array(z.string()).optional() }), reason: z.string().min(1) },
+      (a) => answer(() => tools.requestAccess!(a.add, a.reason))())] : []),
     ...(tools.act ? [tool('act', "Run an act this workspace lets runs call by themselves (for example a post into an allowed chat), at most 10 a run. It goes out at once, without the user's review; only the chats or targets the workspace allows are accepted. A refusal or failure is shown on the step with the text; do not retry it.",
       { action: z.string().min(1), args: z.record(z.string(), z.unknown()) },
       (a) => answer(() => tools.act!(a.action, a.args))())] : []),

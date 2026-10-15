@@ -160,6 +160,21 @@ test("the knowledge tools only when the run carries them: search lists, read giv
   assert.equal(r.isError, true); assert.match(r.content[0].text, /does not exist/)
 })
 
+test("request_access only when the run carries it: it passes the add and the reason, and a refusal is the run's error", async () => {
+  const none = async () => {}
+  const base: RunTools = { submitDraft: none, addArtifact: none, addArtifactFile: none, journal: none }
+  assert.ok(!runToolDefs(base).some((d) => d.name === 'request_access'))
+  const asked: unknown[] = []
+  const d = runToolDefs({ ...base, requestAccess: async (add, reason) => { asked.push([add, reason]); return 'asked for + host a.example' } }).find((x) => x.name === 'request_access')!
+  assert.ok(ALLOW.includes('mcp__run__request_access'))
+  const call = (h: typeof d, a: unknown) => (h.handler as (a: unknown, x: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>)(a, {})
+  assert.equal((await call(d, { add: { hosts: ['a.example'] }, reason: 'reads it' })).content[0].text, 'asked for + host a.example')
+  assert.deepEqual(asked, [[{ hosts: ['a.example'] }, 'reads it']])
+  const bad = runToolDefs({ ...base, requestAccess: async () => { throw new Error('already grants all of it') } }).find((x) => x.name === 'request_access')!
+  const r = await call(bad, { add: { hosts: ['a.example'] }, reason: 'r' })
+  assert.equal(r.isError, true); assert.match(r.content[0].text, /already grants/)
+})
+
 test("an ask loads no settings, has no built-in tool, may use only its own tools, keeps no transcript and answers in the schema's shape", () => {
   const abort = new AbortController(), schema = { type: 'object' }
   const o = askOptions({ system: 'Fill the form.', schema, tools: ['knowledge_search', 'source_get'], cwd: 'C:/tmp/build', abort })
