@@ -1,5 +1,6 @@
 {
   "name": "example",
+  "catalog": false,
   "zone": "UTC",
   "script": "example.js",
   "tabs": {

@@ -1,5 +1,9 @@
 {
   "name": "azure-devops",
+  "kind": "browser",
+  "title": "Azure DevOps",
+  "about": "work items, pull requests, builds and the board of one project",
+  "guide": "guide.md",
   "zone": "UTC",
   "script": "azure-devops.js",
   "config": {

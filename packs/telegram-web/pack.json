@@ -1,5 +1,10 @@
 {
   "name": "telegram-web",
+  "kind": "browser",
+  "title": "Telegram (own account)",
+  "about": "the chats you tick, read and posted to as you through Telegram Web",
+  "guide": "guide.md",
+  "scopeAbout": "a chat id: a group's is negative, as in web.telegram.org/k/#-4780440133",
   "zone": "UTC",
   "script": "telegram-web.js",
   "hosts": ["web.telegram.org"],

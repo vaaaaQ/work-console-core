@@ -1,5 +1,9 @@
 {
   "name": "m365-mail",
+  "kind": "browser",
+  "title": "Outlook mail and calendar",
+  "about": "your Outlook inbox and calendar, and mail sent as you, through Outlook on the web",
+  "guide": "guide.md",
   "zone": "UTC",
   "script": "m365-mail.js",
   "config": {

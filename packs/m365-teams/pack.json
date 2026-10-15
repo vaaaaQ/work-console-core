@@ -1,5 +1,9 @@
 {
   "name": "m365-teams",
+  "kind": "browser",
+  "title": "Microsoft Teams",
+  "about": "your Teams chats, read and posted to as you through Teams on the web",
+  "guide": "guide.md",
   "zone": "UTC",
   "script": "m365-teams.js",
   "config": {
