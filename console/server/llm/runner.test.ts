@@ -851,6 +851,17 @@ test('an approve reply is refused without commands, on a stale draft, and from a
   await assert.rejects(t.runner.reply(p.job, p.step, '', 'approve', { at }), code(409, 'no_commands'))
 })
 
+test('a draft handed in by hand is never approved, not even in the session of an earlier LLM run on the step', async () => {
+  const s = setup(), d = await withDraft(s)
+  // the LLM's draft is rejected; a person then hands in a draft with commands through MCP
+  await s.jobs.cmd(d.job, { op: 'rejectDraft', step: d.step }, undefined, 'page')
+  await s.jobs.cmd(d.job, { op: 'draftIn', step: d.step, t: 'Push it.', cm: ['git push'] }, undefined, 'session')
+  const dr = (await s.jobs.get(d.job))!.flow[d.step].dr!
+  assert.deepEqual([dr.cm, dr.hd], [['git push'], 1])
+  await assert.rejects(s.runner.reply(d.job, d.step, '', 'approve', { at: dr.at }), code(409, 'no_session'))
+  assert.equal(s.sessions.length, 1, 'nothing ran in S1')
+})
+
 test('submit_draft with an outcome stores it; a bad return_to is refused and the run may hand in again', async () => {
   const { runner, sessions, jobs } = setup(), j = await started(jobs), step = T.atOf(demoCtx(), j)!
   const r = await runner.ask(j.id, step, 'deploy')

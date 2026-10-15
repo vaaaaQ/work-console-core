@@ -781,6 +781,9 @@ test('draftIn: a session hands in a draft for review, signed as the session; ref
   const d = apply({ ...X, by: 'Cursor' }, clean, { op: 'draftIn', step: at, t: ' the draft ' }).job
   assert.equal(d.flow[at].dr!.t, 'the draft'); assert.equal(d.flow[at].s, 'wait'); assert.equal(d.flow[at].m, 'draft handed in')
   assert.equal(d.jr[0].a, 'Cursor'); assert.match(d.jr[0].o, /handed in/)
+  assert.equal(d.flow[at].dr!.hd, 1, 'marked handed in, so no session approves its commands')
+  // an LLM's draft carries no mark
+  assert.ok(!('hd' in apply(X, apply(X, clean, { op: 'runStart', step: at, q: 'q', id: 'r-1' }).job, { op: 'runDraft', step: at, t: 'x' }).job.flow[at].dr!))
   assert.throws(() => apply(X, d, { op: 'draftIn', step: at, t: 'again' }), (e: unknown) => e instanceof CmdError && /^draft_waiting/.test(e.message))
   const run = apply(X, clean, { op: 'runStart', step: at, q: 'q', id: 'r-1' }).job
   assert.throws(() => apply(X, run, { op: 'draftIn', step: at, t: 'x' }), (e: unknown) => e instanceof CmdError && /^busy/.test(e.message))
