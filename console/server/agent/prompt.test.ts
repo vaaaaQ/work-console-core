@@ -10,6 +10,12 @@ import { demoCtx } from '../testkit.ts'
 import { tempDir } from '../testdirs.ts'
 import { agentSystem, jobState, jobSystem, reintegrateAgain, reintegratePrompt, reintegrateSystem, wsState } from './prompt.ts'
 
+test('a managed agent sees the pack catalog with what is on', () => {
+  const t = agentSystem({ ws: 'crm', title: 'My CRM', interview: false, grants: EMPTY_GRANTS, managed: true, catalog: [{ name: 'talk', title: 'Talk', about: 'chats', on: true }, { name: 'mail', title: 'Mail', about: '', on: false }] })
+  assert.match(t, /The packs this workspace can turn on .*: talk \(on\) — chats; mail — Mail/)
+  assert.doesNotMatch(agentSystem({ ws: 'crm', title: 'My CRM', interview: false, grants: EMPTY_GRANTS, managed: true }), /packs this workspace can turn on/)
+})
+
 test('the agent system text names the workspace, its areas, its tools and its grants', () => {
   const t = agentSystem({ ws: 'crm', title: 'My CRM', interview: false, grants: { ...EMPTY_GRANTS, hosts: ['api.example.com'] } })
   for (const s of ['My CRM', 'workspaces/crm/', 'tools/', 'grants.json', 'check', 'apply', 'undo', 'propose_grants', 'create_workspace', 'ctx.http', '"api.example.com"'])

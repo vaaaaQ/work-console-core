@@ -38,7 +38,7 @@ const JOBS = [
   "You never send a message, act on a source or do a step's work: a step's work is a step you propose.",
 ]
 
-export function agentSystem(o: { ws: string; title: string; interview: boolean; grants: Grants; managed?: boolean }): string {
+export function agentSystem(o: { ws: string; title: string; interview: boolean; grants: Grants; managed?: boolean; catalog?: { name: string; title: string; about: string; on: boolean }[] }): string {
   const { ws, title } = o
   if (o.managed === false) return [
     `You are the agent of the Work Console workspace "${title}" (id ${ws}). You help the person with the workspace's jobs: you answer their questions about them and propose changes to their steps.`,
@@ -70,6 +70,7 @@ export function agentSystem(o: { ws: string; title: string; interview: boolean; 
     `${BANNED_LINE()} A plugin reaches the network through ctx.http, which keeps to the granted hosts.`,
     '',
     `The workspace's grants now: ${JSON.stringify(o.grants)}`,
+    ...(o.catalog?.length ? [`The packs this workspace can turn on (the person turns them on in Settings → Packs; you propose with propose_grants): ${o.catalog.map((c) => `${c.name}${c.on ? ' (on)' : ''} — ${c.about || c.title}`).join('; ')}`] : []),
     '',
     ...JOBS,
     '',

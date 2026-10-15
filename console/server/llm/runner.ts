@@ -71,6 +71,7 @@ export class Runner {
   private autoResume: boolean
   private browser: boolean
   private acts?: RunActs
+  private sources?: () => string
   /** reply =the reply's text has not reached its session yet */
   private queue: { id: string; resume?: string; reply?: boolean }[] = []
   private live = new Map<string, Live>()
@@ -95,9 +96,11 @@ export class Runner {
     browser?: boolean
     /** acts runs may call themselves; none or an empty list = no act tool */
     acts?: RunActs
+    /** the ## Sources section for a run's prompt, read at each start */
+    sources?: () => string
   }) {
     this.store = o.store; this.jobs = o.jobs; this.bus = o.bus; this.pick = pickOf(o.sdk); this.cwd = o.cwd
-    this.max = o.max ?? 3; this.gate = o.gate; this.via = o.via; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => ({ ctx: [], images: [] })); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot; this.jobTools = o.jobTools; this.notes = o.notes
+    this.max = o.max ?? 3; this.gate = o.gate; this.via = o.via; this.artifactsDir = o.artifactsDir; this.ctx = o.ctx; this.context = o.context ?? (async () => ({ ctx: [], images: [] })); this.me = o.me; this.bridge = o.bridge; this.workDir = o.workDir; this.screenshot = o.screenshot; this.jobTools = o.jobTools; this.notes = o.notes; this.sources = o.sources
     this.autoResume = !!o.autoResume; this.browser = !!o.browser
     if (o.acts?.allowed.length) this.acts = o.acts
   }
@@ -194,7 +197,7 @@ export class Runner {
   private async input(j: Job, cwd: string): Promise<{ o: PromptIn; images: PromptImage[] }> {
     const c = await this.context(j), kn = this.notes
     const wd = this.workDir ? { workDir: cwd, branch: this.workDir.branch?.(j) } : {}
-    return { o: { ctx: c.ctx, images: c.images.length, pbNotes: kn ? await kn.forPlaybook(j.pb) : [], me: this.me, bridge: this.bridge, knowledge: !!kn, ...wd }, images: c.images }
+    return { o: { ctx: c.ctx, images: c.images.length, pbNotes: kn ? await kn.forPlaybook(j.pb) : [], me: this.me, bridge: this.bridge, knowledge: !!kn, sources: this.sources?.() ?? '', ...wd }, images: c.images }
   }
 
   /** a step taken up by hand: the job, its step and title, its dir, and its newest session run with that run's provider */

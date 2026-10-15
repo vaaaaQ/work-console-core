@@ -57,6 +57,8 @@ export interface SessionOpts {
   max?: number
   /** the workspace's jobs, notes and sources and its proposer: every conversation's job tools and per-turn state */
   job?: JobDeps
+  /** the packs this workspace lists, for the agent's system text */
+  catalog?: () => { name: string; title: string; about: string; on: boolean }[]
 }
 /** a job's conversation, a conversation by id, or neither: the newest general one */
 export type Target = { job?: string; conv?: string }
@@ -404,7 +406,7 @@ export class AgentSession {
       } })]
       const system = f && ri ? reintegrateSystem({ ws: this.o.ws, title: this.o.title, core: ri.core, from: ri.from, branch: ri.branch })
         : rec.job ? jobSystem({ ws: this.o.ws, title: this.o.title, job: { id: rec.job, t: st.title } })
-        : agentSystem({ ws: this.o.ws, title: this.o.title, interview: rec.interview === true, grants: this.grants(), managed: code })
+        : agentSystem({ ws: this.o.ws, title: this.o.title, interview: rec.interview === true, grants: this.grants(), managed: code, catalog: this.o.catalog?.() })
       const limits = f ? agentLimits(f.dir, this.o.ws) : code ? agentLimits(work?.dir ?? this.root, this.o.ws) : readOnly(this.root)
       const events = sdk.agent!({ prompt, resume: rec.session, limits, tools, system, abort })
       for await (const e of events) {

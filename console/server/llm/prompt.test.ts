@@ -41,6 +41,14 @@ test('the Blockers section sits before Earlier outputs', () => {
   assert.ok(p.indexOf('## Blockers') > 0 && p.indexOf('## Blockers') < p.indexOf('## Earlier outputs'))
 })
 
+test('## Sources goes in after the context, and the bridge line points to it', () => {
+  const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
+  const p = buildPrompt(x, j, 'dr', 'go', { sources: '## Sources\n### Talk (talk, browser tab)' })
+  assert.ok(p.indexOf('\n## Sources\n') > p.indexOf('## Job '))
+  assert.match(p, /the bridge tools \(bridge_snapshot, bridge_get\); the packs behind them are under ## Sources, and bridge_get takes pack where a concept has more than one/)
+  assert.doesNotMatch(buildPrompt(x, j, 'dr', 'go', {}), /\n## Sources\n/)
+})
+
 test('a reply prompt with blocker on says when to call open_blocker', () => {
   assert.match(replyPrompt('wait for Imre', 'revise', 'Valery', true), /open_blocker/)
   assert.doesNotMatch(replyPrompt('shorter', 'revise'), /open_blocker/)

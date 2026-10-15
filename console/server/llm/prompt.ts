@@ -18,8 +18,9 @@ const JR_MAX = 20
     bridge false: the workspace has no gateway, so the prompt does not point at the bridge tools.
     knowledge: the run has the knowledge tools.
     images: how many pictures come before the prompt's text.
-    workDir, branch: the job's own dir and the branch it is on, when the workspace gives each job one */
-export interface PromptIn { ctx?: Resolved[]; pbNotes?: Note[]; me?: string; bridge?: boolean; knowledge?: boolean; images?: number; workDir?: string; branch?: string }
+    workDir, branch: the job's own dir and the branch it is on, when the workspace gives each job one.
+    sources: ## Sources, from the packs that are on */
+export interface PromptIn { ctx?: Resolved[]; pbNotes?: Note[]; me?: string; bridge?: boolean; knowledge?: boolean; images?: number; workDir?: string; branch?: string; sources?: string }
 
 const who = (o: PromptIn) => o.me || 'the user'
 const block = (h: string, rows: string[]) => (rows.length ? `${h}\n${rows.join('\n')}` : '')
@@ -54,6 +55,7 @@ function parts(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn) {
   const data = [
     job,
     contextSection(j.ws, ctx.filter((r) => r.k !== 'note')).trimEnd(),
+    o.sources ?? '',
     notes.length ? `## Knowledge\n${notes.join('\n\n')}` : '',
     bl ? `## Blockers\n${bl}` : '',
     outs.length ? `## Earlier outputs\n${outs.join('\n\n')}` : '',
@@ -101,7 +103,7 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: Prompt
     block('## How to work', [
       `- Everything above was read for this step when the run started: work from it, and use tools only for what it does not cover.`,
       ...(o.images ? [`- [image N] in the text is the picture labelled [image N] before this text.`] : []),
-      ...(o.bridge === false ? [] : [`- Read anything else from the sources with the bridge tools (bridge_snapshot, bridge_get).`]),
+      ...(o.bridge === false ? [] : [`- Read anything else from the sources with the bridge tools (bridge_snapshot, bridge_get); the packs behind them are under ## Sources, and bridge_get takes pack where a concept has more than one.`]),
       `- context() returns these sections again, read anew, when a long run needs them back.`,
       ...(o.knowledge ? [`- When you learn something a later run would need, propose a knowledge note or a change with knowledge_propose; ${w} decides. Notes not given above are found with knowledge_search and knowledge_read.`] : []),
       `- You never send anything to a source (no chat posts, mails, votes, comments or state changes): ${w} sends after review.`,

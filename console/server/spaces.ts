@@ -14,6 +14,7 @@ import { GATEWAY_ACTIONS, grantedActs } from './bridge/actions.ts'
 import { keepJobChats } from './bridge/kept.ts'
 import { isLocal } from './bridge/local.ts'
 import { browserPlugin } from './browser/plugin.ts'
+import { viewsFor } from './browser/catalogView.ts'
 import { grantsFrom, wsPackDirs } from './browser/packs.ts'
 import { startFakeGateway } from './bridge/fake.ts'
 import type { FakeGateway } from './bridge/fake.ts'
@@ -35,6 +36,7 @@ import type { Notes } from './knowledge/notes.ts'
 import { autoAsk } from './llm/autoAsk.ts'
 import { resolveContext } from './llm/context.ts'
 import { Runner } from './llm/runner.ts'
+import { sourcesSection } from './llm/sources.ts'
 import { providerPick } from './llm/providers.ts'
 import { Settings } from './settings.ts'
 import type { Sdk } from './llm/sdk.ts'
@@ -219,6 +221,8 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     autoResume: cfg.autoAsk === true, browser: !!runBr,
     // runs call only what grants.llmActs names and the source would run; the source checks the scopes
     acts: grants?.llmActs ? { allowed: grants.llmActs.filter((a) => acts.has(a)), act: (a) => source.act(a) } : undefined,
+    // the packs' state is read from the source at each run start
+    sources: () => sourcesSection(viewsFor({ packDirs, grants, cfg, source })),
   })
   const offAuto = autoAsk({ jobs, runner, ctx, on: cfg.autoAsk === true, delay: o.askDelay })
   // a workspace without a gateway gives the builder no sources to read
@@ -265,6 +269,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   const agent = o.agent ? new AgentSession({
     ws: id, title: w.page.pack.n || id, records: agentRecords(store, join(o.home, 'agent', `${id}.json`)), sdk, bus, root: o.root, ...o.agent,
     managed: grants !== null, max: cfg.maxSessions,
+    catalog: () => viewsFor({ packDirs, grants, cfg, source }).filter((v) => v.listed).map(({ name, title, about, on }) => ({ name, title, about, on })),
     job: { jobs, runs: () => runner.all(), ctx, notes, source: rb.bridge === false ? null : source, me: w.page.me, key: (i) => w.page.board.key(i), proposer },
   }) : null
   // a reply on a step and what became of a proposal reach the agent with no LLM watching
