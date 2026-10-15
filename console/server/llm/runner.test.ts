@@ -523,6 +523,18 @@ test('a workspace without a gateway: the prompt does not point at the bridge too
   assert.ok(!/bridge_/.test(s.sessions[0].prompt))
 })
 
+test("## Sources is read at each start: the run prompt, context() and a hand-made session's step text all carry it", async () => {
+  const s = setup(), [t] = await targets(s.jobs, 1)
+  let n = 0
+  const runner = new Runner({ store: s.store, jobs: s.jobs, bus: s.bus, sdk: fakeSdk(s.sessions).sdk, cwd: s.dir, gate: () => true, artifactsDir: join(s.dir, 'arts'), ctx: demoCtx,
+    sources: () => `## Sources\n### Talk (read ${++n})` })
+  await runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  assert.match(s.sessions[0].prompt, /\n## Sources\n### Talk \(read 1\)/)
+  assert.match((await s.sessions[0].tools.context!()).text, /\n## Sources\n### Talk \(read 2\)/)
+  assert.match((await runner.stepText(t.job, t.step)).text, /\n## Sources\n### Talk \(read 3\)/)
+})
+
 test("a run works in its job's own dir; when the dir cannot be made the run fails saying why", async () => {
   const s = setup(), [a, b] = await targets(s.jobs, 2)
   let fail = false

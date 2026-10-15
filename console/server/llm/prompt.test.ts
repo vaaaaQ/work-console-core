@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { redoText, replyPrompt, buildPrompt, blockersText, manualText } from './prompt.ts'
+import { redoText, replyPrompt, buildPrompt, blockersText, manualText, contextText } from './prompt.ts'
 import { apply, freshJob } from '../../src/model/transitions.ts'
 import { demoCtx } from '../testkit.ts'
 import type { Cmd, Flow } from '../../src/model/types.ts'
@@ -47,6 +47,15 @@ test('## Sources goes in after the context, and the bridge line points to it', (
   assert.ok(p.indexOf('\n## Sources\n') > p.indexOf('## Job '))
   assert.match(p, /the bridge tools \(bridge_snapshot, bridge_get\); the packs behind them are under ## Sources, and bridge_get takes pack where a concept has more than one/)
   assert.doesNotMatch(buildPrompt(x, j, 'dr', 'go', {}), /\n## Sources\n/)
+})
+
+test('a hand-made session and the context text carry ## Sources after the context, like the run prompt', () => {
+  const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' }), sources = '## Sources\n### Talk (talk, browser tab)'
+  for (const t of [manualText(x, j, 'dr', 'go', { sources }), contextText(x, j, 'dr', 'go', { sources })]) {
+    assert.ok(t.indexOf('\n## Sources\n### Talk') > t.indexOf('## Job '))
+    assert.ok(t.indexOf('\n## Sources\n') < t.indexOf('## Instruction'))
+  }
+  for (const t of [manualText(x, j, 'dr', 'go', {}), contextText(x, j, 'dr', 'go', {})]) assert.doesNotMatch(t, /## Sources/)
 })
 
 test('a reply prompt with blocker on says when to call open_blocker', () => {
