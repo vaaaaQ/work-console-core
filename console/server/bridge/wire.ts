@@ -17,7 +17,7 @@ export type ActRes = { status: 'ok' | 'error' | 'outcome_unknown'; error?: { cod
 
 export interface Gateway {
   snapshot(concepts: string[]): Promise<Snapshot>
-  get(concept: string, id: string, cursor?: string): Promise<ConceptReply>
+  get(concept: string, id: string, cursor?: string, pack?: string): Promise<ConceptReply>
   act(a: ActReq): Promise<ActRes>
 }
 

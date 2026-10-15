@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { HttpError } from '../events.ts'
-import { GATEWAY_ACTIONS, actionPacks, actionsOf, grantedActs, resolveAct } from './actions.ts'
+import { GATEWAY_ACTIONS, actionPacks, actionsOf, chatsOfPack, grantedActs, resolveAct } from './actions.ts'
 import { PACKS_DIR } from './packs.ts'
 import type { PackManifest } from './packs.ts'
 
@@ -58,4 +58,14 @@ test("a managed workspace may act only through the core packs its grants name, a
   assert.deepEqual(g(['m365-teams'], ['chat.post'], []), ['chat.post'], "a pack's hosts come with it")
   assert.equal(said.length, 1)
   assert.match(said[0], /no-such-pack/)
+})
+
+test('a chat name resolves only among the chats of the pack that runs the action', async () => {
+  const items = [{ id: 't1', name: 'Brothers', pack: 'talk' }, { id: '19:a', name: 'Team Dev', pack: 'fixture' }, { id: 'old', name: 'Untagged' }]
+  assert.deepEqual(chatsOfPack(items, 'fixture').map((c) => c.id), ['19:a', 'old'])
+  assert.deepEqual(chatsOfPack(items, undefined).map((c) => c.id), ['old'])
+  const chats = async () => chatsOfPack(items, 'fixture')
+  await assert.rejects(resolveAct({ action: 'chat.post', args: { chatName: 'Brothers', text: 'x' } }, chats, new Set(['chat.post'])),
+    refused('unknown_chat'))
+  assert.deepEqual((await resolveAct({ action: 'chat.post', args: { chatName: 'team dev', text: 'x' } }, chats, new Set(['chat.post']))).args, { chat: '19:a', text: 'x' })
 })

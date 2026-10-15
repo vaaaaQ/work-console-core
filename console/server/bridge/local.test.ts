@@ -293,6 +293,19 @@ test('two packs on chat: a read merges both, each item says its pack, and each p
   assert.deepEqual(src.packStates().talk.names, { t1: 'Brothers' })
 })
 
+test('get on a concept two packs serve needs pack; with it, the pack answers', async () => {
+  cdp.addTab('https://talk.example/app', { DATA: { chat: [talkChat('t1')] }, GETS: { chat: { t1: { messages: [], cursor: null } } } })
+  const { src } = make({ grants: both() })
+  await until(() => src.concepts().chat === 'ready')
+  assert.deepEqual(plain(await src.get('chat', 't1')), { status: 'ambiguous', message: 'ambiguous: chat served by fixture, talk; give pack' })
+  assert.deepEqual(plain(await src.get('chat', 't1', undefined, 'nope')), { status: 'not_found', message: 'no pack nope serves chat' })
+  const r = plain(await src.get('chat', 't1', undefined, 'talk'))
+  assert.deepEqual([r.status, r.items], ['ok', { messages: [], cursor: null }])
+  assert.equal((await src.get('chat', 't9', undefined, 'talk')).status, 'out_of_scope')
+  assert.equal(src.actionPack('talk.post'), 'talk')
+  assert.equal(src.actionPack('chat.post'), undefined)
+})
+
 test('two packs on chat, one signed out: the concept stays ok with the other, and the signed-out pack names its host', async () => {
   cdp.addTab('https://talk.example/app', { MODE: { chat: { ok: false, code: 'unauthorized', message: 'signed out' } } })
   const { src } = make({ grants: both() })

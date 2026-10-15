@@ -77,9 +77,9 @@ export class BridgeClient implements Gateway {
     return out
   }
 
-  async get(concept: string, id: string, cursor?: string): Promise<ConceptReply> {
-    const q = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
-    return (await this.call('GET', `/api/items/${encodeURIComponent(concept)}/${encodeURIComponent(id)}${q}`)) as ConceptReply
+  async get(concept: string, id: string, cursor?: string, pack?: string): Promise<ConceptReply> {
+    const q = new URLSearchParams({ ...(cursor ? { cursor } : {}), ...(pack ? { pack } : {}) }).toString()
+    return (await this.call('GET', `/api/items/${encodeURIComponent(concept)}/${encodeURIComponent(id)}${q ? `?${q}` : ''}`)) as ConceptReply
   }
 
   /** a timeout after the request left is outcome_unknown, never a retry: A dedupes by actionId only for 10 min */

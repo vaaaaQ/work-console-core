@@ -6,7 +6,8 @@ import { ctxOf } from '../../src/model/context.ts'
 import type * as T from '../../src/model/transitions.ts'
 import type { UpdateKind, UpdateView } from '../../src/model/update.ts'
 import type { Cmd, Job, Playbook, RunIntent, RunRec, Tpl } from '../../src/model/types.ts'
-import { resolveAct } from '../bridge/actions.ts'
+import { chatsOfPack, resolveAct } from '../bridge/actions.ts'
+import { isLocal } from '../bridge/local.ts'
 import { keep, withKept, withKeptNames } from '../bridge/kept.ts'
 import { GatewayError, READY } from '../bridge/wire.ts'
 import type { ActRes, ConceptReply } from '../bridge/wire.ts'
@@ -40,7 +41,7 @@ export interface Bridge {
   why?(): string
   concepts(): Record<string, string>
   read(concepts: string[]): Promise<Record<string, ConceptReply>>
-  get(concept: string, id: string, cursor?: string): Promise<ConceptReply>
+  get(concept: string, id: string, cursor?: string, pack?: string): Promise<ConceptReply>
   act(a: { action: string; actionId: string; args: Record<string, unknown> }): Promise<ActRes>
   state(method: 'GET' | 'POST', path: string, body?: unknown): Promise<ConceptReply>
 }
@@ -283,10 +284,10 @@ export function createApp(d: Deps) {
     const marks = concepts.includes('chat') ? await s.store.marks().catch(() => ({})) : {}
     for (const c of concepts) {
       const r = raw[c] || { status: 'unavailable', message: 'the bridge did not answer for this concept' }
-      if (!READY.has(r.status) || !Array.isArray(r.items)) { out[c] = { status: r.status === 'ok' ? 'unavailable' : r.status, message: r.message, ...(r.host ? { host: r.host } : {}) }; continue }
+      if (!READY.has(r.status) || !Array.isArray(r.items)) { out[c] = { status: r.status === 'ok' ? 'unavailable' : r.status, message: r.message, ...(r.host ? { host: r.host } : {}), ...(r.packs ? { packs: r.packs } : {}) }; continue }
       const items = r.items as Record<string, unknown>[]
       out[c] = {
-        status: 'ok', rev: r.rev,
+        status: 'ok', rev: r.rev, ...(r.packs ? { packs: r.packs } : {}),
         items: c === 'chat' ? withKept(items, marks).map((i) => adapt.chat(i))
           : c === 'mail' ? items.map((i) => adapt.mail(i, { done: i.done === true || undefined, job: typeof i.job === 'string' ? i.job : undefined }))
             : c === 'cal' ? items.map((i) => ({ id: i.id, ...adapt.cal(i, s.cfg.teamTz ?? null) }))
@@ -296,8 +297,8 @@ export function createApp(d: Deps) {
     return { concepts: out }
   }
 
-  async function item(s: Space, concept: string, id: string, cursor?: string) {
-    const r = await s.source.get(concept, id, cursor)
+  async function item(s: Space, concept: string, id: string, cursor?: string, pack?: string) {
+    const r = await s.source.get(concept, id, cursor, pack)
     if (!READY.has(r.status)) throw new HttpError(503, r.status, r.message || `${concept} is unavailable`)
     const it = (r.items || {}) as Record<string, unknown>
     if (concept === 'chat' && Array.isArray(it.messages)) return { ...it, messages: (it.messages as Record<string, unknown>[]).map((m) => adapt.msg(m)) }
@@ -322,10 +323,11 @@ export function createApp(d: Deps) {
   async function act(s: Space, b: Record<string, unknown>) {
     if (!s.source.available()) throw downError(s.source.via, 'nothing was sent')
     let listed: { id: string; name: string }[] = []
+    const owner = isLocal(s.source) ? s.source.actionPack(String(b.action)) : undefined
     const chats = async () => {
       const c = (await s.source.read(['chat'])).chat
-      listed = withKeptNames(READY.has(c?.status) && Array.isArray(c.items) ? (c.items as { id: string; name: string }[]) : [],
-        await s.store.marks().catch(() => ({})))
+      const items = READY.has(c?.status) && Array.isArray(c.items) ? (c.items as { id: string; name: string; pack?: string }[]) : []
+      listed = withKeptNames(chatsOfPack(items, owner), await s.store.marks().catch(() => ({})))
       return listed
     }
     const a = await resolveAct(b as { action: string; actionId?: string; args?: Record<string, unknown> }, chats, s.acts)
@@ -488,7 +490,7 @@ export function createApp(d: Deps) {
       return s.start(r.p[0], typeof b.pb === 'string' && b.pb ? b.pb : undefined, 'page')
     }],
     ['GET', /^\/sources$/, (r, s) => sources(s, (r.q.get('concepts') || 'chat,mail,cal').split(',').map((x) => x.trim()).filter(Boolean))],
-    ['GET', /^\/sources\/([^/]+)\/([^/]+)$/, async (r, s) => ({ item: await item(s, r.p[0], r.p[1], r.q.get('cursor') || undefined) })],
+    ['GET', /^\/sources\/([^/]+)\/([^/]+)$/, async (r, s) => ({ item: await item(s, r.p[0], r.p[1], r.q.get('cursor') || undefined, r.q.get('pack') || undefined) })],
     ['POST', /^\/mail\/([^/]+)\/mark$/, async (r, s) => {
       const b = await r.body()
       await s.store.putMark(r.p[0], { done: b.done === true || undefined, job: typeof b.job === 'string' ? b.job : undefined })

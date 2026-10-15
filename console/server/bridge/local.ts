@@ -34,7 +34,7 @@ export type LocalStatus = {
 /** concepts: this pack's state per concept it serves; names: id to name from its chat items, to show scopes by name */
 export type PackState = { concepts: Record<string, PackReply>; names: Record<string, string> }
 /** actions: what the loaded packs declare, less what the grants leave out; mcp = it serves the run MCP once started */
-export type LocalSource = Source & { status(): LocalStatus; front(host: string): Promise<void>; actions(): ReadonlySet<string>; packStates(): Record<string, PackState>; local: true; mcp: boolean }
+export type LocalSource = Source & { status(): LocalStatus; front(host: string): Promise<void>; actions(): ReadonlySet<string>; packStates(): Record<string, PackState>; actionPack(action: string): string | undefined; local: true; mcp: boolean }
 export type LocalOptions = {
   bus: Bus; ws: string
   /** default: configGrants, the workspace config's packs, hosts, packConfig and acts */
@@ -301,10 +301,13 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
       }))
       return out
     },
-    async get(concept, id, cursor) {
+    async get(concept, id, cursor, pack) {
       if (STATE.includes(concept)) return b.get(concept, id)
-      const f = cs.get(concept)?.[0]
-      if (!f) return { status: 'source_error', message: down.get(concept) ?? `no granted pack serves ${concept}` }
+      const fs = cs.get(concept)
+      if (!fs) return { status: 'source_error', message: down.get(concept) ?? `no granted pack serves ${concept}` }
+      const f = pack ? fs.find((x) => x.pack.name === pack) : fs.length === 1 ? fs[0] : undefined
+      if (pack && !f) return { status: 'not_found', message: `no pack ${pack} serves ${concept}` }
+      if (!f) return { status: 'ambiguous', message: `ambiguous: ${concept} served by ${fs.map((x) => x.pack.name).join(', ')}; give pack` }
       const sc = conceptScope(f)
       // an id field is checked as given; any other field through the item the scoped read kept
       if (sc && !(sc.field === 'id' ? inScope(sc.ids, id) : f.proj.items.some((x) => (x as { id?: unknown }).id === id)))
@@ -322,6 +325,7 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
         return { status: e.code, message: e.message, ...(e.host ? { host: e.host } : {}) } as ConceptReply
       }
     },
+    actionPack: (a) => packs.find((p) => Object.hasOwn(p.actions, a))?.name,
     act(a) {
       const t = Date.now()
       for (const [k, v] of done) if (t - v.at > DEDUPE_MS) done.delete(k)

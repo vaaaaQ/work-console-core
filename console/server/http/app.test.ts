@@ -437,6 +437,17 @@ test('sources come in page shapes; an act resolves the chat name and reaches onl
   } finally { await stop() }
 })
 
+test('a concept reply keeps the state per pack, ready or not', async () => {
+  const { lp, spaces, stop } = await setup({ one: true })
+  try {
+    const src = spaces.get('acme').source, read = src.read.bind(src)
+    const packs = { fixture: { status: 'ok' }, talk: { status: 'signin_required', host: 'talk.example' } }
+    src.read = async (cs) => Object.fromEntries(Object.entries(await read(cs)).map(([k, r]) => [k, k === 'chat' ? { ...r, packs } : k === 'mail' ? { status: 'signin_required', message: 'x', packs } : r]))
+    const got = (await call(lp, 'GET', '/api/ws/acme/sources?concepts=chat,mail')).json.concepts
+    assert.deepEqual([got.chat.status, got.chat.packs, got.mail.status, got.mail.packs], ['ok', packs, 'signin_required', packs])
+  } finally { await stop() }
+})
+
 test("a managed workspace acts only through what its granted packs declare and its grants name", async () => {
   const root = tempDir('root')
   mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })

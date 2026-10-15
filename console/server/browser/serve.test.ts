@@ -23,7 +23,7 @@ function stubSource() {
     available: () => true,
     concepts: () => ({ work: 'ready', jobs: 'ready' }),
     read: async (cs) => Object.fromEntries(cs.map((c) => [c, c === 'work' ? { status: 'ok', rev: 3, items: [{ id: 'W-1' }] } : { status: 'source_error', message: `no ${c}` }])),
-    get: async (_c, id) => ({ status: 'ok', rev: 3, items: { id, description: 'd' } }),
+    get: async (_c, id, _cursor, pack) => ({ status: 'ok', rev: 3, items: { id, description: 'd', ...(pack ? { pack } : {}) } }),
     act: async (a) => {
       acts.push(a)
       return a.action === 'work.comment' ? { status: 'ok', result: { done: 1 } } : { status: 'error', error: { code: 'unknown_action', message: `no ${a.action}` } }
@@ -108,6 +108,7 @@ test("bridge_snapshot answers the source's concepts; bridge_get its get; bridge_
   assert.equal(snap.concepts.mail.status, 'source_error')
   assert.deepEqual(Object.keys((await tool(s.url, 'bridge_snapshot')).concepts).sort(), ['jobs', 'work'], 'no concepts = all of them')
   assert.deepEqual(await tool(s.url, 'bridge_get', { concept: 'work', id: 'W-9' }), { status: 'ok', rev: 3, items: { id: 'W-9', description: 'd' } })
+  assert.deepEqual(await tool(s.url, 'bridge_get', { concept: 'chat', id: 'c1', pack: 'talk' }), { status: 'ok', rev: 3, items: { id: 'c1', description: 'd', pack: 'talk' } })
   bus.emit({ kind: 'bridge', state: 'ok', concepts: { work: 'signin_required' } })
   const st = await tool(s.url, 'bridge_status')
   assert.equal(st.state, 'up')
@@ -127,6 +128,7 @@ test('the wire needs the console token; the llm token cannot act', async () => {
   const snap = await wire(s.url, '/api/snapshot?concepts=work')
   assert.deepEqual([snap.status, snap.body.bridge.state, snap.body.concepts.work.rev], [200, 'up', 3])
   assert.deepEqual((await wire(s.url, '/api/items/work/W%2F1?cursor=c')).body.items, { id: 'W/1', description: 'd' })
+  assert.deepEqual((await wire(s.url, '/api/items/chat/c1?pack=talk')).body.items, { id: 'c1', description: 'd', pack: 'talk' })
 })
 
 test('an act answers in the wire shape: ok with its result in items, an error by its code', async () => {

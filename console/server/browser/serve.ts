@@ -26,7 +26,7 @@ const TOOLS = [
   {
     name: 'bridge_get',
     description: "Detail of one item: a chat thread's messages, a mail body, a work item's description and comments. cursor pages back through earlier chat messages.",
-    inputSchema: { type: 'object', properties: { concept: { type: 'string' }, id: { type: 'string' }, cursor: { type: 'string' } }, required: ['concept', 'id'] },
+    inputSchema: { type: 'object', properties: { concept: { type: 'string' }, id: { type: 'string' }, cursor: { type: 'string' }, pack: { type: 'string', description: 'the pack to read from; needed when bridge_snapshot shows more than one pack on the concept' } }, required: ['concept', 'id'] },
   },
   { name: 'bridge_status', description: "Whether the bridge is up, and each concept's state.", inputSchema: { type: 'object', properties: {} } },
 ]
@@ -81,7 +81,7 @@ export async function serveBridge(o: {
 
   const run = async (name: string, a: Record<string, unknown>): Promise<unknown> => {
     if (name === 'bridge_snapshot') return snapshot(names(a.concepts))
-    if (name === 'bridge_get') return src.get(String(a.concept ?? ''), String(a.id ?? ''), typeof a.cursor === 'string' && a.cursor ? a.cursor : undefined)
+    if (name === 'bridge_get') return src.get(String(a.concept ?? ''), String(a.id ?? ''), typeof a.cursor === 'string' && a.cursor ? a.cursor : undefined, typeof a.pack === 'string' && a.pack ? a.pack : undefined)
     return { state: src.available() ? 'up' : 'down', last }
   }
   type Rpc = { id?: string | number | null; method?: unknown; params?: Record<string, unknown> }
@@ -138,7 +138,7 @@ export async function serveBridge(o: {
     if (req.method === 'GET' && p === '/api/snapshot') return out(res, 200, await snapshot(names(url.searchParams.get('concepts'))))
     const item = /^\/api\/items\/([^/]+)\/([^/]+)$/.exec(p)
     if (req.method === 'GET' && item)
-      return out(res, 200, await src.get(decodeURIComponent(item[1]), decodeURIComponent(item[2]), url.searchParams.get('cursor') || undefined))
+      return out(res, 200, await src.get(decodeURIComponent(item[1]), decodeURIComponent(item[2]), url.searchParams.get('cursor') || undefined, url.searchParams.get('pack') || undefined))
     if (req.method === 'POST' && p === '/api/act') {
       const a = (await readBody(req)) as ActReq
       return out(res, 200, wireAct(await src.act({ action: String(a.action ?? ''), actionId: String(a.actionId ?? ''), args: a.args ?? {} })))

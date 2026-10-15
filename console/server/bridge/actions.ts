@@ -51,3 +51,7 @@ export async function resolveAct(
   }
   return { action: a.action, actionId: typeof a.actionId === 'string' && a.actionId ? a.actionId : randomUUID(), args }
 }
+
+/** a name resolves only among the chats of the pack that runs the action; an untagged chat (a gateway's) always counts */
+export const chatsOfPack = <T extends { pack?: string }>(items: readonly T[], owner: string | undefined): T[] =>
+  items.filter((i) => i.pack === undefined || i.pack === owner)
