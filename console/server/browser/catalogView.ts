@@ -36,19 +36,22 @@ export function mcpLine(c: Record<string, unknown> | undefined): string {
   return [typeof c?.command === 'string' ? c.command : '', ...args].filter(Boolean).join(' ')
 }
 
-export function packViews(cat: CatalogEntry[], g: GrantsLike, st: StatusIn): PackView[] {
+export function packViews(cat: CatalogEntry[], g: GrantsLike, st: StatusIn, cfgs: Record<string, Record<string, unknown>> = {}): PackView[] {
   return cat.map((e, i) => {
     // a workspace copy of a core name is never the one that is on; a granted pack that fails to load is, with state error
     const dup = cat.findIndex((x) => x.name === e.name) !== i
     const m = e.manifest, actions = Object.keys(m?.actions ?? {}), on = !dup && g.packs.includes(e.name)
     const names = st?.states[e.name]?.names ?? {}
+    // a workspace pack's hosts are granted with it: shown before the click; none when its settings do not render
+    let hosts: string[] | undefined
+    if (m && !e.core) try { hosts = hostsOrThrow(e, cfgs) } catch { /* turn-on is refused then */ }
     return {
       name: e.name, title: m?.title ?? e.name, kind: m ? packKind(m) : 'browser', about: m?.about ?? '', ...(m?.scopeAbout ? { scopeAbout: m.scopeAbout } : {}),
       listed: e.listed, on, concepts: Object.keys(m?.concepts ?? {}), actions,
       scoped: Object.values(m?.concepts ?? {}).some((c) => !!(c as { scope?: string }).scope),
       scopes: (g.scopes?.[e.name] ?? []).map((id) => (names[id] ? { id, name: names[id] } : { id })),
       acts: actions.filter((a) => (g.acts ?? actions).includes(a)), llmActs: actions.filter((a) => (g.llmActs ?? []).includes(a)),
-      ...stateOf(e, on, st), ...(e.problem ? { problem: e.problem } : {}), ...(m && packKind(m) === 'mcp' ? { mcp: mcpLine(m.mcp) } : {}), guide: e.guide,
+      ...stateOf(e, on, st), ...(e.problem ? { problem: e.problem } : {}), ...(m && packKind(m) === 'mcp' ? { mcp: mcpLine(m.mcp) } : {}), ...(hosts?.length ? { hosts } : {}), guide: e.guide,
     }
   })
 }
@@ -57,7 +60,7 @@ export function packViews(cat: CatalogEntry[], g: GrantsLike, st: StatusIn): Pac
 export function viewsFor(s: { packDirs: string[]; grants: Grants | null; cfg: WsConfig; source: Source }): PackView[] {
   const g = s.grants ?? configGrants(s.cfg)
   const st = isLocal(s.source) ? { loaded: s.source.status().packs, states: s.source.packStates() } : null
-  return packViews(catalog(s.packDirs), g, st)
+  return packViews(catalog(s.packDirs), g, st, configGrants(s.cfg).config)
 }
 
 const uniq = (xs: readonly string[]) => [...new Set(xs.map((x) => x.trim()).filter(Boolean))]

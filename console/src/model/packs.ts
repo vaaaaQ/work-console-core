@@ -9,6 +9,8 @@ export interface PackView {
   state: string; message?: string; host?: string; problem?: string
   /** an mcp pack: the server a click puts into the grants, as one line */
   mcp?: string
+  /** a workspace pack: the hosts turning it on grants, with its settings put in; absent when none or its settings do not render */
+  hosts?: string[]
   guide: string
 }
 export interface PackChange { on?: boolean; scopes?: string[]; acts?: string[]; llmActs?: string[] }

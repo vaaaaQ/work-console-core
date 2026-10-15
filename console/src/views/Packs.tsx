@@ -69,6 +69,7 @@ export function Packs({ ws }: { ws: string }) {
       </div>
       <p className="why" style={{ margin: 0 }}>{p.about}{p.message ? ` — ${p.message}` : ''}</p>
       {p.kind === 'mcp' && p.mcp !== undefined ? <p className="why mono" style={{ margin: 0 }}>{p.mcp ? `runs ${p.mcp}` : 'runs a server set in its config'}</p> : null}
+      {p.hosts?.length ? <p className="why mono" style={{ margin: 0 }}>reaches {p.hosts.join(', ')}</p> : null}
       {p.on && p.kind === 'browser' && p.state === 'signin_required' && p.host
         ? <div><button className="btn sm" onClick={() => void api.front(ws, p.host!).catch((e) => toast((e as Error).message))}><Ic n="external" sm />Sign in to {p.host}</button></div> : null}
       {p.on && p.kind === 'remote-browser' ? <p className="why" style={{ margin: 0 }}>Sign-in happens on the work machine.</p> : null}

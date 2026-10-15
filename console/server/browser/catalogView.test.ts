@@ -102,3 +102,12 @@ test('an mcp pack shows its server as one line', () => {
   const v = packViews([mk('stdio', { command: 'npx', args: ['-y', 'some-server'] }), mk('remote', { type: 'http', url: 'https://mcp.example/mcp' }), base], EMPTY_GRANTS, null)
   assert.deepEqual([v[0].mcp, v[1].mcp, v[2].mcp], ['npx -y some-server', 'https://mcp.example/mcp', undefined])
 })
+
+test("views: a workspace pack shows the hosts a click grants, with its settings put in; a core pack, an unrendered one and an mcp one show none", () => {
+  const m = { ...entry('talk').manifest!, config: { site: { about: 'the site', required: true } }, hosts: ['{site}.example'] }
+  const ws = { ...entry('talk'), core: false, manifest: m }, host = (c: Parameters<typeof packViews>[0], cfgs?: Parameters<typeof packViews>[3]) => packViews(c, EMPTY_GRANTS, null, cfgs)[0].hosts
+  assert.deepEqual(host([ws], { talk: { site: 'a' } }), ['talk.example', 'a.example'])
+  assert.equal(host([ws]), undefined, 'its settings do not render')
+  assert.equal(host([{ ...ws, core: true }], { talk: { site: 'a' } }), undefined)
+  assert.equal(host([{ ...ws, manifest: { ...m, kind: 'mcp' as const, mcp: { url: 'https://x.example/mcp' } } }]), undefined)
+})
