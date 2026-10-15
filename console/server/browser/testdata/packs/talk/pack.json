@@ -7,6 +7,6 @@
   "script": "talk.js",
   "hosts": ["talk.example"],
   "tabs": { "talk": { "match": "^https://talk\\.example/", "open": "https://talk.example/app" } },
-  "concepts": { "chat": { "tab": "talk", "interval": 1, "cap": 50, "scope": "id" } },
+  "concepts": { "chat": { "tab": "talk", "interval": 1, "cap": 50, "scope": "id", "files": true } },
   "actions": { "talk.post": { "tab": "talk", "concept": "chat", "scope": "chat" } }
 }

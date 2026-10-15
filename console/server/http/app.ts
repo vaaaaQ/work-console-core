@@ -48,6 +48,8 @@ export interface Bridge {
   concepts(): Record<string, string>
   read(concepts: string[]): Promise<Record<string, ConceptReply>>
   get(concept: string, id: string, cursor?: string, pack?: string): Promise<ConceptReply>
+  /** a file a source item carries, as {name, mime, size, base64}; only a local source with a pack that serves files has it */
+  file?(concept: string, id: string, file: string, pack?: string): Promise<ConceptReply>
   act(a: { action: string; actionId: string; args: Record<string, unknown> }): Promise<ActRes>
   state(method: 'GET' | 'POST', path: string, body?: unknown): Promise<ConceptReply>
 }

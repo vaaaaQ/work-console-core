@@ -1,4 +1,4 @@
-// A second test pack: serves window.DATA[concept], window.GETS[concept][id] and window.CANDIDATES; window.MODE[name] overrides.
+// A second test pack: serves window.DATA[concept], window.GETS[concept][id], window.FILES[concept][id/file] and window.CANDIDATES; window.MODE[name] overrides.
 async function (call) {
   const w = globalThis;
   w.CALLS = (w.CALLS || []).concat([call]);
@@ -8,6 +8,10 @@ async function (call) {
   if (forced) return forced;
   if (call.verb === 'read') return { ok: true, data: (w.DATA && w.DATA[call.concept]) || [] };
   if (call.verb === 'candidates') return w.CANDIDATES ? { ok: true, data: w.CANDIDATES } : { ok: false, code: 'bad_args', message: 'no verb candidates' };
+  if (call.verb === 'file') {
+    const f = w.FILES && w.FILES[call.concept] && w.FILES[call.concept][call.id + '/' + call.file];
+    return f === undefined ? { ok: false, code: 'not_found', message: 'no file ' + call.file } : { ok: true, data: f };
+  }
   if (call.verb === 'get') {
     const g = w.GETS && w.GETS[call.concept] && w.GETS[call.concept][call.id];
     return g === undefined ? { ok: false, code: 'not_found', message: 'no ' + call.id } : { ok: true, data: g };

@@ -413,3 +413,33 @@ test("candidates: only a missing verb says 'type the ids'; any other bad_args ke
   assert.doesNotMatch(r.message, /type the ids/)
   assert.match((await src.candidates('fixture')).message!, /type the ids/)
 })
+
+const PDF = { name: 'acta.pdf', mime: 'application/pdf', size: 3, base64: 'YWJj' }
+
+test('file: a concept with files answers the pack\'s file, with the scope and the file id in the call', async () => {
+  const talk = cdp.addTab('https://talk.example/app', { DATA: { chat: [talkChat('t1')] }, FILES: { chat: { 't1/20': PDF } } })
+  const { src } = make({ grants: both() })
+  await until(() => src.packStates().talk?.concepts.chat?.status === 'ok')
+  assert.deepEqual(plain(await src.file!('chat', 't1', '20', 'talk')), { status: 'ok', items: PDF })
+  const c = plain(talk.ctx.CALLS).find((x: { verb: string }) => x.verb === 'file')
+  assert.deepEqual([c.concept, c.id, c.file, c.scope], ['chat', 't1', '20', ['t1', 't2']])
+  assert.equal((await src.file!('chat', 't1', '21', 'talk')).status, 'not_found')
+})
+
+test('file: a concept without files is no_files; out of scope, an unknown pack and an ambiguous id answer as get does', async () => {
+  cdp.addTab('https://talk.example/app', { DATA: { chat: [talkChat('t1')] }, FILES: { chat: { 't1/20': PDF } } })
+  const { src } = make({ grants: both() })
+  await until(() => src.concepts().chat === 'ready')
+  assert.deepEqual(plain(await src.file!('chat', 'c1', '1', 'fixture')), { status: 'no_files', message: 'chat from fixture serves no files' })
+  assert.deepEqual(plain(await src.file!('jobs', 'J-1', '1')), { status: 'no_files', message: 'jobs serves no files' })
+  assert.equal((await src.file!('chat', 't9', '1', 'talk')).status, 'out_of_scope')
+  assert.equal((await src.file!('chat', 't1', '1', 'nope')).status, 'not_found')
+  assert.equal((await src.file!('chat', 'zz', '1')).status, 'ambiguous')
+})
+
+test('file: a pack answer that is not a file is a source_error', async () => {
+  cdp.addTab('https://talk.example/app', { DATA: { chat: [talkChat('t1')] }, FILES: { chat: { 't1/20': { name: 'x' } } } })
+  const { src } = make({ grants: both() })
+  await until(() => src.packStates().talk?.concepts.chat?.status === 'ok')
+  assert.deepEqual(plain(await src.file!('chat', 't1', '20', 'talk')), { status: 'source_error', message: 'chat t1: the pack sent no file' })
+})

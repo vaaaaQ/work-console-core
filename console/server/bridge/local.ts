@@ -50,7 +50,7 @@ export type LocalOptions = {
   tickMs?: number
   /** how long a read waits for a concept's first poll */
   firstReadMs?: number
-  runtime?: { evalMs?: number; actMs?: number; settleMs?: number }
+  runtime?: { evalMs?: number; actMs?: number; settleMs?: number; fileMs?: number }
   /** serve the run MCP's read tools at cfg.gatewayUrl (loopback only, never the gateway's 47821; port 0 = a free one) on the token in cfg.llmTokenPath, made when missing */
   mcp?: boolean
   log?: (line: string) => void
@@ -140,6 +140,24 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
     const field = f.pack.concepts[f.concept].scope
     return field ? { field, ids: scopeOf(f.pack) } : null
   }
+  /** the feed that answers concept id: the named pack's, the only one, or the one listing the id; else why not */
+  const feedFor = (concept: string, id: string, pack?: string): { f: Feed; sc: ReturnType<typeof conceptScope> } | ConceptReply => {
+    const fs = cs.get(concept)
+    if (!fs) return { status: 'source_error', message: down.get(concept) ?? `no granted pack serves ${concept}` }
+    // without a pack, the one feed that lists the id answers: ids kept in jobs carry no pack
+    const owners = pack || fs.length === 1 ? [] : fs.filter((x) => x.proj.items.some((i) => (i as { id?: unknown }).id === id))
+    const f = pack ? fs.find((x) => x.pack.name === pack) : fs.length === 1 ? fs[0] : owners.length === 1 ? owners[0] : undefined
+    if (pack && !f) return { status: 'not_found', message: `no pack ${pack} serves ${concept}` }
+    if (!f) return { status: 'ambiguous', message: `ambiguous: ${concept} served by ${fs.map((x) => x.pack.name).join(', ')}; give pack` }
+    const sc = conceptScope(f)
+    // an id field is checked as given; any other field through the item the scoped read kept
+    if (sc && !(sc.field === 'id' ? inScope(sc.ids, id) : f.proj.items.some((x) => (x as { id?: unknown }).id === id)))
+      return { status: 'out_of_scope', message: `${concept} ${id} is not in this workspace's scope for ${f.pack.name}` }
+    return { f, sc }
+  }
+  const isFile = (v: unknown): v is { name: string; mime: string; size: number; base64: string } =>
+    !!v && typeof v === 'object' && typeof (v as { name?: unknown }).name === 'string' && typeof (v as { base64?: unknown }).base64 === 'string'
+      && typeof (v as { mime?: unknown }).mime === 'string' && typeof (v as { size?: unknown }).size === 'number'
 
   const reset = (c: string) => { if (cs.has(c)) bus.emit({ kind: 'source', concept: c, upserts: [], removes: [], reset: true }) }
   const docs = o.docs ?? defaultDocs(cfg, home, o.ws, o.needDb)
@@ -305,17 +323,9 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
     },
     async get(concept, id, cursor, pack) {
       if (STATE.includes(concept)) return b.get(concept, id)
-      const fs = cs.get(concept)
-      if (!fs) return { status: 'source_error', message: down.get(concept) ?? `no granted pack serves ${concept}` }
-      // without a pack, the one feed that lists the id answers: ids kept in jobs carry no pack
-      const owners = pack || fs.length === 1 ? [] : fs.filter((x) => x.proj.items.some((i) => (i as { id?: unknown }).id === id))
-      const f = pack ? fs.find((x) => x.pack.name === pack) : fs.length === 1 ? fs[0] : owners.length === 1 ? owners[0] : undefined
-      if (pack && !f) return { status: 'not_found', message: `no pack ${pack} serves ${concept}` }
-      if (!f) return { status: 'ambiguous', message: `ambiguous: ${concept} served by ${fs.map((x) => x.pack.name).join(', ')}; give pack` }
-      const sc = conceptScope(f)
-      // an id field is checked as given; any other field through the item the scoped read kept
-      if (sc && !(sc.field === 'id' ? inScope(sc.ids, id) : f.proj.items.some((x) => (x as { id?: unknown }).id === id)))
-        return { status: 'out_of_scope', message: `${concept} ${id} is not in this workspace's scope for ${f.pack.name}` }
+      const p = feedFor(concept, id, pack)
+      if ('status' in p) return p
+      const { f, sc } = p
       const s = browser!.status()
       if (s.state !== 'up') return { status: 'source_unavailable', message: why(s) }
       try {
@@ -324,6 +334,22 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
         if (errors.length) return { status: 'source_error', message: `${concept} ${id}: ${errors.slice(0, 3).join('; ')}` }
         watched.add(concept, id)
         return { status: 'ok', rev: f.proj.rev, items: v }
+      } catch (e) {
+        if (!(e instanceof SourceFail)) throw e
+        return { status: e.code, message: e.message, ...(e.host ? { host: e.host } : {}) } as ConceptReply
+      }
+    },
+    async file(concept, id, file, pack) {
+      if (STATE.includes(concept)) return { status: 'no_files', message: `${concept} serves no files` }
+      const p = feedFor(concept, id, pack)
+      if ('status' in p) return p
+      const { f, sc } = p
+      if (!f.pack.concepts[concept].files) return { status: 'no_files', message: `${concept} from ${f.pack.name} serves no files` }
+      const s = browser!.status()
+      if (s.state !== 'up') return { status: 'source_unavailable', message: why(s) }
+      try {
+        const v = await f.rt.file(f.tab, { verb: 'file', concept, id, file, ...(sc ? { scope: [...sc.ids] } : {}) })
+        return isFile(v) ? { status: 'ok', items: v } : { status: 'source_error', message: `${concept} ${id}: the pack sent no file` }
       } catch (e) {
         if (!(e instanceof SourceFail)) throw e
         return { status: e.code, message: e.message, ...(e.host ? { host: e.host } : {}) } as ConceptReply
