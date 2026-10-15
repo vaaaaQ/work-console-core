@@ -103,10 +103,20 @@ Today a context item can only be a work item, chat, mail or note (`CtxKind`). A 
 - **In a playbook:** a playbook file (`PbFile`, `src/model/pbFormat.ts`) gets an optional `links: [{name, url}]` for
   what every job of that kind needs, such as a login page. A job created from the playbook starts with those links in
   its context. The builder's new-playbook form (`npb`) can fill them in.
-- **As artifacts you can open:** each link of the job (its own and its playbook's) shows in the step's artifact list
-  as an entry that opens the site in a new tab (`target=_blank`, `rel=noopener`). It does not open in the artifact
-  viewer, which fetches files from `/api/artifacts`. These entries come from the context, not from the `artifact` op,
-  so a run cannot add an external link through `add_artifact`, which keeps the "never guess a URL" rule.
+- **The job's Artifacts panel gets two groups (Valery, 2026-10-15): Input and Produced.** The panel is per job and
+  sits next to Context (`views/Job.tsx`); today it lists every step's `arts`.
+  - **Input**, what the job started from: every `link` item of the job and of its playbook, each shown as its label
+    (or its host when it has no label). It opens the site in a new tab (`target=_blank`, `rel=noopener noreferrer`), not in the
+    artifact viewer, which fetches files from `/api/artifacts`. These entries are read from the job's context; they are
+    not stored as `arts`, so there is no new state and no migration.
+  - **Produced**, what the steps made: the current list as it is today (name, step, ready/planned, download), with its
+    "N/M ready" count. A playbook that produces no files keeps its "This playbook produces no files." line under Produced.
+  - The two groups are headed sections in the same panel, so both show without a click. A group with nothing in it
+    shows only its empty line, and Input is left out when the job has no links. Tabs inside the panel are the fallback if a
+    long Input list pushes Produced out of view; I'd start with groups.
+  - Input entries come from the context, never from the `artifact` op, so a run cannot add an external link through
+    `add_artifact`. That keeps the "never guess a URL" rule.
+  - So links are not tied to a step at all (this answers Q6).
 
 ## Then
 
@@ -127,6 +137,12 @@ separate commit in the IAEA repo.
 
 ## Decided (Valery, 2026-10-15)
 
+- E's links exist at both levels: a playbook's links (such as a login page) reach every job made from it, and a job
+  adds its own.
+- Artifacts are shown in two groups, Input (what the job started from) and Produced (what its steps made), instead of
+  link artifacts on a step.
+- IAEA has two sending packs, one for Outlook and one for Teams. Build checks whether they are the core's `m365-mail`
+  and `m365-teams` (then D covers both) or IAEA's own (then the same change goes into each, in the IAEA repo).
 - D is part of this job.
 - The IAEA pattern note takes org and project from a real IAEA run's reply.
 - The rule in A applies to every run, not only message steps.
@@ -134,10 +150,7 @@ separate commit in the IAEA repo.
 
 ## Open questions (notes)
 
-- **Q5: Job or playbook level for E?** I read "when creating a playbook" as both: a playbook can carry standard links
-  (the login page), and a job can add its own. If you meant only one of the two, I drop the other half.
-- **Q6: Which step shows the link artifacts?** I propose the current step, so they move along with the job. The
-  alternative is to pin them to the first step.
-- **Q7: IAEA's sending pack.** Answered by the check in D, which Build does first from iaea-pc. If IAEA has its own
-  Teams pack, its change lands in the IAEA repo.
-
+- **Q7: Are IAEA's two packs the core's?** Valery: one for Outlook, one for Teams. Build checks first, from iaea-pc,
+  which packs declare `chat.post` and `mail.send` (steps in D), and writes the answer in the journal.
+- **Q8: Groups or tabs.** I start with two headed groups in the one Artifacts panel. If you'd rather have tabs, say so
+  at Build's review. It is a page-only change either way.
