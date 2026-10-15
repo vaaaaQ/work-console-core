@@ -31,7 +31,10 @@ async function (call, env) {
   const m = env.managers;
   if (!m || !m.apiManager || !m.appMessagesManager || !m.appPeersManager) return { ok: false, code: 'blank', message: 'Telegram Web has not started in this tab' };
   const me = Number(env.rootScope && env.rootScope.myId);
-  if (!me) return { ok: false, code: 'unauthorized', message: 'Telegram Web is signed out' };
+  // myId stays 0 for a moment while a signed-in page boots; only the sign-in pages mean signed out
+  if (!me) return doc.getElementById && doc.getElementById('auth-pages')
+    ? { ok: false, code: 'unauthorized', message: 'Telegram Web is signed out' }
+    : { ok: false, code: 'blank', message: 'Telegram Web is still starting' };
 
   // ---- the API, through the page's own session ----
   const api = async (method, params) => {

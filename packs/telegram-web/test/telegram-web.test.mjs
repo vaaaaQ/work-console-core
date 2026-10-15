@@ -15,7 +15,7 @@ const user = (id, first, o = {}) => ({ _: 'user', id, first_name: first, ...o })
 const msg = (id, date, text, from, o = {}) => ({ _: 'message', id, date, message: text, from_id: { _: 'peerUser', user_id: from }, pFlags: {}, ...o });
 const t0 = Date.parse('2026-10-11T12:00:00Z') / 1000;
 
-function fakeTg({ chats, migrated = {}, fail = {}, sent = 'lands', ready = true, myId = ME } = {}) {
+function fakeTg({ chats, migrated = {}, fail = {}, sent = 'lands', ready = true, myId = ME, signIn = !ready } = {}) {
   const store = chats ?? {
     [BROTHERS]: { title: 'Покер. Пиво и…', messages: [msg(12, t0 + 60, 'в пятницу?', 7002), msg(11, t0, 'привет', ME, { pFlags: { out: true } })] },
     [OTHER]: { title: 'Work', messages: [msg(5, t0, 'secret', 7003)] },
@@ -54,7 +54,7 @@ function fakeTg({ chats, migrated = {}, fail = {}, sent = 'lands', ready = true,
   const env = {
     managers, rootScope: { myId: ready ? myId : 0 },
     location: { hostname: 'web.telegram.org', pathname: '/k/', href: 'https://web.telegram.org/k/' },
-    document: { readyState: 'complete', body: { childElementCount: 3 } },
+    document: { readyState: 'complete', body: { childElementCount: 3 }, getElementById: (id) => (signIn && id === 'auth-pages' ? {} : null) },
     sleep: async () => {},
   };
   return { env, calls, store, sends: () => calls.filter((c) => c[0] === 'sendText'), apis: () => calls.filter((c) => c[0] === 'invokeApi') };
@@ -151,8 +151,8 @@ test('a chat upgraded to a supergroup is refused with its new id, on read, get a
   assert.deepEqual(tg.sends(), []);
 });
 
-test('a signed-out tab is unauthorized and a tab still loading is blank, for every verb, and nothing runs', async () => {
-  for (const [o, code] of [[{ ready: false }, 'unauthorized']]) {
+test('a tab on the sign-in pages is unauthorized; one still loading, or booting with no user yet, is blank; for every verb, and nothing runs', async () => {
+  for (const [o, code] of [[{ ready: false }, 'unauthorized'], [{ ready: false, signIn: false }, 'blank']]) {
     const tg = fakeTg(o);
     for (const call of [read('chat'), get('chat', BROTHERS), act('tg.post', { chat: BROTHERS, text: 'hi' })]) assert.equal((await pack(scoped(call), tg.env)).code, code);
     assert.deepEqual(tg.calls, []);
