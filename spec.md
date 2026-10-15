@@ -148,9 +148,13 @@ separate commit in the IAEA repo.
 - The rule in A applies to every run, not only message steps.
 - Revise rounds keep the rule from the session's first prompt; `replyPrompt` does not change.
 
+- The Artifacts panel starts with two groups (Input, Produced), not tabs.
+- On IAEA, sending goes, as far as Valery knows, through the pack he named "Remont Agent" (written as heard, perhaps a
+  remote-agent pack). It is not in this core: nothing here is named like it. Build checks it on iaea-pc first.
+
 ## Open questions (notes)
 
-- **Q7: Are IAEA's two packs the core's?** Valery: one for Outlook, one for Teams. Build checks first, from iaea-pc,
-  which packs declare `chat.post` and `mail.send` (steps in D), and writes the answer in the journal.
-- **Q8: Groups or tabs.** I start with two headed groups in the one Artifacts panel. If you'd rather have tabs, say so
-  at Build's review. It is a page-only change either way.
+- **Q7: Which pack sends on IAEA.** Build first finds, on iaea-pc, the pack that declares `chat.post` and
+  `mail.send` for the IAEA workspace (the steps in D), and whether it is the "Remont Agent" pack. If that pack wraps
+  the core's `m365-teams` and `m365-mail`, D covers it. If it posts by itself, the same `mdLinks` change goes into
+  it, in the repo that owns it. The answer goes in the journal before any pack code changes.
