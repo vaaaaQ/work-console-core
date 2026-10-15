@@ -376,3 +376,13 @@ test('every pack of a concept failing or warming: the answer is the first one pa
   assert.deepEqual([r.packs.fixture.status, r.packs.talk.status], ['warming_up', 'signin_required'])
   assert.equal(typeof r.rev, 'number')
 })
+
+test("candidates run the pack's candidates verb with no scope; a pack without one says so", async () => {
+  const talk = cdp.addTab('https://talk.example/app', { DATA: { chat: [] }, CANDIDATES: [{ id: 't1', name: 'Brothers' }, { id: 't7', name: 'Family' }] })
+  const { src } = make({ grants: both({ scopes: {} }) })
+  await until(() => src.concepts().chat === 'ready')
+  assert.deepEqual(plain(await src.candidates('talk')), { status: 'ok', items: [{ id: 't1', name: 'Brothers' }, { id: 't7', name: 'Family' }] })
+  assert.equal(plain(talk.ctx.CALLS).find((c: { verb: string }) => c.verb === 'candidates').scope, undefined)
+  assert.equal((await src.candidates('fixture')).status, 'bad_args')
+  assert.equal((await src.candidates('nope')).status, 'not_found')
+})

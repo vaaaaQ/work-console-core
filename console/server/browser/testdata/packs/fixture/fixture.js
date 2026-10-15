@@ -11,6 +11,7 @@ async function (call) {
     const g = w.GETS && w.GETS[call.concept] && w.GETS[call.concept][call.id];
     return g === undefined ? { ok: false, code: 'not_found', message: 'no ' + call.id } : { ok: true, data: g };
   }
+  if (call.verb === 'candidates') return { ok: false, code: 'bad_args', message: 'no verb candidates' };
   w.ACTS = (w.ACTS || []).concat([call]);
   return { ok: true, data: { done: call.action } };
 }

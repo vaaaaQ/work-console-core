@@ -118,6 +118,20 @@ async function (call, env) {
     };
   }
 
+  // every dialog the account has, for Settings to tick from; never called by a run
+  async function candidates() {
+    const r = await api('messages.getDialogs', { offset_date: 0, offset_id: 0, offset_peer: { _: 'inputPeerEmpty' }, limit: 100, hash: 0 });
+    const out = [];
+    for (const d of (r && r.dialogs) || []) {
+      const p = d.peer || {};
+      const id = p.user_id !== undefined ? String(p.user_id) : p.chat_id !== undefined ? String(-p.chat_id) : p.channel_id !== undefined ? String(-p.channel_id) : null;
+      if (!id || !ID.test(id)) continue;
+      const c = p.user_id === undefined ? byId(r.chats, Math.abs(Number(id))) : null;
+      out.push({ id, name: p.user_id !== undefined ? (Number(id) === me ? 'Saved Messages' : userName(byId(r.users, p.user_id), p.user_id)) : (c && c.title) || `chat ${id}` });
+    }
+    return out;
+  }
+
   // ---- acts ----
   // sent = Telegram's server has it: a new message of mine in the chat, found in its history
   async function post(args) {
@@ -153,6 +167,7 @@ async function (call, env) {
       if (call.action !== 'tg.post') fail('bad_args', `no action ${call.action}`);
       return { ok: true, data: await post(call.args || {}) };
     }
+    if (call.verb === 'candidates') return { ok: true, data: await candidates() };
     fail('bad_args', `no verb ${call.verb}`);
   } catch (e) {
     const sure = e instanceof Fail;

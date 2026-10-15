@@ -28,6 +28,11 @@ function fakeTg({ chats, migrated = {}, fail = {}, sent = 'lands', ready = true,
       async invokeApi(method, params) {
         calls.push(['invokeApi', method, params]);
         if (fail[method]) throw fail[method];
+        if (method === 'messages.getDialogs') return {
+          _: 'messages.dialogs',
+          dialogs: [{ peer: { _: 'peerChat', chat_id: 4780440133 } }, { peer: { _: 'peerUser', user_id: 7002 } }, { peer: { _: 'peerChannel', channel_id: 1500 } }],
+          chats: [{ _: 'chat', id: 4780440133, title: 'Покер. Пиво и…' }, { _: 'channel', id: 1500, title: 'News' }], users,
+        };
         const id = String(params.peer.id), c = store[id];
         if (!c) throw { type: 'PEER_ID_INVALID' };
         const list = c.messages.filter((x) => !params.offset_id || x.id < params.offset_id).slice(0, params.limit);
@@ -62,6 +67,13 @@ test('pack.json: one tab on web.telegram.org/k, a chat concept scoped by id and 
   assert.match('https://web.telegram.org/k/#-4780440133', new RegExp(manifest.tabs.tg.match));
   assert.equal(manifest.concepts.chat.scope, 'id');
   assert.deepEqual(manifest.actions['tg.post'], { tab: 'tg', concept: 'chat', scope: 'chat' });
+});
+
+test('candidates: every dialog as {id, name}, ids as the scope takes them, with no scope needed', async () => {
+  const tg = fakeTg();
+  const data = okData(await pack({ verb: 'candidates' }, tg.env));
+  assert.deepEqual(data, [{ id: BROTHERS, name: 'Покер. Пиво и…' }, { id: DAN, name: 'Dan' }, { id: '-1500', name: 'News' }]);
+  assert.deepEqual(tg.apis().map((c) => c[1]), ['messages.getDialogs']);
 });
 
 test('read: one item per allowed chat, in the chat schema, and nothing about a chat not in scope', async () => {

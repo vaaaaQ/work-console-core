@@ -34,7 +34,7 @@ export type LocalStatus = {
 /** concepts: this pack's state per concept it serves; names: id to name from its chat items, to show scopes by name */
 export type PackState = { concepts: Record<string, PackReply>; names: Record<string, string> }
 /** actions: what the loaded packs declare, less what the grants leave out; mcp = it serves the run MCP once started */
-export type LocalSource = Source & { status(): LocalStatus; front(host: string): Promise<void>; actions(): ReadonlySet<string>; packStates(): Record<string, PackState>; actionPack(action: string): string | undefined; local: true; mcp: boolean }
+export type LocalSource = Source & { status(): LocalStatus; front(host: string): Promise<void>; actions(): ReadonlySet<string>; packStates(): Record<string, PackState>; actionPack(action: string): string | undefined; candidates(pack: string): Promise<ConceptReply>; local: true; mcp: boolean }
 export type LocalOptions = {
   bus: Bus; ws: string
   /** default: configGrants, the workspace config's packs, hosts, packConfig and acts */
@@ -325,6 +325,22 @@ export function localSource(cfg: WsConfig, o: LocalOptions): LocalSource {
       } catch (e) {
         if (!(e instanceof SourceFail)) throw e
         return { status: e.code, message: e.message, ...(e.host ? { host: e.host } : {}) } as ConceptReply
+      }
+    },
+    async candidates(name) {
+      const mine = feeds().filter((f) => f.pack.name === name)
+      if (!mine.length) return { status: 'not_found', message: `${name} is not loaded here` }
+      const f = mine.find((x) => conceptScope(x)) ?? mine[0]
+      const s = browser!.status()
+      if (s.state !== 'up') return { status: 'source_unavailable', message: why(s) }
+      try {
+        const v = await f.rt.read(f.tab, { verb: 'candidates' })
+        const list = Array.isArray(v) ? v.filter((x): x is { id: string; name: string } => !!x && typeof x.id === 'string' && typeof x.name === 'string') : null
+        if (!list) return { status: 'source_error', message: `${name}: candidates is not a list of {id, name}` }
+        return { status: 'ok', items: list.slice(0, 500).map(({ id, name: n }) => ({ id, name: n })) }
+      } catch (e) {
+        if (!(e instanceof SourceFail)) throw e
+        return { status: e.code, message: e.code === 'bad_args' ? `${name} lists no candidates; type the ids` : e.message, ...(e.host ? { host: e.host } : {}) } as ConceptReply
       }
     },
     actionPack: (a) => packs.find((p) => Object.hasOwn(p.actions, a))?.name,
