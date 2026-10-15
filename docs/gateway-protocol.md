@@ -76,6 +76,7 @@ name of the pack it came from, and its `id` stays raw. A concept reply may carry
 the pack whose list holds the id answers; a concept that more than one pack serves, where that does not settle
 it, answers `ambiguous`, naming the packs, and `pack` goes with the retry. A `pack` that does not serve the
 concept answers `not_found`.
+A gateway that serves each concept from one pack may ignore `pack`.
 
 `people` is a get-only concept: `GET /api/items/people/{query}` answers `{src, people}`, at most 10
 people `{name, mail, title}` whose name or mail has the query in it, `src` being `directory` or
