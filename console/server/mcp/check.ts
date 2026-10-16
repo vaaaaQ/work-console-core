@@ -11,7 +11,15 @@ import { literalSecrets, resolveEnv, scrubSecrets } from './env.ts'
 
 export type ToolInfo = { name: string; readOnly?: boolean; destructive?: boolean; about?: string }
 export type CheckResult = { ok: true; tools: ToolInfo[]; server?: string } | { ok: false; error: string }
-export const CHECK_WAIT = 90_000
+/** a first start through npx downloads the package: 80 s measured for ssh-mcp, a cold install near 3 minutes. Killing npx
+    mid-install leaves a broken entry in its cache, after which every start fails at once, so Check waits long */
+export const CHECK_WAIT = 300_000
+/** the hint for a server npx started that exited: a half-finished install in npx's cache makes every later start fail */
+export function npxHint(c: Record<string, unknown>, error: string): string {
+  if (!/^npx(\.cmd)?$/i.test(String(c.command ?? '')) || !error.startsWith('the server exited')) return ''
+  const pkg = (Array.isArray(c.args) ? c.args.map(String) : []).find((a) => !a.startsWith('-')) ?? 'the package'
+  return ` (if it did not get as far as starting, npx's cache may hold a half-finished install of ${pkg}: delete its folder under %LOCALAPPDATA%\\npm-cache\\_npx, or ~/.npm/_npx, and Check again)`
+}
 const PROTOCOL = '2025-06-18'
 const STDERR_MAX = 2048
 const PAGES_MAX = 20
@@ -123,7 +131,10 @@ export async function checkServer(config: Record<string, unknown>, o: { vars: Re
   try { ({ config: c, secrets } = resolveEnv(config, o.vars)) } catch (e) { return { ok: false, error: (e as Error).message } }
   const scrub = (t: string) => scrubSecrets(t, secrets), wait = o.timeoutMs ?? CHECK_WAIT
   const type = c.type ?? (typeof c.command === 'string' ? 'stdio' : undefined)
-  if (type === 'stdio' && typeof c.command === 'string') return stdio(stdioCommand(c), wait, scrub)
+  if (type === 'stdio' && typeof c.command === 'string') {
+    const r = await stdio(stdioCommand(c), wait, scrub)
+    return r.ok ? r : { ok: false, error: r.error + npxHint(c, r.error) }
+  }
   if (type === 'http' && typeof c.url === 'string') return http(c, wait, scrub)
   if (type === 'sse') return { ok: false, error: 'Check speaks stdio and streamable HTTP, not the older SSE transport; a run may still reach it' }
   return { ok: false, error: 'a server is a command (stdio) or an http url' }

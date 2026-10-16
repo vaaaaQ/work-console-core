@@ -1,0 +1,15 @@
+{
+  "name": "ssh",
+  "kind": "mcp",
+  "title": "SSH",
+  "about": "commands and files on your SSH hosts, through the ssh-mcp server; the hosts, keys and roles live in its own config.toml",
+  "guide": "guide.md",
+  "mcp": { "command": "npx", "args": ["-y", "ssh-mcp@2.19.1", "--config=${config.file}"] },
+  "config": {
+    "file": { "about": "the path of ssh-mcp's config.toml; empty = its default, %APPDATA%\\ssh-mcp\\config.toml on Windows" }
+  },
+  "tools": {
+    "read": ["list-connections", "list-sessions", "read-command", "read-session-output", "sftp-list", "sftp-download"],
+    "act": ["open-session", "close-session", "run-command", "privileged-command", "signal-process", "sftp-upload", "sftp-upload-file", "sftp-download-file"]
+  }
+}

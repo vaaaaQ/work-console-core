@@ -1,0 +1,62 @@
+{
+ "package": "@modelcontextprotocol/server-filesystem@2026.8.31",
+ "recorded": "2026-10-16",
+ "server": "secure-filesystem-server 0.2.0",
+ "tools": [
+  {
+   "name": "read_file",
+   "readOnly": true
+  },
+  {
+   "name": "read_text_file",
+   "readOnly": true
+  },
+  {
+   "name": "read_media_file",
+   "readOnly": true
+  },
+  {
+   "name": "read_multiple_files",
+   "readOnly": true
+  },
+  {
+   "name": "write_file",
+   "destructive": true
+  },
+  {
+   "name": "edit_file",
+   "destructive": true
+  },
+  {
+   "name": "create_directory"
+  },
+  {
+   "name": "list_directory",
+   "readOnly": true
+  },
+  {
+   "name": "list_directory_with_sizes",
+   "readOnly": true
+  },
+  {
+   "name": "directory_tree",
+   "readOnly": true
+  },
+  {
+   "name": "move_file",
+   "destructive": true
+  },
+  {
+   "name": "search_files",
+   "readOnly": true
+  },
+  {
+   "name": "get_file_info",
+   "readOnly": true
+  },
+  {
+   "name": "list_allowed_directories",
+   "readOnly": true
+  }
+ ]
+}

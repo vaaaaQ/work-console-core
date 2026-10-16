@@ -1,0 +1,62 @@
+{
+ "package": "ssh-mcp@2.19.1",
+ "recorded": "2026-10-16",
+ "server": "SSH MCP Server 2.19.1",
+ "tools": [
+  {
+   "name": "list-connections",
+   "readOnly": true
+  },
+  {
+   "name": "list-sessions",
+   "readOnly": true
+  },
+  {
+   "name": "open-session"
+  },
+  {
+   "name": "close-session",
+   "destructive": true
+  },
+  {
+   "name": "read-session-output",
+   "readOnly": true
+  },
+  {
+   "name": "read-command",
+   "readOnly": true
+  },
+  {
+   "name": "run-command",
+   "destructive": true
+  },
+  {
+   "name": "privileged-command",
+   "destructive": true
+  },
+  {
+   "name": "signal-process",
+   "destructive": true
+  },
+  {
+   "name": "sftp-upload",
+   "destructive": true
+  },
+  {
+   "name": "sftp-download",
+   "readOnly": true
+  },
+  {
+   "name": "sftp-list",
+   "readOnly": true
+  },
+  {
+   "name": "sftp-upload-file",
+   "destructive": true
+  },
+  {
+   "name": "sftp-download-file",
+   "destructive": true
+  }
+ ]
+}

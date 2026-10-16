@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
-import { checkServer } from './check.ts'
+import { CHECK_WAIT, checkServer, npxHint } from './check.ts'
 
 const FAKE = join(import.meta.dirname, 'testdata', 'fake-server.mjs')
 const node = (mode: string, more: Record<string, unknown> = {}) => ({ command: process.execPath, args: [FAKE, mode], ...more })
@@ -62,4 +62,11 @@ test('Check speaks streamable HTTP: a JSON answer or an event stream, the sessio
 
 test('a config that is neither a command nor a url is refused before anything starts', async () => {
   assert.deepEqual(await checkServer({ type: 'ws', url: 'ws://x' }, { vars: {} }), { ok: false, error: 'a server is a command (stdio) or an http url' })
+})
+
+test("Check waits 5 minutes, a first npx start's download; a server npx started that exited gets a hint about npx's cache", async () => {
+  assert.equal(CHECK_WAIT, 300_000)
+  assert.match(npxHint({ command: 'npx', args: ['-y', 'x@1'] }, 'the server exited with code 1: "x" is not recognized'), /npx's cache may hold a half-finished install of x@1/)
+  assert.equal(npxHint({ command: 'node', args: ['s.mjs'] }, 'the server exited with code 1'), '')
+  assert.equal(npxHint({ command: 'npx', args: ['-y', 'x@1'] }, 'the server did not answer in 300 s'), '')
 })

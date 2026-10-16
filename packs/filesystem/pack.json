@@ -1,0 +1,15 @@
+{
+  "name": "filesystem",
+  "kind": "mcp",
+  "title": "Folders",
+  "about": "the folders you list, outside a run's own work dir, through the reference filesystem MCP server",
+  "guide": "guide.md",
+  "mcp": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem@2026.8.31", "${config.roots}"] },
+  "config": {
+    "roots": { "about": "the folders the server may reach, one path each; nothing outside them", "list": true, "required": true }
+  },
+  "tools": {
+    "read": ["read_file", "read_text_file", "read_media_file", "read_multiple_files", "list_directory", "list_directory_with_sizes", "directory_tree", "search_files", "get_file_info", "list_allowed_directories"],
+    "act": ["write_file", "edit_file", "create_directory", "move_file"]
+  }
+}
