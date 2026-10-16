@@ -1,159 +1,190 @@
-# AD-0013: Drafts link their evidence
+# AD-0026: Easy MCP server connection, with a catalog that ships with the core
 
-## Problem
+## Why
 
-Runs name builds, releases, PRs, work items and pages by number or by plain name ("build 286944", "release 24610",
-"USIE Connect"), even when they fetched the URL or already had it in the prompt. Valery then has to ask for the links
-(J-0006, Deploy to dev: the Teams message to Venu took two extra rounds just to add them).
+Valery wants to connect an MCP server, for example one for SSH work, in a few clicks: either from a list
+that ships with the core, or by adding a new one. He was not sure what the core supports today. This
+section answers that from the code (core at `ac40594`, the same rev `D:\agents\services\work-console`
+vendors).
 
-## What I found in the core (branch base 143aab7)
+### What the core does today
 
-1. **The prompt never asks for links.** The "How to work" lists in `server/llm/prompt.ts` (`buildPrompt` and
-   `manualText`) say nothing about URLs. When a step's draft is an outgoing message, the `messageAlone` line covers
-   the message's form, but not links.
-2. **The prompt leaves out links it already has.** Every bridge item schema has a `link` (`ci.item` requires one,
-   and the azure-devops pack builds `…/_build/results?buildId=` when ADO gives none; `work.get` and `review.get` have one too).
-   But `contextSection` (`src/model/context.ts`) prints only the label and the text: `Resolved` keeps `k, id, n, name,
-   status, text` and drops the reply's `link`. So the job's own work item, PR or chat reaches the run without its URL.
-   Asking for links from "the context" can only work once the context carries them.
-3. **How a link reaches the reader depends on where the message goes.**
-   - On the page, drafts render as Markdown (`src/lib/md.ts` renders `[text](url)` as `<a>` for http(s) and mailto links).
-     So a Markdown link in a draft already shows on the page with the name as its visible text.
-   - The core `m365-teams` pack posts `chat.post` as `contentType: 'text'`, and `m365-mail` sends `contentType: 'Text'`.
-     So if an act sends the draft, `[USIE Connect](https://…)` reaches Teams or Outlook as literal brackets. When Valery
-     copies from the rendered page, the link comes along. When the act sends it, it does not.
-   - ADO PR thread comments are Markdown, so they work as written. Work item comments are HTML, and a Markdown link
-     stays literal there.
+A run's MCP servers are put together in `server/llm/sdk.ts` `mcpServers()`, in this order: `bridge`,
+`run`, the runs' `browser`, then the workspace's own servers. The workspace's own servers come from one of
+three places:
+
+| Path | Where | How a person does it |
+|---|---|---|
+| `llm.mcp` in `workspaces/<id>/server.ts` | unmanaged workspaces | by editing code |
+| `grants.json` `mcp` | managed workspaces such as agents-dev | Settings → Access → "Add a server": a name and a raw JSON config; or the workspace agent's `propose_grants`, accepted in Approvals |
+| a pack with `kind: "mcp"` | managed workspaces | Settings → Packs → turn it on. `applyPackChange` copies the pack's `mcp` config into `grants.mcp[<pack>]`. A run can ask for it with `request_access {add: {packs: [...]}}` |
+
+So the mechanism for a catalog already exists: an `mcp` pack (`server/bridge/packs.ts` `checkPack`,
+`readPack`; `catalogView.ts`; tested in `packs.test.ts` and `catalogView.test.ts`). Core `packs/` is
+vendored into every consumer by `sync-core.mjs`.
+
+### What is missing
+
+1. **No MCP server in the catalog.** `packs/` holds only browser packs (`azure-devops`, `m365-mail`,
+   `m365-teams`, `telegram-web`) and `example`. No pack uses `kind: "mcp"`. agents-dev's `grants.json` has `"mcp": {}`.
+2. **A connected server's tools are not allowed.** Sessions run with `permissionMode: 'dontAsk'`, and
+   `allowedTools` is only `ALLOW` + `runTools` (`permissions()` in `sdk.ts`; Cursor's `canMcp` in
+   `cursor/policy.ts` works the same way). Neither "Add a server" nor turning on an `mcp` pack adds
+   `mcp__<name>__<tool>` to `runTools`. The server starts, but every call to it is refused. Today a person
+   has to know to type `mcp__<name>` into "another tool name" as well, and that allows every tool,
+   including the ones that write.
+3. **No way to check a server before a run uses it.** Nothing starts the server and lists its tools. A server
+   that fails to start does not show either: `sessionEvents` reads only `session_id` from the SDK's
+   `init` message and ignores its `mcp_servers` statuses.
+4. **An `mcp` pack takes no settings.** `checkPack` refuses `config` on an `mcp` pack, so a server that
+   needs a value from the workspace (for example, a folder list) cannot be a catalog entry.
+5. **Windows commands.** A catalog server is started by a launcher such as `npx`, which on Windows is
+   `npx.cmd`. Node's `spawn` cannot start a `.cmd` file without a shell, so a plain `{"command": "npx"}`
+   can fail to start on this machine. The runs' browser avoids this because it starts as
+   `process.execPath` plus a script path. The first test confirms whether the SDK handles this case itself.
+6. **Secrets.** `grants.json` is committed to git, so an `env` with a password would end up in git.
+   Nothing warns about this.
 
 ## What changes
 
-### A. The rule (core, `server/llm/prompt.ts`)
+All of the following is generic core. Server names appear only under `packs/<name>/`, never in
+`console/` or `schemas/`. Console tests use fictional servers.
 
-A new constant `LINKS_LINE`, put in both How to work lists right before the `submit_draft` line, so the same text
-is in the run prompt and in the manual session text:
+```
+packs/ssh/pack.json  kind mcp ──▶ Settings → Packs card: Check · tools (read ✓ / act ☐) · Turn on
+                                   │ one grants commit: mcp.ssh + runTools mcp__ssh__<each ticked tool>
+                                   ▼
+run session ── mcpServers (Windows-safe command) ── tools allowed by runTools ── init status → run feed
+```
 
-> - Before you submit, check each thing the draft names as evidence (a build, pipeline run, release or its failed stage
->   or log, a PR, commit, work item, chat, mail or page). Where you know its URL, write it as a Markdown link with the
->   name as its text: [build 286944](url), not "build 286944" with the URL next to it or left out. A URL you know is one
->   you fetched in this run, one the context or knowledge above gives, or one you build from a pattern a knowledge note
->   gives. Never guess one. Where you know no URL, leave the plain name.
+### 1. The catalog: `mcp` packs under core `packs/`
 
-When the draft is an outgoing message, `messageAlone` adds one clause: links go on the names in the message itself
-(visible text = the name), never as a list of bare URLs.
+- **`packs/ssh/`**: `ssh-mcp` pinned at `2.19.1` (npm, MIT, github.com/tufantunc/ssh-mcp). It is
+  stdio, `{"command": "npx", "args": ["-y", "ssh-mcp@2.19.1"]}`. Hosts, users and keys live in that
+  server's own `config.toml` (on Windows `%APPDATA%\ssh-mcp\config.toml`). The server checks that file's
+  ACL, and passwords go in env vars or the SSH agent. The console therefore stores no host and no secret.
+  `guide.md` (at most 2000 characters) tells the person how to write that file, and the run how to use the tools.
+- **`packs/filesystem/`** (proposed second entry): `@modelcontextprotocol/server-filesystem`, pinned. It
+  reads folders outside the run's work dir, and its `config` takes the folder list (see 2).
+- Each catalog pack has a `test/` folder that checks `pack.json` and that its `tools` list matches a
+  recorded `tools/list` of the pinned version. A version bump re-records that list.
 
-Why a prompt rule and not a post-check: the run is the only party that knows what it fetched. A checker that greps
-the draft for "build \d+" would have to invent URLs, which the rule forbids, or nag about every number.
+### 2. The `mcp` pack manifest gains `tools` and `config`
 
-### B. Context items carry their link (core, `src/model/context.ts`)
+- `tools: { read: string[], act?: string[] }`: the server's tool names, split by whether they change
+  anything. `checkPack` refuses a name listed in both, and a pack with no `read`.
+  - For ssh, `read` is `list-connections`, `list-sessions`, `read-command`, `read-session-output`,
+    `sftp-list` and `sftp-download`.
+  - For ssh, `act` is `open-session`, `close-session`, `run-command`, `privileged-command`,
+    `sftp-upload`, `sftp-upload-file`, `sftp-download-file` and `signal-process`.
+- `config` becomes allowed on an `mcp` pack, with the same `ConfigKey` rules as browser packs.
+  `${config.<key>}` in `mcp.args`, `mcp.url` or `mcp.env` is filled in when the pack is turned on. A list
+  key expands into several args. Settings → Packs already takes these values before turning a pack on.
+- `checkPack` refuses an `env` or `headers` value in a pack that is a literal and looks like a secret
+  (no placeholder). A pack may name a secret only as `${env:NAME}`. Whether this is allowed is open
+  question 5. If it is not, v1 ships only servers that keep their secrets in their own config.
 
-- `Resolved` gets an optional `link`. `okItem` takes it from the reply's `link` when it is an http(s) string, and
-  otherwise leaves it out (a pack never sends secrets in it; `scrub` already covers replies).
-- `contextSection` writes `Link: <url>` as the first line under an item's heading when it has one.
-- `contextText` (the run's `context()` tool) uses the same section, so it gets the link with no extra change.
+### 3. Turning a server on allows its read tools, and nothing more
 
-Without B, the J-0006 case (the job's own release or PR given as context) still has nothing to link.
+- `applyPackChange` on: it adds `mcp.<pack>` and adds `mcp__<pack>__<t>` to `runTools` for each `read`
+  tool. Off: it removes both. Per-tool ticks in the Packs card change the `runTools` entries of that pack only.
+- `act` tools are listed in the card but cannot be ticked. A run that calls one is refused, as today. See
+  open question 2 for opening them up.
+- `applyAdd` (the run's `request_access` for packs) uses the same path, so a run that asks for `ssh` gets
+  the read tools when Valery accepts.
+- `grantsDiff` already names `+ mcp ssh` and `+ runTool mcp__ssh__read-command`, so the commit reason and
+  the Approvals diff say exactly what is granted.
 
-### C. URL patterns per workspace (knowledge, not code)
+### 4. A new server added by hand gets the same treatment
 
-A knowledge note for the IAEA workspace, "ADO link patterns", proposed through `knowledge_propose` (not core).
-As Valery decided, Build takes `{org}/{project}` (and the release `environmentId` form) from the `link` a real IAEA
-run's ADO reply returned, and from nothing else:
-`_build/results?buildId={id}` (plus `&view=logs&j=…` for a log only when it was read),
-`_releaseProgress?releaseId={r}&_a=release-environment-logs&environmentId={e}`, `_git/{repo}/pullrequest/{id}`,
-`_git/{repo}/commit/{sha}`, `_workitems/edit/{id}`. The rule in A points at "a pattern a knowledge note gives". The
-core stays free of any workplace name, and a run builds links only from patterns that someone verified.
+- In Settings → Access → "Add a server", the person types a name and config, then presses **Check**. The
+  card lists the server's tools from `tools/list`. Tools with `readOnlyHint` are ticked, and the others
+  stay unticked. **Add** saves `mcp` and `runTools` in one `PUT /grants`, which `accessChangeIn` already
+  takes both of. Before this change, a hand-added server got no tools.
+- The **Check** button lets the person see the tools first. It does not guess which tools to allow.
 
-### D. Delivery: links survive the send (in this job)
+### 5. Check: start a server, list its tools, stop it
 
-Today the core's Teams and mail acts send plain text, so a link put on a name arrives as literal `[name](url)`.
+- `server/mcp/check.ts`: `checkServer(config, {timeoutMs: 90_000})`. It starts the server with the same
+  normalized command a run would use (see 6), sends `initialize` and `tools/list`, and stops it. It returns
+  `{ok, tools: [{name, readOnly?, destructive?}], error?}`. `error` is the last 2 KB of stderr, passed
+  through `scrub`. It uses `@modelcontextprotocol/sdk`'s client, which becomes a direct dependency (it is
+  already installed through the agent SDK).
+- `POST /api/ws/<id>/mcp/check {name}` checks a granted server, or a catalog pack with its settings
+  filled in. `{config}` checks an unsaved one. Only the page calls it, never a run. Only one check runs at
+  a time.
+- The first `npx` run downloads the package, which is why the timeout is 90 s.
 
-- A helper in the packs, `mdLinks(text)`, finds `[text](https://…)` (also `http:` and `mailto:`). When there is
-  none, it returns null and the act sends exactly what it sends today. When there is one, it returns HTML: each link
-  becomes `<a href="url">text</a>`, every other character is escaped (`& < > "`), and line breaks become `<br>`.
-  Nothing else in Markdown is converted, so `**` stays as it is today. `[x](javascript:…)` stays as text.
-- `m365-teams` `chat.post`: `contentType: 'html'` with that HTML when there are links.
-- `m365-mail` `mail.send` (a new mail and a reply): `contentType: 'HTML'` the same way.
-- `azure-devops` `work.comment` (work item comments are HTML): the same conversion. `review.comment` (PR threads
-  are Markdown) stays as it is.
-- Packs load as single files in the tab, so the helper is copied into each one. Build checks whether they can share
-  one file instead. Nothing changes in `/api/act`, the bridge or the gateway protocol: the act still carries `text`.
+### 6. A Windows-safe command, and failures that show
 
-**How to check whether IAEA sends through the pack.** An act goes page → `/api/act` → the workspace's source → the
-pack that declares the action (`server/bridge/actions.ts`, `actionPacks`). So, on iaea-pc, in the IAEA consumer's console:
+- `mcpServers()` and Cursor's equivalent pass each own stdio server through `stdioCommand()`. On win32,
+  a command found on `PATH` through `PATHEXT` as `.cmd` or `.bat` runs as `cmd.exe /d /s /c <cmd> <args>`.
+  Every other command is left as it is.
+- `sessionEvents` reads `init.mcp_servers`. For a server whose status is not `connected`, it yields one
+  text line in the run's feed: "MCP server ssh did not start (failed)". The step's draft can then name
+  the problem, instead of the run just lacking the tools.
 
-1. `console/workspaces/iaea/server.ts`: its `source`. A gateway URL means the gateway's packs; loaded packs mean `packs/`.
-2. The workspace's `grants.json` → `packs`: which pack names are granted. Then, in `packs/<name>/` (or the gateway's
-   pack dir), which manifest declares `chat.post`. If it is the core's `m365-teams`, D covers it. If it is a pack of
-   IAEA's own, that pack needs the same `mdLinks` change, in the IAEA repo.
-3. `console/workspaces/iaea/ui.tsx`: whether a page-side act handler sends Teams messages some other way.
+### 7. The agent and the runs know the catalog
 
-Build does this check first, from an iaea-pc session, and writes the answer in the journal.
+- The agent prompt and `request_access`'s description say that an MCP server comes as a catalog pack
+  (`add.packs`), and list the `mcp` packs that are off. The run's `## Sources` already lists packs that
+  are on, with `Server:`.
 
-### E. Plain web links in context, shown as artifacts you can open (added by Valery, 2026-10-15)
+### Docs
 
-Today a context item can only be a work item, chat, mail or note (`CtxKind`). A login page or any other site cannot go in.
-
-- **A new context kind `link`:** `{k: 'link', id: <http(s) URL>, name?: label}`. `ctxId` accepts only http(s) URLs
-  (no `javascript:` or `file:`). The console never fetches the URL, through the bridge or any other way. A run gets the
-  label and the URL (`### Link <name>` + `Link: <url>`), not the page. A run in a workspace with the runs' browser on
-  may open it there, within that browser's allowlist. No new reading path.
-- **Adding one:** on the page, the job's Context editor (`views/Context.tsx`, `actions/newjob.tsx`) gets "Link" next
-  to work/chat/mail/note, with a URL field and an optional label. When the job builder (`server/llm/builder.ts`)
-  gets a URL in the user's text, it puts it in `context` as a `link` item.
-- **In a playbook:** a playbook file (`PbFile`, `src/model/pbFormat.ts`) gets an optional `links: [{name, url}]` for
-  what every job of that kind needs, such as a login page. A job created from the playbook starts with those links in
-  its context. The builder's new-playbook form (`npb`) can fill them in.
-- **The job's Artifacts panel gets two groups (Valery, 2026-10-15): Input and Produced.** The panel is per job and
-  sits next to Context (`views/Job.tsx`); today it lists every step's `arts`.
-  - **Input**, what the job started from: every `link` item of the job and of its playbook, each shown as its label
-    (or its host when it has no label). It opens the site in a new tab (`target=_blank`, `rel=noopener noreferrer`), not in the
-    artifact viewer, which fetches files from `/api/artifacts`. These entries are read from the job's context; they are
-    not stored as `arts`, so there is no new state and no migration.
-  - **Produced**, what the steps made: the current list as it is today (name, step, ready/planned, download), with its
-    "N/M ready" count. A playbook that produces no files keeps its "This playbook produces no files." line under Produced.
-  - The two groups are headed sections in the same panel, so both show without a click. A group with nothing in it
-    shows only its empty line, and Input is left out when the job has no links. Tabs inside the panel are the fallback if a
-    long Input list pushes Produced out of view; I'd start with groups.
-  - Input entries come from the context, never from the `artifact` op, so a run cannot add an external link through
-    `add_artifact`. That keeps the "never guess a URL" rule.
-  - So links are not tied to a step at all (this answers Q6).
-
-## Then
-
-Commit on job/ad-0013, merge to the core, and sync the IAEA consumer with `sync-core.mjs` (`work-console: core <sha>`).
-`core-lock.test.ts` stays green because only core files change there. An IAEA-own pack change, if Q7 finds one, is a
-separate commit in the IAEA repo.
+- `docs/pack-authoring.md`: how to write an `mcp` pack (`tools`, `config`, pinning, no secrets, the recorded tools test).
+- `docs/architecture.md`: the Grants and Access rows (tools come with a server; Check).
 
 ## How it will be proven
 
-| What | Proof |
+| Check | Where |
 |---|---|
-| The rule (A) | `runner.test.ts` `PROMPT` pin gets the `LINKS_LINE` line in its place; `prompt.test.ts` asserts it in `manualText` as well, and the `messageAlone` clause only for a step whose draft is sent |
-| Context links (B) | `context.test.ts`: an `okItem` with `link: 'https://ci.example/…'` renders `Link: https://ci.example/…` under its heading; a non-http link and a missing one render nothing |
-| Delivery (D) | pack tests: a text with `[x](https://a.example)` posts `contentType: 'html'` with `<a href="https://a.example">x</a>` and escaped `<`/`&`; a text without links posts exactly what it posts today (Teams, mail send and reply, ADO work comment); `[x](javascript:…)` stays as text |
-| Link context (E) | `transitions.test.ts`: `ctxAdd` with `k: 'link'` takes `https://login.example/` and refuses `javascript:` and `file:`; `prompt.test.ts`: the item renders its label and URL in Context; `pbFormat.test.ts`: a playbook's `links` reach a new job's context; `builder.test.ts`: a URL in the user's text becomes a `link` item; page test or smoke: the Artifacts panel shows an Input group with the link (`href` = the URL, `target=_blank`) above the Produced group, and no Input group for a job without links |
-| No regressions | `npm test`, `npm run typecheck`, `npm run build && npm run smoke`, `node --test "packs/**/test/*.test.mjs"` |
-| Done-when, live | After the sync, a fresh IAEA run that reports a build, release or PR (the J-0006 kind of step). Its draft shows each of them as a working link without anyone asking; I quote the draft and open one link of each kind. If D covers IAEA's sending pack, a Teams message Valery sends shows the name as a link (Valery sends; I don't). A job with a login-page link in its context shows it as an artifact that opens the page |
+| `checkPack`: `tools` and `config` on an `mcp` pack, a tool in both lists, a missing `read`, a literal secret | `bridge/packs.test.ts` |
+| on and off add and remove `mcp` and exactly the read `runTools`; a tick changes only that pack's tools; `request_access` for packs gets the same result | `catalogView.test.ts`, `access.test.ts` |
+| `${config.x}` fills args, url and env; a list key expands | `bridge/packs.test.ts` |
+| `stdioCommand`: `.cmd` wrapped on win32, `node` and absolute paths untouched, no change off win32 | `llm/sdk.test.ts`, `cursor/sdk.test.ts` |
+| a session's init with a failed server yields one feed line | `llm/sdk.test.ts` |
+| `checkServer` against a fixture stdio server (`.mjs`), a fixture HTTP server, one that exits, and one that hangs (timeout); a secret in stderr is scrubbed | `mcp/check.test.ts` |
+| `packs/ssh` and `packs/filesystem`: manifest valid; `tools` equal the recorded `tools/list` | `node --test "packs/**/test/*.test.mjs"` |
+| `npm test`, `npm run typecheck`, `npm run build && npm run smoke` all green; `core-lock.test.ts` green after sync | console |
 
-## Decided (Valery, 2026-10-15)
+**Deploy.** Merge to core master. Then `sync-core.mjs --to D:\agents\services\work-console`, commit
+there, and restart the console. These go through the playbook's Merge and Deploy steps, with commands
+approved there.
 
-- E's links exist at both levels: a playbook's links (such as a login page) reach every job made from it, and a job
-  adds its own.
-- Artifacts are shown in two groups, Input (what the job started from) and Produced (what its steps made), instead of
-  link artifacts on a step.
-- IAEA has two sending packs, one for Outlook and one for Teams. Build checks whether they are the core's `m365-mail`
-  and `m365-teams` (then D covers both) or IAEA's own (then the same change goes into each, in the IAEA repo).
-- D is part of this job.
-- The IAEA pattern note takes org and project from a real IAEA run's reply.
-- The rule in A applies to every run, not only message steps.
-- Revise rounds keep the rule from the session's first prompt; `replyPrompt` does not change.
-- The Artifacts panel starts with two groups (Input, Produced), not tabs.
-- On IAEA, sending goes, as far as Valery knows, through the pack he named "Remont Agent" (written as heard, perhaps a
-  remote-agent pack). It is not in this core: nothing here is named like it. Build checks it on iaea-pc first.
+**End to end on agents-dev (the SSH check).**
+1. Start a throwaway OpenSSH server in Docker on `127.0.0.1:2222` (Docker 28 runs here), with a
+   throwaway ed25519 key in a temp folder. Nothing on the machine's own sshd changes.
+2. Write an ssh-mcp profile `e2e` for that host and key (where it goes: open question 4).
+3. Settings → Packs on agents-dev → ssh card → **Check**: 14 tools appear, 6 of them read. Take a screenshot.
+4. Turn it on (Valery's click). Show the grants commit's diff: `+ pack ssh`, `+ mcp ssh`, and 6 `+ runTool` lines.
+5. Run a test job whose run calls `list-connections`, then `read-command` with `uname -a` and
+   `cat /etc/os-release`. Quote the output from the run's feed.
+6. Have the run call `run-command`, and show that it is refused.
+7. Stop the server (`docker stop` the container), start a run, and show the "did not start" line, or the
+   tool's own error.
+8. Remove the container, the key and the `e2e` profile. The pack stays on or goes off as Valery decides.
 
 ## Open questions (notes)
 
-- **Q7: Which pack sends on IAEA.** Build first finds, on iaea-pc, the pack that declares `chat.post` and
-  `mail.send` for the IAEA workspace (the steps in D), and whether it is the "Remont Agent" pack. If that pack wraps
-  the core's `m365-teams` and `m365-mail`, D covers it. If it posts by itself, the same `mdLinks` change goes into
-  it, in the repo that owns it. The answer goes in the journal before any pack code changes.
+1. **Which "core".** I read "connect MCP servers to the agents platform" as the Work Console core: the
+   catalog goes in `packs/`, reaches agents-dev and every console that vendors the core, and its runs get
+   the tools. The Azure platform's own hosted servers (`mcp/*` behind API Management) are not part of this.
+   They could become catalog entries later, as HTTP servers with OAuth. Is that right?
+2. **SSH write tools.** CLAUDE.md says no run changes state in a tool, except the runs' browser and
+   `llmActs`. `run-command` or `sftp-upload` on a remote host changes state there. v1 offers read tools
+   only. Should an `act` tool be tickable later, as a third exception that you grant per workspace
+   (with a CLAUDE.md change)?
+3. **The rest of the catalog.** I propose ssh plus filesystem. Should anything else go in v1? A
+   candidate is git, but `mcp-server-git` needs Python and `uvx`. Every entry has to start with no secret
+   in `grants.json`.
+4. **Where ssh-mcp's config lives.** By default it is `%APPDATA%\ssh-mcp\config.toml`, which is per user
+   and outside the console, and its ACL check passes there. Is it OK for the e2e to add an `e2e` profile
+   to that file and remove it afterwards? Or should the pack point ssh-mcp at a config under the console's
+   home, if the server takes a path flag (not yet checked)? Which real host do you want after the e2e?
+5. **Secrets for future servers.** Should a pack be allowed `${env:NAME}`, filled in from the console's
+   environment when a session starts and never written to `grants.json`? Or should v1 keep only servers
+   that hold their own secrets?
+6. **Downloading on first start.** A pinned `npx -y pkg@ver` fetches from npm the first time it runs.
+   That is our machine reaching a public registry, not a cloud of ours. The alternative is installing the
+   packages into the console's home on Check. Which do you prefer?
