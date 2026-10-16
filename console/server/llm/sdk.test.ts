@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { homedir, tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
-import { ALLOW, DENY, agentOptions, askOptions, exeOption, mcpServers, permissions, reportOf, runToolDefs, sessionEvents, userMessage } from './sdk.ts'
+import { ALLOW, DENY, agentOptions, askOptions, exeOption, mcpServers, permissions, reportOf, runOptions, runToolDefs, sessionEvents, userMessage } from './sdk.ts'
 import { agentLimits } from '../agent/limits.ts'
 import type { RunTools } from './sdk.ts'
 import { BROWSER_TOOLS, WITHHELD } from './runBrowser.ts'
@@ -270,4 +270,30 @@ test('save_source_file only when the run carries it; it hands its args on and an
   const r = await (d.handler as (a: unknown, x: unknown) => Promise<{ content: { text: string }[] }>)({ concept: 'chat', id: '-1', file: '2' }, {})
   assert.deepEqual(got, { concept: 'chat', id: '-1', file: '2' })
   assert.match(r.content[0].text, /saved a\.pdf/)
+})
+
+test("a session's start says which MCP servers did not connect, as one feed line after its id", async () => {
+  async function* msgs() {
+    yield { type: 'system', subtype: 'init', session_id: 's1', mcp_servers: [{ name: 'run', status: 'connected' }, { name: 'ssh', status: 'failed' }] }
+    yield { type: 'result', subtype: 'success', is_error: false, result: 'done' }
+  }
+  const got = []
+  for await (const e of sessionEvents(msgs() as never)) got.push(e)
+  assert.deepEqual(got.slice(0, 2), [{ k: 'session', id: 's1' }, { k: 'text', t: 'MCP servers that did not start: ssh (failed). Their tools are not there for this run.' }])
+})
+
+test('runOptions: the workspace servers start with their values, a missing one is a line, the guard and the elicitation handler are set', async () => {
+  const problems: string[] = []
+  const none = async () => {}
+  const tools: RunTools = { submitDraft: none, addArtifact: none, addArtifactFile: none, journal: none, mcpProblem: async (t) => { problems.push(t) } }
+  const r = runOptions({ mcp: { ssh: { command: 'node', args: ['s.mjs', '--k=${env:K}'] }, gone: { command: 'node', env: { T: '${env:NOPE}' } } }, runTools: ['mcp__ssh__list'], acting: new Set(['mcp__ssh__run']), vars: { K: 'kv-secret' } }, tools)
+  assert.deepEqual(r.servers, { ssh: { command: 'node', args: ['s.mjs', '--k=kv-secret'] } })
+  assert.deepEqual(r.lines, ["The MCP server gone is not started for this run: no variable NOPE (set it in the console's environment or in mcp.env)"])
+  assert.equal(typeof r.options.onElicitation, 'function')
+  const pre = r.options.hooks.PreToolUse[0].hooks[0] as unknown as (i: unknown, id: string, o: unknown) => Promise<unknown>
+  await pre({ hook_event_name: 'PreToolUse', tool_name: 'mcp__ssh__run', tool_input: { k: 'kv-secret' } }, 'u', { signal: new AbortController().signal })
+  assert.deepEqual(problems, ['Refused mcp__ssh__run {"k":"***"}: it is not ticked for this workspace in Packs or Access. Not retried.'])
+  // a run that cannot ask the person declines with a problem
+  const d = await r.options.onElicitation({ serverName: 'ssh', message: 'sure?', mode: 'form' }, { signal: new AbortController().signal, requestId: 'x' })
+  assert.deepEqual(d, { action: 'decline' })
 })

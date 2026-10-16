@@ -193,6 +193,19 @@ test('an ask\'s answer is the answer tool\'s input, checked against the schema; 
   await gone(r)
 })
 
+test("a workspace server's values are put in as the run starts, one missing a value stays out with a line; an unticked tool of it is refused with a problem", async () => {
+  const problems: string[] = []
+  const r = rig({ mcp: { ssh: { command: 'node', args: ['s.mjs', '--key=${env:K}'] }, gone: { command: 'node', env: { T: '${env:NOPE}' } } }, mcpVars: () => ({ K: 'kv' }), runTools: [] })
+  r.play('mcp', [['"providerIdentifier":"run"', '"providerIdentifier":"ssh"'], ['run-probe_echo', 'ssh-sudo'], ['probe_echo', 'sudo']])
+  const out = await start(r, { tools: { ...runTools(), mcpProblem: async (t) => { problems.push(t) } } })
+  assert.deepEqual(out[0], { k: 'text', t: "The MCP server gone is not started for this run: no variable NOPE (set it in the console's environment or in mcp.env)" })
+  const s = r.of('session/new')[0] as { mcpServers: { name: string; args?: string[] }[] }
+  assert.deepEqual(s.mcpServers.filter((x) => x.name === 'ssh').map((x) => x.args), [['s.mjs', '--key=kv']])
+  assert.deepEqual(r.of('permission'), ['reject-once', 'reject-once'])
+  assert.deepEqual(problems, ['Refused mcp__ssh__sudo {"text":"hi"}: it is not ticked for this workspace in Packs or Access. Not retried.'])
+  await gone(r)
+})
+
 test('a refused plan, a signed-out CLI, a missing one and a turn the CLI could not run each say so', async () => {
   const r = rig()
   r.play('plan')

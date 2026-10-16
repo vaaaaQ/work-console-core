@@ -468,6 +468,13 @@ export function createApp(d: Deps) {
     }],
     ['POST', /^\/api\/runs\/([^/]+)\/cancel$/, async (r) => ({ run: await (await runOf(r.p[0]))[0].runner.cancel(r.p[0]) })],
     ['POST', /^\/api\/runs\/([^/]+)\/resume$/, async (r) => ({ run: await (await runOf(r.p[0]))[0].runner.resume(r.p[0]) })],
+    // the person's answer to an MCP server's question the run waits on; only the page sends it
+    ['POST', /^\/api\/runs\/([^/]+)\/elicit$/, async (r) => {
+      const [s] = await runOf(r.p[0]), b = await r.body()
+      if (b.action !== 'accept' && b.action !== 'decline') throw new HttpError(400, 'bad_args', 'action is accept or decline')
+      if (b.content !== undefined && (!b.content || typeof b.content !== 'object' || Array.isArray(b.content))) throw new HttpError(400, 'bad_args', 'content is an object of fields')
+      return { run: await s.runner.elicitAnswer(r.p[0], { cf: String(b.cf ?? ''), action: b.action, ...(b.content ? { content: b.content as Record<string, unknown> } : {}) }) }
+    }],
     // a reply to the draft of the run's step, in the step's newest session
     ['POST', /^\/api\/runs\/([^/]+)\/reply$/, async (r) => {
       const [s, run] = await runOf(r.p[0]), b = await r.body()

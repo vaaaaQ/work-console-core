@@ -107,7 +107,7 @@ export async function main(o: { cfg?: Config; sdk?: Sdk; workspaces?: WorkspaceS
   notify = new Notify({
     dir: cfg.home, bus, ctx: () => spaces.ctx(),
     jobs: { onNeedsYou: (f) => { for (const s of list) s.onNeedsYou(f) } },
-    runs: { onSettled: (f) => { for (const s of list) s.runner.onSettled(f) } },
+    runs: { onSettled: (f) => { for (const s of list) s.runner.onSettled(f) }, onAsking: (f) => { for (const s of list) s.runner.onAsking(f) } },
     jobFor: (t, ws) => jobByText(ws ? list.find((s) => s.id === ws)?.known.values() ?? [] : allKnown(), t),
     job: (id) => { for (const s of list) { const j = s.known.get(id); if (j) return j } return undefined },
   })

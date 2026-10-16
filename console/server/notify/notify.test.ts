@@ -18,15 +18,15 @@ function setup(status: (s: Sub) => number = () => 201) {
   const dir = tempDir('push'), bus = new Bus()
   const sent: { to: string; title: string; body: string; url: string }[] = []
   const sender: Sender = { async send(s, p) { sent.push({ to: s.endpoint, ...JSON.parse(p) }); return { status: status(s) } } }
-  let needs: ((j: Job) => void) | null = null, settled: ((r: RunRec) => void) | null = null
+  let needs: ((j: Job) => void) | null = null, settled: ((r: RunRec) => void) | null = null, asking: ((r: RunRec) => void) | null = null
   const n = new Notify({
     dir, bus, ctx: demoCtx, sender,
-    jobs: { onNeedsYou: (f) => { needs = f } }, runs: { onSettled: (f) => { settled = f } },
+    jobs: { onNeedsYou: (f) => { needs = f } }, runs: { onSettled: (f) => { settled = f }, onAsking: (f) => { asking = f } },
     jobFor: (t) => JOBS.find((j) => /^ACME-\d/.test(j.key) && t.includes(j.key)),
     job: (id) => JOBS.find((j) => j.id === id),
   })
   n.subscribe(sub(1))
-  return { dir, bus, sent, n, needs: (j: Job) => needs!(j), settled: (r: RunRec) => settled!(r) }
+  return { dir, bus, sent, n, needs: (j: Job) => needs!(j), settled: (r: RunRec) => settled!(r), asking: (r: RunRec) => asking!(r) }
 }
 const flush = () => new Promise((r) => setTimeout(r, 10))
 
@@ -39,6 +39,13 @@ test('runs: draft ready, failed and interrupted each push with the step name', a
     'J-0419 · Understand the request: draft ready', 'J-0419 · Understand the request: run failed', 'J-0419 · Understand the request: run interrupted'])
   assert.equal(sent[1].body, 'signin_required')
   assert.equal(sent[0].url, '/?job=J-0419&step=tr&ws=acme', "the url opens the job's workspace")
+})
+
+test("a run that waits on an MCP server's question pushes it word for word", async () => {
+  const { sent, asking } = setup()
+  asking({ id: 'r1', job: 'J-0419', step: 'tr', q: 'q', state: 'running', at: '', cf: { id: 'c', srv: 'ssh', msg: 'Run rm -rf /tmp/ad26 on e2e?', at: '' } })
+  await flush()
+  assert.deepEqual(sent.map((s) => [s.title, s.body, s.url]), [['J-0419 · Understand the request: the run waits for your confirmation', 'ssh: Run rm -rf /tmp/ad26 on e2e?', '/?job=J-0419&step=tr&ws=acme']])
 })
 
 test('an interrupted run that resumes by itself says so', async () => {

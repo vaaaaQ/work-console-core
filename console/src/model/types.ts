@@ -199,7 +199,12 @@ export interface RunRec {
   ar?: 'due' | 'used'; parent?: string; intent?: RunIntent; a?: string; via?: 'session' | 'console'; provider?: 'claude' | 'cursor'
   /** the run ended on a draft asking the user to sign in to site, at url, in the runs' browser */
   signin?: { site: string; url: string }
+  /** an MCP server's question (elicitation) the run waits on: the person confirms or declines it with POST /api/runs/<id>/elicit */
+  cf?: Confirm
 }
+/** a server's question as the page shows it: srv = the server, msg = its text word for word, schema = the form's flat
+    JSON schema, title and description when it gave them, at = when it came */
+export interface Confirm { id: string; srv: string; msg: string; schema?: Record<string, unknown>; title?: string; description?: string; at: string }
 
 /** at = time of day; ts = the journal entry's ISO time, which Home orders logs that span days by (the demo's seeded rows have none) */
 export interface LogEntry extends New { at: string; job: string; a: string; l: Lamp; t: string; ts?: string }

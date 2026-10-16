@@ -42,7 +42,7 @@ export class Notify {
 
   constructor(o: {
     dir: string; bus: Bus; ctx: () => T.Ctx; sender?: Sender; subject?: string
-    jobs?: { onNeedsYou(f: (j: Job) => void): void }; runs?: { onSettled(f: (r: RunRec) => void): void }
+    jobs?: { onNeedsYou(f: (j: Job) => void): void }; runs?: { onSettled(f: (r: RunRec) => void): void; onAsking?(f: (r: RunRec) => void): void }
     /** the open job a review or build names, among the jobs of the workspace it came from when one is given */
     jobFor: (text: string, ws?: string) => Job | undefined; job?: (id: string) => Job | undefined
   }) {
@@ -60,6 +60,7 @@ export class Notify {
     this.sender = o.sender ?? webPushSender(this.keys)
     o.jobs?.onNeedsYou((j) => void this.needsYou(j))
     o.runs?.onSettled((r) => void this.run(r, o.job?.(r.job)))
+    o.runs?.onAsking?.((r) => void this.asking(r, o.job?.(r.job)))
     o.bus.on((e) => { if (e.kind === 'source' && !e.reset) void this.source(e.concept, e.upserts as Item[], e.removes, e.ws) })
   }
 
@@ -103,6 +104,13 @@ export class Notify {
     const what = r.state === 'draft' ? (r.parent ? 'draft revised' : 'draft ready') : r.state === 'answered' ? 'LLM answered'
       : r.state === 'failed' ? 'run failed' : r.ar === 'due' ? 'run interrupted, resumes by itself' : 'run interrupted'
     await this.push(`${r.job} · ${this.stepName(j, r.step)}: ${what}`, r.a?.slice(0, 200) || r.reason || j?.t || '', url)
+  }
+
+  /** a run waits on an MCP server's question: what it asks, word for word */
+  async asking(r: RunRec, j?: Job) {
+    if (!r.cf) return
+    const url = withWs(`/?job=${encodeURIComponent(r.job)}&step=${encodeURIComponent(r.step)}`, j?.ws)
+    await this.push(`${r.job} · ${this.stepName(j, r.step)}: the run waits for your confirmation`, cut(`${r.cf.srv}: ${r.cf.msg}`, 200), url)
   }
 
   async needsYou(j: Job) {

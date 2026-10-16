@@ -14,7 +14,8 @@ import { GATEWAY_ACTIONS, grantedActs } from './bridge/actions.ts'
 import { keepJobChats } from './bridge/kept.ts'
 import { isLocal } from './bridge/local.ts'
 import { browserPlugin } from './browser/plugin.ts'
-import { viewsFor } from './browser/catalogView.ts'
+import { actTools, viewsFor } from './browser/catalogView.ts'
+import { mcpVars } from './mcp/env.ts'
 import { catalog, configGrants, grantsFrom, wsPackDirs } from './browser/packs.ts'
 import { accessAddIn, accessRequests, addLines } from './access.ts'
 import type { AccessRequests } from './access.ts'
@@ -229,6 +230,8 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     // a getter: a provider reads it as each session starts
     get gatewayUrl() { return rb.url() },
     llmToken: () => (fake ? fake.llmToken : readToken(cfg.llmTokenPath)), runTools: cfg.runTools, mcp, bridge: rb.bridge,
+    // a server's ${env:…} from the console's environment and <home>/mcp.env, read at each start; the tools that change things from the catalog
+    mcpVars: () => mcpVars(o.home), acting: () => actTools(catalog(packDirs)),
     ...(runBr ? { browser: (out: string) => runBr.mcp(out) } : {}),
     claudePath: () => settings.read().claudePath, cursorPath: () => settings.read().cursorPath, home: o.home,
   }))

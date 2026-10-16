@@ -11,6 +11,9 @@ import type { PromptImage } from './context.ts'
 import { BROWSER, BROWSER_TOOLS, WITHHELD } from './runBrowser.ts'
 import type { StdioServer } from './runBrowser.ts'
 import type { Shot } from './shot.ts'
+import { elicitHandler, mcpGuard, serverStatusLine, startServers } from './mcpRun.ts'
+import type { ElicitIn, ElicitOut } from './mcpRun.ts'
+import { scrubSecrets } from '../mcp/env.ts'
 
 /* The only module that touches the Agent SDK. A session reads untrusted chat and mail text, so it
    runs in dontAsk mode with an explicit tool list: its own tools (the workspace's knowledge among them),
@@ -50,6 +53,12 @@ export interface RunTools {
   openBlocker?(say: string): Promise<void>
   /** asks the person to add to what this workspace may reach; what came of it, in a line; only where grants manage the workspace */
   requestAccess?(add: unknown, reason: string): Promise<string>
+  /** a workspace MCP server's tool refused or failed, or its question declined: a problem on the step, never retried */
+  mcpProblem?(t: string): Promise<void>
+  /** a workspace MCP server's question (elicitation) put to the person: their answer; throws when the run ends first */
+  elicit?(q: ElicitIn, signal: AbortSignal): Promise<ElicitOut>
+  /** the calls of tools that change things the run made, said once as its session ends */
+  mcpActs?(calls: string[]): Promise<void>
 }
 export type KnowledgeIn = Omit<ProposalIn, 'by'>
 /** a result's t = the session's final text */
@@ -266,7 +275,11 @@ export const exeOption = (p?: string) => (p ? { pathToClaudeCodeExecutable: p } 
 export async function* sessionEvents(q: AsyncIterable<SDKMessage>, own?: string): AsyncIterable<SdkEvent> {
   const pre = own ? `mcp__${own}__` : null
   for await (const m of q) {
-    if (m.type === 'system' && m.subtype === 'init') yield { k: 'session', id: m.session_id }
+    if (m.type === 'system' && m.subtype === 'init') {
+      yield { k: 'session', id: m.session_id }
+      const down = serverStatusLine(m.mcp_servers)
+      if (down) yield { k: 'text', t: down }
+    }
     else if (m.type === 'assistant') {
       for (const b of m.message.content) {
         if (b.type === 'text' && b.text.trim()) yield { k: 'text', t: b.text }
@@ -285,14 +298,36 @@ async function browserOf(browser: ((outDir: string) => Promise<StdioServer>) | u
   try { return { server: await browser(join(cwd, '.playwright-mcp')) } } catch (e) { return { why: `the runs' browser is not there for this run: ${(e as Error).message}` } }
 }
 
+/** a run's workspace servers and the options that keep them in bounds: each server's values put in from vars (a missing one
+    a line instead of the server), the guard's hooks over the ticked tools and the act-tool limit, and the person asked
+    a server's question. acting = the tools that change things */
+export function runOptions(o: { mcp?: Record<string, unknown>; runTools: string[]; acting?: ReadonlySet<string>; vars: Record<string, string> }, tools: RunTools) {
+  const ws = startServers(o.mcp, o.vars)
+  const scrub = (t: string) => scrubSecrets(t, ws.secrets)
+  const problem = async (t: string) => { await tools.mcpProblem?.(scrub(t)) }
+  const guard = mcpGuard({ servers: Object.keys(o.mcp ?? {}), runTools: o.runTools, acting: o.acting ?? new Set(), problem, scrub })
+  return {
+    servers: ws.servers, lines: ws.lines, calls: guard.calls,
+    options: { hooks: guard.hooks, onElicitation: elicitHandler({ ask: tools.elicit, problem }) },
+  }
+}
+
+const envVars = () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === 'string'))
+
 /** claudePath = read at each session's start; browser = the runs' browser server, started for each run that needs it */
 export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runTools: string[]; mcp?: Record<string, unknown>; bridge?: boolean; claudePath?: () => string | undefined
-  browser?: (outDir: string) => Promise<StdioServer> }): Sdk {
+  browser?: (outDir: string) => Promise<StdioServer>
+  /** the values a server's ${env:…} names, read at each session's start; unset = the console's environment */
+  mcpVars?: () => Record<string, string>
+  /** the workspace servers' tools that change things, by the name a run calls */
+  acting?: () => ReadonlySet<string> }): Sdk {
   return {
     async *start({ prompt, images, resume, cwd, tools, abort }) {
       const run = createSdkMcpServer({ name: 'run', version: '1.0.0', tools: runToolDefs(tools) })
       const b = await browserOf(o.browser, cwd)
       if (b.why) yield { k: 'text', t: b.why }
+      const ro = runOptions({ mcp: o.mcp, runTools: o.runTools, acting: o.acting?.(), vars: (o.mcpVars ?? envVars)() }, tools)
+      for (const t of ro.lines) yield { k: 'text', t }
       const q = query({
         // pictures need a streamed message; the SDK keeps its input open until the run ends
         prompt: images?.length ? once(userMessage(prompt, images)) : prompt,
@@ -300,10 +335,14 @@ export function agentSdk(o: { gatewayUrl: string; llmToken: () => string; runToo
           cwd, resume, abortController: abort,
           ...permissions(o.runTools, o.bridge !== false, !!b.server),
           ...exeOption(o.claudePath?.()),
-          mcpServers: mcpServers(o, run, b.server),
+          ...ro.options,
+          mcpServers: mcpServers({ ...o, mcp: ro.servers }, run, b.server),
         },
       })
-      yield* sessionEvents(q)
+      try { yield* sessionEvents(q) } finally {
+        const calls = ro.calls()
+        if (calls.length) await tools.mcpActs?.(calls).catch(() => {})
+      }
     },
     async *ask({ system, prompt, schema, tools, cwd, abort }) {
       const own = createSdkMcpServer({ name: ASK, version: '1.0.0', tools: tools.map((t) => tool(t.name, t.description, t.input, (a) => answer(() => t.run(a))())) })

@@ -324,6 +324,12 @@ test("runs: found in whichever workspace's runner knows them; an unknown run is 
     const all = await call(lp, 'GET', '/api/runs')
     assert.deepEqual(all.json.runs.map((r: { id: string }) => r.id), [id]); assert.deepEqual(all.json.parts, { acme: 'ok', beta: 'ok' })
     assert.equal((await call(lp, 'POST', `/api/runs/${id}/cancel`, { body: {} })).status, 409, 'cancel reaches the owning runner')
+    // a server's question: only the one the run waits on is answered, in the shape the page sends
+    assert.equal((await call(lp, 'POST', '/api/runs/nope/elicit', { body: { cf: 'x', action: 'accept' } })).status, 404)
+    assert.equal((await call(lp, 'POST', `/api/runs/${id}/elicit`, { body: { cf: 'x', action: 'maybe' } })).status, 400)
+    assert.equal((await call(lp, 'POST', `/api/runs/${id}/elicit`, { body: { cf: 'x', action: 'accept', content: [1] } })).status, 400)
+    const late = await call(lp, 'POST', `/api/runs/${id}/elicit`, { body: { cf: 'x', action: 'accept', content: {} } })
+    assert.deepEqual([late.status, late.json.error.code], [409, 'bad_state'])
 
     // acme going away does not hide beta's run; a run nobody can vouch for is not "no run"
     fakes.acme.setDown(true)

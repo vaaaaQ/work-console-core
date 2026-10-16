@@ -10,7 +10,9 @@ import { Rpc, RpcError } from './acp.ts'
 import { GUARD, findInstall, hookCommand, killTree, ripgrep, sessionEnv, spawnAgent } from './cli.ts'
 import { Feed } from './feed.ts'
 import type { FeedEvent } from './feed.ts'
-import { OWN, cliConfig, guard, permit } from './policy.ts'
+import { OWN, cliConfig, guard, mcpOf, permit } from './policy.ts'
+import { mcpGuard, startServers } from '../mcpRun.ts'
+import { scrubSecrets } from '../../mcp/env.ts'
 import type { Asked, Mode, Policy } from './policy.ts'
 import { ANSWER, answerTool, askTool, sdkTool, serveSession } from './serve.ts'
 import type { Served, ServedTool } from './serve.ts'
@@ -29,10 +31,16 @@ export interface CursorOpts {
   /** tests: the agent process in place of the CLI, and the ripgrep that checks its searches */
   launch?: (cwd: string, env: Record<string, string>) => ChildProcessWithoutNullStreams
   rg?: string
+  /** the values a server's ${env:…} names, read at each run's start; unset = the console's environment */
+  mcpVars?: () => Record<string, string>
+  /** the workspace servers' tools that change things, by the name a run calls */
+  acting?: () => ReadonlySet<string>
 }
 type AcpServer = { type: 'http' | 'sse'; name: string; url: string; headers: { name: string; value: string }[] } | { name: string; command: string; args: string[]; env: { name: string; value: string }[] }
 type Block = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string }
-interface Turn { cwd: string; mode: Mode; tools: ServedTool[]; servers?: () => AcpServer[]; prompt: Block[]; resume?: string; keep: boolean; hide?: string[]; abort: AbortController }
+/** gate = a run's last word on an MCP tool call permit let through: null lets it go, else why not */
+interface Turn { cwd: string; mode: Mode; tools: ServedTool[]; servers?: () => AcpServer[]; prompt: Block[]; resume?: string; keep: boolean; hide?: string[]; abort: AbortController
+  gate?: (name: string, input: unknown) => Promise<string | null> }
 type Out = FeedEvent | { k: 'session'; id: string } | { k: 'result'; ok: boolean; error?: string; t?: string }
 
 const pairs = (o: unknown) => Object.entries((o && typeof o === 'object' ? o : {}) as Record<string, unknown>).map(([name, value]) => ({ name, value: String(value) }))
@@ -134,11 +142,14 @@ export function cursorSdk(o: CursorOpts): Sdk {
       child.stderr.on('data', (b: Buffer) => { stderr = (stderr + b).slice(-4000) })
       const r = rpc = new Rpc(child.stdout, child.stdin, {
         notify: (m, p) => { if (m === 'session/update' && live) push(feed.update((p as { update?: unknown } | undefined)?.update)) },
-        request: (m, p) => {
+        request: async (m, p) => {
           if (m !== 'session/request_permission') throw new RpcError(-32601, `no method ${m}`)
           const q = (p ?? {}) as { toolCall?: Asked & { toolCallId?: string }; options?: { optionId: string; kind: string }[] }
           const tc = q.toolCall ?? {}, raw = tc.rawInput && Object.keys(tc.rawInput).length ? tc.rawInput : feed.raw(String(tc.toolCallId ?? ''))
-          const pick = q.options?.find((x) => x.kind === (permit(policy, { ...tc, rawInput: raw }) ? 'allow_once' : 'reject_once'))
+          const asked = { ...tc, rawInput: raw }, mt = mcpOf(asked)
+          let ok = permit(policy, asked)
+          if (mt && t.gate && (await t.gate(`mcp__${mt.server}__${mt.tool}`, (raw as { args?: unknown } | undefined)?.args ?? raw ?? {})) !== null) ok = false
+          const pick = q.options?.find((x) => x.kind === (ok ? 'allow_once' : 'reject_once'))
           return { outcome: pick ? { outcome: 'selected', optionId: pick.optionId } : { outcome: 'cancelled' } }
         },
       })
@@ -200,16 +211,26 @@ export function cursorSdk(o: CursorOpts): Sdk {
   }
 
   return {
-    start({ prompt, images, resume, cwd, tools, abort }) {
+    async *start({ prompt, images, resume, cwd, tools, abort }) {
       const bridge = o.bridge !== false
-      return events({
-        cwd, resume, abort, keep: true, prompt: blocks(prompt, images), tools: runToolDefs(tools).map(sdkTool),
-        mode: { kind: 'start', runTools: o.runTools, bridge },
-        servers: () => [
-          ...(bridge ? [{ type: 'http' as const, name: 'bridge', url: o.gatewayUrl.replace(/\/$/, '') + '/mcp', headers: [{ name: 'Authorization', value: `Bearer ${o.llmToken()}` }] }] : []),
-          ...acpServers(o.mcp),
-        ],
-      })
+      const vars = o.mcpVars?.() ?? Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === 'string'))
+      const ws = startServers(o.mcp, vars), scrub = (x: string) => scrubSecrets(x, ws.secrets)
+      for (const t of ws.lines) yield { k: 'text', t }
+      const g = mcpGuard({ servers: Object.keys(o.mcp ?? {}), runTools: o.runTools, acting: o.acting?.() ?? new Set(), scrub,
+        problem: async (x) => { await tools.mcpProblem?.(scrub(x)) } })
+      try {
+        yield* events({
+          cwd, resume, abort, keep: true, prompt: blocks(prompt, images), tools: runToolDefs(tools).map(sdkTool),
+          mode: { kind: 'start', runTools: o.runTools, bridge }, gate: g.check,
+          servers: () => [
+            ...(bridge ? [{ type: 'http' as const, name: 'bridge', url: o.gatewayUrl.replace(/\/$/, '') + '/mcp', headers: [{ name: 'Authorization', value: `Bearer ${o.llmToken()}` }] }] : []),
+            ...acpServers(ws.servers),
+          ],
+        })
+      } finally {
+        const calls = g.calls()
+        if (calls.length) await tools.mcpActs?.(calls).catch(() => {})
+      }
     },
     async *ask({ system, prompt, schema, tools, cwd, abort }) {
       let out: { v: unknown } | null = null

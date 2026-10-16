@@ -203,6 +203,16 @@ export async function guard(p: Policy, input: { tool_name?: unknown; tool_input?
 /** a permission request the CLI sends: the tool call as it shows it, plus the raw input its updates carried */
 export interface Asked { title?: string; kind?: string; content?: unknown; rawInput?: Record<string, unknown> }
 const unquote = (t: string) => t.replace(/^`|`$/g, '')
+/** the MCP tool a permission request is for, by its server and name; null = not an MCP tool */
+export function mcpOf(a: Asked): { server: string; tool: string } | null {
+  if (a.kind !== 'other') return null
+  const raw = a.rawInput ?? {}
+  if (str(raw.providerIdentifier) && str(raw.toolName)) return { server: str(raw.providerIdentifier), tool: str(raw.toolName) }
+  // "<server>-<tool>: <tool>", the server's name may hold dashes
+  const m = /^(.+): (.+)$/s.exec(a.title ?? '')
+  return m && m[1].endsWith(`-${m[2]}`) ? { server: m[1].slice(0, -m[2].length - 1), tool: m[2] } : null
+}
+
 export function permit(p: Policy, a: Asked): boolean {
   const title = a.title ?? '', raw = a.rawInput ?? {}
   if (a.kind === 'execute') return canShell(p, str(raw.command) || unquote(title))
@@ -214,13 +224,8 @@ export function permit(p: Policy, a: Asked): boolean {
   if (a.kind === 'read') { const path = str(raw.path); return !!path && canRead(p, path) }
   if (a.kind === 'fetch') return str(raw.url) ? canFetch(p, raw.url) : canSearchWeb(p)
   if (a.kind === 'search' && !str(raw.path)) return canSearchWeb(p)
-  if (a.kind === 'other') {
-    if (str(raw.providerIdentifier) && str(raw.toolName)) return canMcp(p, str(raw.providerIdentifier), str(raw.toolName))
-    // "<server>-<tool>: <tool>", the server's name may hold dashes
-    const m = /^(.+): (.+)$/s.exec(title)
-    if (m && m[1].endsWith(`-${m[2]}`)) return canMcp(p, m[1].slice(0, -m[2].length - 1), m[2])
-  }
-  return false
+  const m = mcpOf(a)
+  return m ? canMcp(p, m.server, m.tool) : false
 }
 
 /** the CLI's own config for the session: allowlist mode, so what no rule allows is asked and permit answers it;

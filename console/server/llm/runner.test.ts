@@ -1160,3 +1160,55 @@ test('save_source_file: no tool, and no prompt line, without a source that serve
   const f = await fileRun(() => okFile())
   assert.match(f.s.sessions[0].prompt, /save_source_file/)
 })
+
+test("an MCP server's refused or failed tool is a problem on the step; the run's calls of tools that change things go in the journal", async () => {
+  const s = setup(), [t] = await targets(s.jobs, 1)
+  await s.runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  const tools = s.sessions[0].tools
+  await tools.mcpProblem!('Refused mcp__ssh__sudo {}: it is not ticked. Not retried.')
+  await tools.mcpActs!(['mcp__ssh__run', 'mcp__ssh__run', 'mcp__ssh__upload'])
+  const j = (await s.jobs.get(t.job))!
+  assert.deepEqual(j.flow[t.step].b.filter((b) => b.k === 'p').map((b) => b.t), ['Refused mcp__ssh__sudo {}: it is not ticked. Not retried.'])
+  const last = j.jr[0]
+  assert.deepEqual([last.a, last.o, last.c], ['console', 'The run called 3 MCP tools that change things.', 'mcp__ssh__run ×2, mcp__ssh__upload'])
+})
+
+const ASK = { srv: 'ssh', msg: 'Run rm -rf /tmp/ad26 on e2e?', schema: { type: 'object', properties: { ok: { type: 'boolean' }, why: { type: 'string' } }, required: ['ok'] }, title: 'Destructive command' }
+
+test("a server's question waits on the run as cf until the person answers; the answer goes back to the server and into the journal", async () => {
+  const s = setup(), [t] = await targets(s.jobs, 1)
+  const r = await s.runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  const answer = s.sessions[0].tools.elicit!(ASK, new AbortController().signal)
+  await until(async () => !!(await s.runner.get(r.id))!.cf)
+  const cf = (await s.runner.get(r.id))!.cf!
+  assert.deepEqual({ ...cf, id: 'x', at: 'y' }, { ...ASK, id: 'x', at: 'y' })
+  assert.ok(s.evs.some((e) => e.kind === 'run' && e.run.cf?.id === cf.id), 'the page hears of it')
+  await assert.rejects(s.runner.elicitAnswer(r.id, { cf: 'other', action: 'accept', content: { ok: true } }), code(409, 'bad_state'))
+  await assert.rejects(s.runner.elicitAnswer(r.id, { cf: cf.id, action: 'accept', content: { ok: 'yes' } }), code(400, 'bad_args'))
+  await assert.rejects(s.runner.elicitAnswer(r.id, { cf: cf.id, action: 'accept', content: {} }), /ok is required/)
+  await s.runner.elicitAnswer(r.id, { cf: cf.id, action: 'accept', content: { ok: true } })
+  assert.deepEqual(await answer, { action: 'accept', content: { ok: true } })
+  assert.equal((await s.runner.get(r.id))!.cf, undefined)
+  await assert.rejects(s.runner.elicitAnswer(r.id, { cf: cf.id, action: 'accept', content: { ok: true } }), code(409, 'bad_state'))
+  const j = (await s.jobs.get(t.job))!, last = j.jr[0]
+  assert.deepEqual([last.o, last.c], ['Confirmed what the MCP server ssh asked.', 'Run rm -rf /tmp/ad26 on e2e?'])
+})
+
+test("a declined question is a problem on the step; a question the run's end cuts off goes from the record", async () => {
+  const s = setup(), [t] = await targets(s.jobs, 1)
+  const r = await s.runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  const a = s.sessions[0].tools.elicit!(ASK, new AbortController().signal)
+  await until(async () => !!(await s.runner.get(r.id))!.cf)
+  await s.runner.elicitAnswer(r.id, { cf: (await s.runner.get(r.id))!.cf!.id, action: 'decline' })
+  assert.deepEqual(await a, { action: 'decline' })
+  const j = (await s.jobs.get(t.job))!
+  assert.deepEqual(j.flow[t.step].b.filter((b) => b.k === 'p').map((b) => b.t), ['Declined what the MCP server ssh asked: Run rm -rf /tmp/ad26 on e2e? Not retried.'])
+  const ac = new AbortController(), b = s.sessions[0].tools.elicit!(ASK, ac.signal)
+  await until(async () => !!(await s.runner.get(r.id))!.cf)
+  ac.abort()
+  await assert.rejects(b)
+  await until(async () => !(await s.runner.get(r.id))!.cf)
+})

@@ -6,7 +6,7 @@ import { openOf, waitsM } from '../../src/model/blockers.ts'
 import * as T from '../../src/model/transitions.ts'
 import { thread } from '../../src/model/thread.ts'
 import { INTENTS } from '../../src/model/types.ts'
-import type { Cmd, DraftReport, Job, RunIntent, RunRec, Ws } from '../../src/model/types.ts'
+import type { Cmd, Confirm, DraftReport, Job, RunIntent, RunRec, Ws } from '../../src/model/types.ts'
 import { HttpError, downError } from '../events.ts'
 import type { Bus, Via } from '../events.ts'
 import type { ActReq, ActRes, ConceptReply } from '../bridge/wire.ts'
@@ -19,6 +19,8 @@ import type { PromptIn } from './prompt.ts'
 import { pickOf } from './providers.ts'
 import type { OpenIn, SdkPick } from './providers.ts'
 import type { KnowledgeIn, Sdk } from './sdk.ts'
+import { elicitProblems } from './mcpRun.ts'
+import type { ElicitIn, ElicitOut } from './mcpRun.ts'
 import { checkUrl } from './shot.ts'
 import type { Shot } from './shot.ts'
 import type { WorkDir } from './worktree.ts'
@@ -45,7 +47,9 @@ const ACCESS_MAX = 3
 /** the most of an ask reply's answer a record keeps */
 const ANSWER_MAX = 4000
 /** started: the record says running; until then cancel and interruptAll leave settling to run() */
-type Live = { ac: AbortController; why: 'cancelled' | 'interrupted' | null; reason?: string; drafted: boolean; started: boolean; blocked?: string }
+type Live = { ac: AbortController; why: 'cancelled' | 'interrupted' | null; reason?: string; drafted: boolean; started: boolean; blocked?: string
+  /** the server's question the run waits on, and how its answer reaches the session */
+  cf?: { q: Confirm; answer(a: ElicitOut): void } }
 
 const DEVICE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
 /** an artifact name that stays inside its job folder and is no Windows device */
@@ -89,6 +93,7 @@ export class Runner {
   private live = new Map<string, Live>()
   private feeds = new Map<string, string[]>()
   private settled: ((r: RunRec) => void)[] = []
+  private asking: ((r: RunRec) => void)[] = []
 
   /** context = reads the job's context items and their pictures for a run's prompt and its context tool; me = what prompts call the user (unset or empty: "the user");
       bridge false = the workspace has no gateway, so prompts do not point at the bridge tools;
@@ -123,6 +128,8 @@ export class Runner {
 
   /** draft ready, answered, failed or interrupted: the moments worth a push */
   onSettled(f: (r: RunRec) => void) { this.settled.push(f) }
+  /** a run waits on an MCP server's question: worth a push */
+  onAsking(f: (r: RunRec) => void) { this.asking.push(f) }
   feed(id: string) { return [...(this.feeds.get(id) || [])] }
   all() { return this.store.runs() }
   async get(id: string) { return (await this.store.runs()).find((r) => r.id === id) || null }
@@ -383,6 +390,25 @@ export class Runner {
     this.bus.emit({ kind: 'feed', run: id, t, tool })
   }
 
+  /** the person's answer to the server's question run id waits on; cf = the question's id. A late, a repeated or another
+      question's answer is 409; fields that do not fit its schema are 400 */
+  async elicitAnswer(id: string, b: { cf: string; action: 'accept' | 'decline'; content?: Record<string, unknown> }): Promise<RunRec> {
+    const l = this.live.get(id), q = l?.cf?.q
+    if (!l || !q || q.id !== b.cf) throw new HttpError(409, 'bad_state', 'the run no longer waits on this question')
+    if (b.action !== 'accept' && b.action !== 'decline') throw new HttpError(400, 'bad_args', 'action is accept or decline')
+    const content = b.content ?? {}
+    if (b.action === 'accept') {
+      const bad = elicitProblems(q.schema, content)
+      if (bad.length) throw new HttpError(400, 'bad_args', bad.join('; '))
+    }
+    const r = (await this.get(id))!
+    l.cf!.answer(b.action === 'accept' ? { action: 'accept', content: content as ElicitOut['content'] } : { action: 'decline' })
+    await this.jobCmd(r, b.action === 'accept'
+      ? { op: 'journal', o: `Confirmed what the MCP server ${q.srv} asked.`, c: q.msg, n: 'the run goes on.', a: 'you' }
+      : { op: 'noteAdd', step: r.step, k: 'p', t: `Declined what the MCP server ${q.srv} asked: ${q.msg} Not retried.` })
+    return (await this.get(id))!
+  }
+
   /** reply = the session gets the reply's text; else a resumed session is told to go on */
   private async run(id: string, resume: string | undefined, l: Live, reply = false) {
     let r = await this.get(id)
@@ -506,6 +532,31 @@ export class Runner {
           return `saved ${name} (${sizeText(bytes.length)}) as an artifact; a copy is at .source-files/${mineDir}/${name}`
         },
       } : {}),
+      mcpProblem: async (t: string) => { await this.jobCmd(rec, { op: 'noteAdd', step: rec.step, k: 'p', t }) },
+      mcpActs: async (calls: string[]) => {
+        const n = new Map<string, number>()
+        for (const c of calls) n.set(c, (n.get(c) ?? 0) + 1)
+        await this.jobCmd(rec, { op: 'journal', o: `The run called ${calls.length} MCP ${calls.length === 1 ? 'tool' : 'tools'} that change things.`,
+          c: [...n].map(([c, k]) => (k > 1 ? `${c} ×${k}` : c)).join(', '), n: 'read what each did in the run feed.', a: 'console' })
+      },
+      // one question at a time: the SDK asks them in turn
+      elicit: (q: ElicitIn, signal: AbortSignal) => new Promise<ElicitOut>((res, rej) => {
+        if (l.cf) { rej(new Error('the run already waits on a question')); return }
+        const cf: Confirm = { id: randomBytes(6).toString('hex'), ...q, at: new Date().toISOString() }
+        const clear = () => {
+          signal.removeEventListener('abort', gone)
+          if (l.cf?.q.id !== cf.id) return
+          l.cf = undefined
+          const { cf: _, ...rest } = r!
+          r = rest
+          if (!l.why) void this.save(r, false).catch(() => {})
+        }
+        const gone = () => { clear(); rej(new Error('the question was withdrawn')) }
+        l.cf = { q: cf, answer: (a) => { clear(); res(a) } }
+        signal.addEventListener('abort', gone)
+        r = { ...r!, cf }
+        void this.save(r, false).then(() => { for (const f of this.asking) { try { f({ ...r! }) } catch { /* a notifier never breaks a run */ } } }).catch(() => {})
+      }),
       ...(kn ? {
         knowledgeSearch: (q: string, tags?: string[]) => kn.search(q, tags),
         knowledgeRead: (nid: string) => kn.read(nid),
