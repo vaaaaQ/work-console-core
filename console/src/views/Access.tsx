@@ -52,16 +52,33 @@ const parseCfg = (t: string): Record<string, unknown> | string => {
   try { const v = JSON.parse(t); return v && typeof v === 'object' && !Array.isArray(v) ? v : 'a server is a JSON object: command and args, or url' } catch (e) { return (e as Error).message }
 }
 
+type Checked = 'checking' | api.McpCheck
+/** the tools a Check listed, each with a tick: on = runs may call it as mcp__<server>__<tool> */
+function ToolTicks({ c, picked, dis, onPick }: { c: Checked | undefined; picked: string[]; dis: boolean; onPick(xs: string[]): void }) {
+  if (!c) return null
+  if (c === 'checking') return <p className="why" style={{ margin: 0 }}>Starting the server; a first start downloads it and can take a few minutes…</p>
+  if (!c.ok) return <p className="why" style={{ margin: 0 }}><span className="chip error">did not start</span> {c.error}</p>
+  return <div style={{ display: 'grid', gap: 4 }}>
+    <span className="hint">{c.server ?? 'The server'} answered with {c.tools.length} tools. Ticked ones runs may call; a read-only one comes ticked</span>
+    {c.tools.map((t) => <label key={t.name} className="row" style={{ gap: 4 }} title={t.about}>
+      <input type="checkbox" checked={picked.includes(t.name)} disabled={dis} onChange={(e) => onPick(e.target.checked ? [...picked, t.name] : picked.filter((x) => x !== t.name))} />
+      <span className="mono">{t.name}</span>{t.readOnly ? <span className="hint">reads</span> : <span className="chip error">{t.destructive ? 'destructive' : 'may change things'}</span>}
+    </label>)}
+  </div>
+}
+
 export function Access({ ws }: { ws: string }) {
   const [got, setGot] = React.useState<AccessView | null>(null)
   const [busy, setBusy] = React.useState(false)
   const [tool, setTool] = React.useState('')
   const [edit, setEdit] = React.useState<{ name: string; text: string; was?: string } | null>(null)
   const [only, setOnly] = React.useState(false)
+  const [checked, setChecked] = React.useState<Checked | undefined>(undefined)
+  const [picked, setPicked] = React.useState<string[]>([])
   const gen = React.useRef(0)
   React.useEffect(() => {
     const my = ++gen.current
-    setGot(null); setBusy(false); setEdit(null); setOnly(false)
+    setGot(null); setBusy(false); setEdit(null); setOnly(false); setChecked(undefined); setPicked([])
     api.grants(ws).then((r) => { if (gen.current === my) setGot(r) }, (e) => { if (gen.current === my) toast((e as Error).message) })
     return () => { gen.current++ }
   }, [ws])
@@ -99,7 +116,24 @@ export function Access({ ws }: { ws: string }) {
     if (name !== edit.was && Object.hasOwn(g.mcp, name)) { toast(`There is a server ${name} already`); return }
     const next = Object.fromEntries(Object.entries(g.mcp).filter(([k]) => k !== edit.was))
     next[name] = cfg
-    if (await change({ mcp: next })) setEdit(null)
+    // after a Check the ticked tools go in the same commit, the old name's and the new one's replaced
+    const own = (t: string) => t.startsWith(`mcp__${name}__`) || (edit.was ? t.startsWith(`mcp__${edit.was}__`) : false)
+    const rt = checked && checked !== 'checking' && checked.ok ? { runTools: [...g.runTools.filter((t) => !own(t)), ...picked.map((t) => `mcp__${name}__${t}`)] } : {}
+    if (await change({ mcp: next, ...rt })) { setEdit(null); setChecked(undefined); setPicked([]) }
+  }
+  const checkEdit = async () => {
+    if (!edit) return
+    const cfg = parseCfg(edit.text)
+    if (typeof cfg === 'string') { toast(`Not JSON: ${cfg}`); return }
+    const my = gen.current, name = edit.name.trim()
+    setChecked('checking')
+    let v: Checked
+    try { v = await api.mcpCheck(ws, { config: cfg }) } catch (e) { v = { ok: false, error: (e as Error).message } }
+    if (gen.current !== my) return
+    setChecked(v)
+    // what the grants already let runs call stays ticked; a new server's read-only tools come ticked
+    const had = g.runTools.filter((t) => t.startsWith(`mcp__${name}__`)).map((t) => t.slice(`mcp__${name}__`.length))
+    if (v.ok) setPicked(had.length ? had : v.tools.filter((t) => t.readOnly).map((t) => t.name))
   }
   // "only these" waits for its first site before it is written: an allowlist names at least one
   const mode = only ? 'only' : !g.browser ? 'off' : g.browser.allow ? 'only' : 'any'
@@ -135,8 +169,11 @@ export function Access({ ws }: { ws: string }) {
         {edit ? <div className="dc" style={{ display: 'grid', gap: 4 }}>
           <input className="inp mono" placeholder="name" aria-label="MCP server name" value={edit.name} disabled={busy} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
           <textarea className="inp mono" rows={6} aria-label="MCP server config" value={edit.text} disabled={busy} spellCheck={false} onChange={(e) => setEdit({ ...edit, text: e.target.value })} />
-          <div className="row" style={{ gap: 4 }}><button className="btn sm pri" disabled={busy} onClick={() => void saveMcp()}><Ic n="check" sm />{edit.was ? 'Save' : 'Add'}</button>
-            <button className="btn sm ghost" disabled={busy} onClick={() => setEdit(null)}>Cancel</button></div>
+          <span className="hint">A secret goes in mcp.env in the console's home and here as {'${env:NAME}'}; a literal one is refused</span>
+          <ToolTicks c={checked} picked={picked} dis={busy} onPick={setPicked} />
+          <div className="row" style={{ gap: 4 }}><button className="btn sm pri" disabled={busy || checked === 'checking'} onClick={() => void saveMcp()}><Ic n="check" sm />{edit.was ? 'Save' : 'Add'}</button>
+            <button className="btn sm ghost" disabled={busy || checked === 'checking'} onClick={() => void checkEdit()}><Ic n="refresh" sm />Check</button>
+            <button className="btn sm ghost" disabled={busy} onClick={() => { setEdit(null); setChecked(undefined); setPicked([]) }}>Cancel</button></div>
         </div> : <div><button className="btn sm ghost" disabled={busy} onClick={() => setEdit({ name: '', text: json({ command: '', args: [] }) })}><Ic n="plus" sm />Add a server</button></div>}
       </div>
 

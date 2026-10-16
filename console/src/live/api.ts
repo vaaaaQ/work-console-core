@@ -209,6 +209,14 @@ export const resumeRun = (id: string) => call<{ run: RunRec }>('POST', `/api/run
 export const reply = (id: string, t: string, intent: RunIntent) => call<{ run: RunRec }>('POST', `/api/runs/${enc(id)}/reply`, { t, intent })
 /** approves the commands of the draft the page shows, by its time; the backend takes them from the stored draft */
 export const approve = (id: string, at: string) => call<{ run: RunRec }>('POST', `/api/runs/${enc(id)}/reply`, { intent: 'approve', at })
+/** the person's answer to an MCP server's question the run waits on: cf = the question's id */
+export const elicit = (id: string, cf: string, action: 'accept' | 'decline', content?: Record<string, unknown>) =>
+  call<{ run: RunRec }>('POST', `/api/runs/${enc(id)}/elicit`, { cf, action, ...(content ? { content } : {}) })
+/** Settings' Check of an MCP server: name = a granted server or a catalog pack, config = one not saved yet */
+export const mcpCheck = (ws: string, b: { name: string } | { config: Record<string, unknown> }) =>
+  wsCall<McpCheck>(ws, 'POST', '/mcp/check', b, 330000)
+export type McpCheck = ({ ok: true; tools: { name: string; readOnly?: boolean; destructive?: boolean; about?: string }[]; server?: string } | { ok: false; error: string })
+  & { name?: string; pack?: { read: string[]; act: string[] } }
 export const runInfo = (id: string) => call<{ run: RunRec; feed: string[] }>('GET', `/api/runs/${enc(id)}`)
 export const sources = (ws: string, concepts: string[]) =>
   wsCall<{ concepts: Record<string, ConceptState> }>(ws, 'GET', `/sources?concepts=${concepts.map(enc).join(',')}`)

@@ -6,6 +6,7 @@ import type { RunRec, RunState } from '../model/types.ts'
 import { repaint } from '../store.ts'
 import { llmResume, runCancel } from '../actions/flow.tsx'
 import { Ic } from './Icon.tsx'
+import { Confirm } from './Confirm.tsx'
 
 /* A live run in the step inspector: its state, what the session is doing, Cancel or Resume. The
    session is taken up by hand with the step's Open button. */
@@ -37,6 +38,7 @@ export function RunFeed({ run }: { run: RunRec }) {
       <div className="why" style={{ whiteSpace: 'pre-wrap' }}>{run.q}</div>
       {feed.length ? <div ref={box} className="feed" aria-live="polite">{feed.map((l, i) => <div key={i} className={l.startsWith('→') ? 'tool' : undefined}>{l}</div>)}</div>
         : live ? <div className="hint">The session's steps show here as it works.</div> : null}
+      {run.cf && live ? <Confirm run={run} /> : null}
       <div className="row">
         {live ? <button className="btn sm" onClick={() => void runCancel(run.id)}><Ic n="x" sm />Cancel</button> : null}
         {again ? <button className="btn sm pri" onClick={() => void llmResume(run.id)}><Ic n="retry" sm />Resume</button> : null}

@@ -10,6 +10,7 @@ import { toast } from '../ui/toasts.tsx'
 
 const STATE: Record<string, string> = { off: 'off', on: 'on', ok: 'working', warming_up: 'starting', signin_required: 'sign in needed', error: 'error' }
 type Cand = 'reading' | { err: string } | { id: string; name: string }[]
+type Checked = 'checking' | api.McpCheck
 const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms))
 
 export function Packs({ ws }: { ws: string }) {
@@ -17,11 +18,12 @@ export function Packs({ ws }: { ws: string }) {
   const [busy, setBusy] = React.useState<string | null>(null)
   const [cands, setCands] = React.useState<Record<string, Cand>>({})
   const [typed, setTyped] = React.useState<Record<string, string>>({})
+  const [checks, setChecks] = React.useState<Record<string, Checked>>({})
   const gen = React.useRef(0)
   // a new ws or an unmount ends any restart poll still running for the old one
   React.useEffect(() => {
     const my = ++gen.current
-    setGot(null); setBusy(null); setCands({}); setTyped({})
+    setGot(null); setBusy(null); setCands({}); setTyped({}); setChecks({})
     api.packs(ws).then((r) => { if (gen.current === my) setGot(r) }, (e) => { if (gen.current === my) toast((e as Error).message) })
     return () => { gen.current++ }
   }, [ws])
@@ -53,6 +55,13 @@ export function Packs({ ws }: { ws: string }) {
     try { v = await api.packCandidates(ws, p.name) } catch (e) { v = { err: (e as Error).message } }
     if (gen.current === my) setCands((c) => ({ ...c, [p.name]: v }))
   }
+  const check = async (p: PackView) => {
+    const my = gen.current
+    setChecks((c) => ({ ...c, [p.name]: 'checking' }))
+    let v: Checked
+    try { v = await api.mcpCheck(ws, { name: p.name }) } catch (e) { v = { ok: false, error: (e as Error).message } }
+    if (gen.current === my) setChecks((c) => ({ ...c, [p.name]: v }))
+  }
   const add = async (p: PackView, ids: string[]) => {
     const id = (typed[p.name] ?? '').trim()
     if (id && await change(p, { scopes: [...ids, id] })) setTyped((t) => ({ ...t, [p.name]: '' }))
@@ -71,6 +80,19 @@ export function Packs({ ws }: { ws: string }) {
       <p className="why" style={{ margin: 0 }}>{p.about}{p.message ? ` — ${p.message}` : ''}</p>
       {p.kind === 'mcp' && p.mcp !== undefined ? <p className="why mono" style={{ margin: 0 }}>{p.mcp ? `runs ${p.mcp}` : 'runs a server set in its config'}</p> : null}
       {p.hosts?.length ? <p className="why mono" style={{ margin: 0 }}>reaches {p.hosts.join(', ')}</p> : null}
+      {p.kind === 'mcp' && p.config?.length ? <div style={{ display: 'grid', gap: 2 }}>
+        <span className="hint">Settings, in config.json under workspaces.{ws}.packConfig.{p.name}; a secret goes in mcp.env as {'${env:NAME}'}</span>
+        {p.config.map((c) => <span key={c.key} className="why" style={{ margin: 0 }}><span className="mono">{c.key}</span>{c.required ? ' *' : ''}: {c.value === undefined ? <i>not set</i> : <span className="mono">{Array.isArray(c.value) ? c.value.join(', ') : c.value}</span>} — {c.about}</span>)}
+      </div> : null}
+      {p.kind === 'mcp' && !p.problem ? <McpChecked p={p} c={checks[p.name]} dis={busy !== null} onCheck={() => void check(p)} /> : null}
+      {p.on && p.tools?.length ? <div style={{ display: 'grid', gap: 4 }}>
+        <span className="hint">Tools runs may call: the read ones come on with the pack; tick one that changes things only when a job needs it</span>
+        {p.tools.map((t) => <label key={t.name} className="row" style={{ gap: 4 }}>
+          <input type="checkbox" aria-label={`${p.title} tool ${t.name}`} checked={t.on} disabled={dis}
+            onChange={(e) => void change(p, { tools: p.tools!.filter((x) => (x.name === t.name ? e.target.checked : x.on)).map((x) => x.name) })} />
+          <span className="mono">{t.name}</span>{t.act ? <span className="chip error">changes things</span> : <span className="hint">reads</span>}
+        </label>)}
+      </div> : null}
       {p.on && p.kind === 'browser' && p.state === 'signin_required' && p.host
         ? <div><button className="btn sm" onClick={() => void api.front(ws, p.host!).catch((e) => toast((e as Error).message))}><Ic n="external" sm />Sign in to {p.host}</button></div> : null}
       {p.on && p.kind === 'remote-browser' ? <p className="why" style={{ margin: 0 }}>Sign-in happens on the work machine.</p> : null}
@@ -100,4 +122,19 @@ export function Packs({ ws }: { ws: string }) {
       {ro ? <p className="why" style={{ margin: 0 }}>This workspace has no grants.json: its packs come from its config and are shown read-only.</p> : null}
       {got.packs.filter((p) => p.listed || p.on).map(row)}
     </div></section>
+}
+
+/** Check starts the pack's server as a run would and lists its tools; the first start may download it, which takes minutes */
+function McpChecked({ p, c, dis, onCheck }: { p: PackView; c: Checked | undefined; dis: boolean; onCheck(): void }) {
+  const act = new Set((p.tools ?? []).filter((t) => t.act).map((t) => t.name)), named = new Set((p.tools ?? []).map((t) => t.name))
+  return <div style={{ display: 'grid', gap: 4 }}>
+    <div className="row" style={{ gap: 8 }}>
+      <button className="btn sm ghost" disabled={dis || c === 'checking'} onClick={onCheck}><Ic n="refresh" sm />Check</button>
+      <span className="hint">{c === 'checking' ? 'Starting the server; a first start downloads it and can take a few minutes…' : c === undefined ? 'starts the server once, lists its tools, stops it' : ''}</span>
+    </div>
+    {c && c !== 'checking' ? c.ok
+      ? <div className="why" style={{ margin: 0 }}>{c.server ?? 'the server'} answered with {c.tools.length} tools:{' '}
+          {c.tools.map((t) => <span key={t.name} className="mono" title={t.about}>{t.name}{act.has(t.name) ? ' (changes things)' : named.size && !named.has(t.name) ? ' (not in the pack)' : ''}{' '}</span>)}</div>
+      : <p className="why" style={{ margin: 0 }}><span className="chip error">did not start</span> {c.error}</p> : null}
+  </div>
 }

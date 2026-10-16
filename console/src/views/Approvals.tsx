@@ -18,6 +18,18 @@ import { DraftTalk } from '../ui/DraftTalk.tsx'
 import { Ic } from '../ui/Icon.tsx'
 import { OutSeg, OutText } from '../ui/outText.ts'
 import { ProposalCard } from './Proposal.tsx'
+import { Confirm } from '../ui/Confirm.tsx'
+import type { RunRec } from '../model/types.ts'
+
+/** a run that waits on an MCP server's question: the question, and a link to its step */
+function CfCard({ r }: { r: RunRec }) {
+  return (
+    <article className="dc new">
+      <div className="dc-h"><span className="st"><Ic n="alert" sm /><b>Confirmation · {r.cf!.srv}</b></span><button className="lnk mono" onClick={() => go('job', r.job, r.step)}>{r.job} · {r.step}</button><span className="src">{tfmt(r.cf!.at)}</span></div>
+      <Confirm run={r} />
+    </article>
+  )
+}
 import { RequestCard } from './Access.tsx'
 
 function ApCard({ x }: { x: Approval }) {
@@ -82,11 +94,13 @@ export function GrantsCard({ ws, conv, p }: { ws: string; conv: string; p: Agent
 
 export function Approvals() {
   const w = W(), A = approvals(), K = LIVE.on ? L().proposals : [], G = LIVE.on ? L().agent?.pending : undefined, R = LIVE.on ? L().requests : [], P = proposals()
+  // a server's question waits on a live run; it goes as soon as it is answered, declined, or the run ends
+  const C = LIVE.on ? Object.values(LIVE.runs).filter((r) => r.cf && r.state === 'running') : []
   return <>
     <div className="vh"><div><div className="eyebrow">{w.n} · work</div><h1>Approvals</h1>
-      <p>LLM drafts, planned messages, the agent's proposals, knowledge proposals, grants changes and the runs' access requests that wait for you. Nothing is kept or sent until you press a button, here or on the step.</p></div></div>
-    <div className="dl">{G ? <GrantsCard ws={S.ws} conv={L().agent!.id} p={G} /> : null}{R.map((r) => <RequestCard key={r.id} ws={S.ws} r={r} />)}{P.map((j) => <ProposalCard key={j.id} j={j} where="approvals" />)}{K.map((p) => <KnCard key={p.id} p={p} />)}
+      <p>A server's question a run waits on, LLM drafts, planned messages, the agent's proposals, knowledge proposals, grants changes and the runs' access requests that wait for you. Nothing is kept or sent until you press a button, here or on the step.</p></div></div>
+    <div className="dl">{C.map((r) => <CfCard key={r.id} r={r} />)}{G ? <GrantsCard ws={S.ws} conv={L().agent!.id} p={G} /> : null}{R.map((r) => <RequestCard key={r.id} ws={S.ws} r={r} />)}{P.map((j) => <ProposalCard key={j.id} j={j} where="approvals" />)}{K.map((p) => <KnCard key={p.id} p={p} />)}
       {A.map((x) => <ApCard key={`${x.j.id}/${x.s.id}${x.k === 'msg' ? '/' + x.i : ''}`} x={x} />)}
-      {!G && !R.length && !P.length && !K.length && !A.length ? <div className="dc empty">Nothing waits for you. A draft lands here after you ask the LLM on a step; a knowledge proposal after an LLM suggests a note.</div> : null}</div>
+      {!C.length && !G && !R.length && !P.length && !K.length && !A.length ? <div className="dc empty">Nothing waits for you. A draft lands here after you ask the LLM on a step; a knowledge proposal after an LLM suggests a note.</div> : null}</div>
   </>
 }
