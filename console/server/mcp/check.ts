@@ -11,7 +11,7 @@ import { literalSecrets, resolveEnv, scrubSecrets } from './env.ts'
 
 export type ToolInfo = { name: string; readOnly?: boolean; destructive?: boolean; about?: string }
 export type CheckResult = { ok: true; tools: ToolInfo[]; server?: string } | { ok: false; error: string }
-/** a first start through npx downloads the package: 80 s measured for ssh-mcp, a cold install near 3 minutes. Killing npx
+/** a first start through npx downloads the package: 80 s measured for a catalog server, a cold install near 3 minutes. Killing npx
     mid-install leaves a broken entry in its cache, after which every start fails at once, so Check waits long */
 export const CHECK_WAIT = 300_000
 /** the hint for a server npx started that exited: a half-finished install in npx's cache makes every later start fail */

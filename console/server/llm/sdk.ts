@@ -242,6 +242,7 @@ export function runToolDefs(tools: RunTools) {
       (a) => wrap(() => tools.signinNeeded!(a), 'the user is asked to sign in; stop here')())] : []),
     ...(tools.requestAccess ? [tool('request_access', "This workspace does not let runs reach something this step needs: a pack, a host, a tool or a site in the runs' browser. "
       + "Ask the user to add it: add = {packs, hosts (exact or *.domain), runTools (tool names), browser (hosts the runs' browser must open)}, only what is missing; reason = why, one line for the user. "
+      + 'An MCP server from the catalog (an MCP pack under ## Sources) is asked for in packs; its read tools come with it, a tool that changes things only when the person ticks it. '
       + 'It waits for the user in Settings and Approvals and adds nothing now. Then call submit_draft with outcome not_done naming what is missing; the step is run again once it is granted.',
       { add: z.object({ packs: z.array(z.string()).optional(), hosts: z.array(z.string()).optional(), runTools: z.array(z.string()).optional(), browser: z.array(z.string()).optional() }), reason: z.string().min(1) },
       (a) => answer(() => tools.requestAccess!(a.add, a.reason))())] : []),

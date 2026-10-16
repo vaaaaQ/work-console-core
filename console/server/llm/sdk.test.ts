@@ -297,3 +297,9 @@ test('runOptions: the workspace servers start with their values, a missing one i
   const d = await r.options.onElicitation({ serverName: 'ssh', message: 'sure?', mode: 'form' }, { signal: new AbortController().signal, requestId: 'x' })
   assert.deepEqual(d, { action: 'decline' })
 })
+
+test('request_access says an MCP server from the catalog is asked for as a pack, and its tools that change things only by the person', () => {
+  const none = async () => {}
+  const d = runToolDefs({ submitDraft: none, addArtifact: none, addArtifactFile: none, journal: none, requestAccess: async () => 'ok' }).find((x) => x.name === 'request_access')!
+  assert.match(d.description, /An MCP server from the catalog \(an MCP pack under ## Sources\) is asked for in packs; its read tools come with it, a tool that changes things only when the person ticks it/)
+})

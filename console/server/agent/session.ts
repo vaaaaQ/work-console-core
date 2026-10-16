@@ -58,7 +58,7 @@ export interface SessionOpts {
   /** the workspace's jobs, notes and sources and its proposer: every conversation's job tools and per-turn state */
   job?: JobDeps
   /** the packs this workspace lists, for the agent's system text */
-  catalog?: () => { name: string; title: string; about: string; on: boolean }[]
+  catalog?: () => { name: string; title: string; about: string; on: boolean; kind?: string }[]
 }
 /** a job's conversation, a conversation by id, or neither: the newest general one */
 export type Target = { job?: string; conv?: string }

@@ -29,10 +29,10 @@ test('stdioCommand: on win32 a command PATH finds as .cmd or .bat goes through c
 test("startServers: each workspace server with its ${env:} put in and its command fit to the platform; one missing a value stays out with a line", () => {
   const d = binDir(), env = { PATH: d, PATHEXT: '.EXE;.CMD', ComSpec: 'cmd.exe' }
   const r = startServers({
-    ssh: { command: 'npx', args: ['-y', 'ssh-mcp@1', '--key=${env:SSH_KEY}'] },
+    ssh: { command: 'npx', args: ['-y', 'shell-mcp@1', '--key=${env:SSH_KEY}'] },
     api: { type: 'http', url: 'https://a.example/mcp', headers: { Authorization: 'Bearer ${env:API_TOKEN}' } },
   }, { SSH_KEY: 'C:/keys/id_e2e' }, 'win32', env)
-  assert.deepEqual(r.servers, { ssh: { command: 'cmd.exe', args: ['/d', '/s', '/c', 'npx', '-y', 'ssh-mcp@1', '--key=C:/keys/id_e2e'] } })
+  assert.deepEqual(r.servers, { ssh: { command: 'cmd.exe', args: ['/d', '/s', '/c', 'npx', '-y', 'shell-mcp@1', '--key=C:/keys/id_e2e'] } })
   assert.deepEqual(r.lines, ["The MCP server api is not started for this run: no variable API_TOKEN (set it in the console's environment or in mcp.env)"])
   assert.deepEqual(r.secrets, ['C:/keys/id_e2e'])
 })

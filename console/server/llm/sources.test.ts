@@ -36,3 +36,11 @@ test('an mcp pack that is on names its server; an empty about leaves no blank li
   assert.match(s, /### KB \(kb, MCP server\)\nServer: https:\/\/kb\.example\/mcp\nServes: chat/)
   assert.doesNotMatch(s, /\n\n\n|\n\n(?=Serves)/)
 })
+
+test("an mcp pack that is on lists the tools runs may call and those the person has not ticked; an off one says it is an MCP server", () => {
+  const tools = [{ name: 'list', act: false, on: true }, { name: 'run', act: true, on: true }, { name: 'sudo', act: true, on: false }]
+  const s = sourcesSection([v({ name: 'ssh', title: 'SSH', kind: 'mcp', scoped: false, concepts: [], mcp: 'npx -y shell-mcp@1.0.0', tools }),
+    v({ name: 'filesystem', title: 'Folders', kind: 'mcp', on: false, state: 'off' })], true)
+  assert.match(s, /Tools: mcp__ssh__list; that change things: mcp__ssh__run\. Not given: sudo; ask with request_access \{runTools\} if a step needs one\./)
+  assert.match(s, /Off: Folders \(filesystem, MCP server\)/)
+})

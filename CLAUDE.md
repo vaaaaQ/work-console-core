@@ -14,6 +14,11 @@ Guidance for an agent working in this repo.
   A second exception: a run may call the acts its workspace's `grants.json` lists under `llmActs` (run tool `act`,
   at most 10 a run), only on the targets `scopes` allows for a scoped pack. The person grants both through Approvals;
   a refused or failed act shows on the step as a problem with its text, and is never retried.
+  A third exception: a run may call an MCP server's tools that change things (an `mcp` pack's `tools.act`, or a tool of a
+  server added in Access) only when its workspace's `grants.json` lists each under `runTools`, which the person ticks
+  in Packs or Access, at most 30 such calls a run (`server/llm/mcpRun.ts`). An unticked or 31st call is refused; a refused
+  or failed one shows on the step as a problem and is never retried; a question the server asks first (elicitation)
+  waits for the person's Confirm, and is declined without one.
 - **The core names no workplace.** Code under `console/` and `schemas/` must not mention a real
   company, product, person or host. A workplace lives in its workspace, `console/workspaces/<id>/`
   (pack, playbooks, board rule, demo data), and in a bridge pack under `packs/<name>/`. The demo

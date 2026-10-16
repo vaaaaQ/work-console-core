@@ -301,7 +301,7 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   const agent = o.agent ? new AgentSession({
     ws: id, title: w.page.pack.n || id, records: agentRecords(store, join(o.home, 'agent', `${id}.json`)), sdk, bus, root: o.root, ...o.agent,
     managed: grants !== null, max: cfg.maxSessions,
-    catalog: () => viewsFor({ packDirs, grants, cfg, source }).filter((v) => v.listed).map(({ name, title, about, on }) => ({ name, title, about, on })),
+    catalog: () => viewsFor({ packDirs, grants, cfg, source }).filter((v) => v.listed).map(({ name, title, about, on, kind }) => ({ name, title, about, on, kind })),
     job: { jobs, runs: () => runner.all(), ctx, notes, source: rb.bridge === false ? null : source, me: w.page.me, key: (i) => w.page.board.key(i), proposer },
   }) : null
   // a reply on a step and what became of a proposal reach the agent with no LLM watching

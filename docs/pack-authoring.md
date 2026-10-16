@@ -91,6 +91,38 @@ value answers `bad_args` naming `config.<key>`, before any request.
 Hosts follow from the pack, so turning it on grants them: a core pack's come with it, and for a workspace pack
 Settings writes them into `grants.hosts` and takes them out again with the pack unless another one names them.
 
+### An MCP server pack
+
+A pack of `kind: "mcp"` puts an MCP server in the catalog. It has no script, tabs, concepts, actions or hosts:
+turning it on writes its server into `grants.mcp.<pack>` and lets runs call its read tools. `packs/ssh/` and
+`packs/filesystem/` are the core's.
+
+```json
+{
+  "name": "ssh", "kind": "mcp", "title": "SSH", "about": "commands and files on your SSH hosts", "guide": "guide.md",
+  "mcp": { "command": "npx", "args": ["-y", "ssh-mcp@2.19.1", "--config=${config.file}"] },
+  "config": { "file": { "about": "the path of its config.toml; empty = its default" } },
+  "tools": { "read": ["list-connections", "read-command"], "act": ["run-command", "sftp-upload"] }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `mcp` | The server: `command` and `args` (stdio) or `type: "http"` and `url`, with `env` or `headers`. Pin the package's exact version (`pkg@1.2.3`); `npx -y` downloads it on the first start |
+| `tools.read` | The tools that only read. Turning the pack on grants each as `mcp__<pack>__<tool>` in `runTools` |
+| `tools.act` | The tools that change something. Never granted with the pack: the person ticks each in Settings → Packs, one commit each, and the diff marks it `(changes things)`. A name in both lists is refused |
+| `config` | Settings as for a browser pack; `${config.<key>}` is put into `mcp.args`, `mcp.url` and `mcp.env` when the pack is turned on. A list setting must be a whole arg and becomes several; an arg naming an empty optional setting is dropped |
+| `${env:NAME}` | A secret. It stays as written in `grants.json` and is put in only as the server starts (a run, a Check), from the console's environment and then `<home>/mcp.env` (`NAME=value` lines, outside git; runs cannot read it). A missing one keeps the server out of that run, with a line in its feed. Its values are masked in errors |
+
+`checkPack` refuses a literal value under an `env` or `headers` key that looks like a secret (`*TOKEN*`, `*PASSW*`,
+`*SECRET*`, `*KEY*`, `*CREDENTIAL*`, `Authorization`, `Cookie`): write `${env:NAME}` instead. Access refuses the same
+for a server added by hand.
+
+A pack without `tools` grants its whole server (`mcp__<pack>`) as before; a catalog pack should name them. Its
+`test/` keeps the pinned version's `tools/list` (`test/tools-list.json`, recorded with Settings' Check) and checks
+that `read` and `act` cover it exactly and that `read` is what the server marks `readOnlyHint`. Record it again when
+the version changes.
+
 ## The call
 
 ```js
@@ -150,6 +182,8 @@ Return `{ok:false, code, message, retryAfter?}` and never throw out of the funct
 - Keep the script self-contained, with no imports. The carrier serializes it.
 
 ## Tests
+
+An MCP server pack's tests read only its `pack.json` and the recorded `tools/list`; see [An MCP server pack](#an-mcp-server-pack).
 
 `packs/example/test/` runs the script in Node against a fake tab:
 

@@ -245,8 +245,9 @@ flowchart LR
 
 | Piece | What |
 |---|---|
-| Packs | `GET /packs`, `PUT /packs/<name> {on, scopes, acts, llmActs}` (`server/browser/catalogView.ts`) |
-| Access | `GET /grants`, `PUT /grants {hosts, runTools, mcp, browser}`: each field given replaces the grants' own. A granted pack's own MCP server is changed only in Packs; `bridge`, `run`, `agent` and `browser` are refused as MCP names (`server/access.ts`) |
+| Packs | `GET /packs`, `PUT /packs/<name> {on, scopes, acts, llmActs, tools}` (`server/browser/catalogView.ts`). Turning an `mcp` pack on writes its server, with its settings put in, into `grants.mcp` and its `tools.read` into `runTools`; `tools` is the whole ticked set of its tools, so ticking one that changes things is a commit of its own; off takes the server and every `mcp__<pack>__*` away |
+| Check | `POST /mcp/check {name}` (a granted server, or a catalog pack with its settings) or `{config}` (one not saved yet): the server is started as a run would start it, asked `initialize` and `tools/list`, and stopped; the answer lists its tools with their read-only and destructive hints, or why it did not start (its stderr's tail, secrets masked). One at a time, at most 5 minutes, since a first `npx` start downloads the package (`server/mcp/check.ts`). Only the page calls it |
+| Access | `GET /grants`, `PUT /grants {hosts, runTools, mcp, browser}`: each field given replaces the grants' own. A granted pack's own MCP server is changed only in Packs; `bridge`, `run`, `agent` and `browser` are refused as MCP names, and so is a literal secret in a server's `env` or `headers` (`server/access.ts`). Add a server takes a Check: its read-only tools come ticked, and Add saves the server and the ticked tools in one commit |
 | Run requests | a run's `request_access {add: {packs, hosts, runTools, browser}, reason}`, at most 3 a run: only additions, never an MCP config (an MCP server comes as an `mcp` pack). It is refused when the grants already hold it all; the same add from another step joins the waiting request; at most 20 wait, in `<home>/access-requests/<id>.json`. The run then hands in `not_done`. Manual sessions do not get the tool |
 | Decide | `POST /grants/requests/<id> {accept, reason}`: accept commits what the add changes now (packs turned on as Packs would); reject needs a reason. Either way each asking job gets a journal line. A new request is a `source` event of concept `access`, which the page reloads and Web Push announces once |
 
@@ -304,6 +305,21 @@ live folder and restarts. Grants change only through a person's approval.*
   refuses such an update while the console answers on its port. A finish that fails puts the folder
   back on its commit and writes `update-failed.json` at step `finish`, with the log's path and no branch, so the
   banner shows it with Apply and Dismiss and nothing to reintegrate. The page compares the build id in `/api/state` with the one it loaded and says *Updated — press Ctrl+F5*.
+- **MCP servers in a run** (`server/llm/mcpRun.ts`). Each server of `grants.mcp` starts with its `${env:NAME}` put in
+  from the console's environment and `<home>/mcp.env`, read at each start (`server/mcp/env.ts`); one missing a value
+  stays out, with a line in the feed. On Windows a command `PATH` finds as `.cmd` or `.bat` (`npx`) runs through
+  `cmd.exe /d /s /c`. A server that does not connect is one feed line from the session's start. A hook keeps a run to
+  the ticked tools: an unticked tool of a workspace server is refused, and so is the 31st call of a tool that changes
+  things (`ACT_CALLS_MAX` = 30); each refusal, and each such tool that fails, is a problem note on the step, never
+  retried, and the step's journal says which of them the run called. Cursor runs get the same through the
+  permission answer.
+- **Confirmation** (MCP elicitation). A server's question during a run, such as ssh-mcp asking before a destructive
+  command, waits on the run record as `cf {id, srv, msg, schema, title, description, at}`: a Confirm card on the step
+  and in Approvals, and a push. `POST /api/runs/<id>/elicit {cf, action: accept|decline, content}` answers it; the
+  fields are checked against its flat schema, and a late, repeated or other answer is 409. A decline, 15 minutes
+  without an answer, or a question asking to open a link is declined with a problem note; ending the run cancels it.
+  A Confirm goes in the journal. A Cursor run has no Confirm yet: whether its CLI passes such a question on is not
+  checked, and a server that gets no answer declines by itself.
 - **Grants.** `grants.json` = `{packs, hosts, acts, runTools, mcp, browser}` (`server/grants.ts`, `grantsOf(id)`). A
   managed workspace's runs get exactly its `runTools`, `mcp` and `browser` (absent = none, `true` = any site,
   `{allow: hosts}` = only those; [Runs' browser](#runs-browser)); startup refuses one whose `server.ts` also

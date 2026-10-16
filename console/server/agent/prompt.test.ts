@@ -100,3 +100,9 @@ test('wsState lists the open jobs and the notes', async () => {
   assert.match(t, /^# Open jobs \(newest first\)/)
   for (const s of [j.id, 'J-0999', '# Knowledge notes\nnone']) assert.ok(t.includes(s), s)
 })
+
+test('the agent sees which catalog packs are MCP servers, and that one is connected by turning its pack on', () => {
+  const t = agentSystem({ ws: 'crm', title: 'My CRM', interview: false, grants: EMPTY_GRANTS, managed: true, catalog: [{ name: 'ssh', title: 'SSH', about: 'your hosts', on: false, kind: 'mcp' }] })
+  assert.match(t, /ssh \(MCP server\) — your hosts/)
+  assert.match(t, /An MCP server in the catalog is connected by turning its pack on: propose packs, not mcp; its read tools come with it/)
+})
