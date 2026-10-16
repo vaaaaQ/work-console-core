@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PackKind } from '../../src/model/packs.ts'
 import { coreDir } from '../config.ts'
+import { literalSecrets } from '../mcp/env.ts'
 
 export type { PackKind }
 export const PACKS_DIR = coreDir('packs')
@@ -23,6 +24,8 @@ export interface PackManifest {
   scopeAbout?: string
   /** an mcp pack's server config, which turning it on puts into grants.mcp */
   mcp?: Record<string, unknown>
+  /** an mcp pack's tools by name: read ones are granted as it is turned on, act ones only when the person ticks them */
+  tools?: McpTools
   /** false keeps the pack out of the Settings list; it still loads when granted */
   catalog?: boolean
   zone: string
@@ -36,6 +39,7 @@ export interface PackManifest {
   /** scope: the arg that names the target; a scoped action runs only on a listed id */
   actions?: Record<string, { tab: string; concept: string; scope?: string }>
 }
+export type McpTools = { read: string[]; act?: string[] }
 export const packKind = (m: Pick<PackManifest, 'kind'>): PackKind => m.kind ?? 'browser'
 export type PackConfig = Record<string, string | string[]>
 export interface RenderedPack { tabs: Record<string, { match: RegExp; open: string }>; hosts: string[] }
@@ -61,8 +65,12 @@ export function checkPack(p: unknown, hasSchema: (key: string) => boolean = () =
   const kind = typeof p.kind === 'string' && KINDS.includes(p.kind) ? p.kind as PackKind : p.kind === undefined ? 'browser' : null
   if (kind === 'mcp') {
     if (!isObj(p.mcp)) out.push('mcp: an mcp pack needs its server config')
-    for (const k of ['script', 'tabs', 'concepts', 'actions', 'hosts', 'config'])
+    for (const k of ['script', 'tabs', 'concepts', 'actions', 'hosts'])
       if (p[k] !== undefined) out.push(`${k}: an mcp pack has none`)
+    const config = configProblems(p, out)
+    if (isObj(p.mcp)) mcpTemplates(p.mcp, config, out)
+    if (isObj(p.mcp)) out.push(...literalSecrets(p.mcp))
+    if (p.tools !== undefined) toolsProblems(p.tools, out)
     return out
   }
   if (kind === 'remote-browser') {
@@ -77,15 +85,7 @@ export function checkPack(p: unknown, hasSchema: (key: string) => boolean = () =
   if (kind === null) return out
   if (typeof p.zone !== 'string' || !p.zone) out.push('zone: missing')
   if (typeof p.script !== 'string' || !/^[\w.-]+\.js$/.test(p.script)) out.push('script: not a .js file name')
-  const config: Record<string, any> = isObj(p.config) ? p.config : {}
-  if (p.config !== undefined && !isObj(p.config)) out.push('config: not an object')
-  for (const [k, c] of Object.entries(config)) {
-    if (!/^[a-zA-Z][a-zA-Z0-9]*$/.test(k)) out.push(`config.${k}: not a key name`)
-    if (!isObj(c) || typeof c.about !== 'string') { out.push(`config.${k}: needs about`); continue }
-    if (c.pattern !== undefined) try { new RegExp(c.pattern) } catch { out.push(`config.${k}: pattern does not compile`) }
-    if (c.enum !== undefined && (!Array.isArray(c.enum) || !c.enum.every((e: unknown) => typeof e === 'string'))) out.push(`config.${k}: enum is not a list of strings`)
-    if (c.default !== undefined) out.push(...valueProblems(k, c as ConfigKey, c.default).map((m) => `${m} (default)`))
-  }
+  const config = configProblems(p, out)
   const templated = (at: string, s: string) => {
     for (const [, key] of s.matchAll(TEMPLATE)) {
       if (!(key in config)) out.push(`${at}: {${key}} is not a config key`)
@@ -121,6 +121,66 @@ export function checkPack(p: unknown, hasSchema: (key: string) => boolean = () =
     if (a.scope !== undefined && (typeof a.scope !== 'string' || !FIELD.test(a.scope))) out.push(`actions.${n}: scope is not an arg name`)
   }
   return out
+}
+
+/** the pack's settings, each malformed one a problem in out */
+function configProblems(p: Record<string, any>, out: string[]): Record<string, any> {
+  const config: Record<string, any> = isObj(p.config) ? p.config : {}
+  if (p.config !== undefined && !isObj(p.config)) out.push('config: not an object')
+  for (const [k, c] of Object.entries(config)) {
+    if (!/^[a-zA-Z][a-zA-Z0-9]*$/.test(k)) out.push(`config.${k}: not a key name`)
+    if (!isObj(c) || typeof c.about !== 'string') { out.push(`config.${k}: needs about`); continue }
+    if (c.pattern !== undefined) try { new RegExp(c.pattern) } catch { out.push(`config.${k}: pattern does not compile`) }
+    if (c.enum !== undefined && (!Array.isArray(c.enum) || !c.enum.every((e: unknown) => typeof e === 'string'))) out.push(`config.${k}: enum is not a list of strings`)
+    if (c.default !== undefined) out.push(...valueProblems(k, c as ConfigKey, c.default).map((m) => `${m} (default)`))
+  }
+  return config
+}
+
+const MCP_TEMPLATE = /\$\{config\.([a-zA-Z][a-zA-Z0-9]*)\}/g
+const TOOL = /^[\w.-]{1,64}$/
+const toolList = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === 'string' && TOOL.test(x))
+function toolsProblems(t: unknown, out: string[]) {
+  if (!isObj(t)) { out.push('tools: {read, act} lists are needed'); return }
+  if (!toolList(t.read)) out.push('tools.read: a list of tool names is needed')
+  if (t.act !== undefined && !toolList(t.act)) out.push('tools.act: a list of tool names is needed')
+  for (const k of Object.keys(t)) if (k !== 'read' && k !== 'act') out.push(`tools.${k}: only read and act`)
+  if (toolList(t.read) && toolList(t.act)) for (const n of t.act as string[]) if ((t.read as string[]).includes(n)) out.push(`tools: ${n} is both read and act`)
+}
+/** each ${config.key} of an mcp pack's args, url and env names a setting; a list one only as a whole arg */
+function mcpTemplates(m: Record<string, any>, config: Record<string, any>, out: string[]) {
+  const check = (at: string, s: unknown, whole: boolean) => {
+    if (typeof s !== 'string') return
+    for (const [t, key] of s.matchAll(MCP_TEMPLATE)) {
+      if (!(key in config)) out.push(`${at}: ${t} is not a config key`)
+      else if (config[key]?.list && !(whole && s === t)) out.push(`${at}: ${t} is a list; only a whole arg takes one`)
+    }
+  }
+  if (Array.isArray(m.args)) m.args.forEach((a: unknown, i: number) => check(`mcp.args[${i}]`, a, true))
+  check('mcp.url', m.url, false)
+  if (isObj(m.env)) for (const [k, v] of Object.entries(m.env)) check(`mcp.env.${k}`, v, false)
+}
+
+/** an mcp pack's server config with the workspace's settings put in: a list setting as several args, an arg naming an empty
+    setting dropped; ${env:…} stays for the server's start. Throws when the url or an env value names an empty one */
+export function renderMcp(p: PackManifest, config: PackConfig): Record<string, unknown> {
+  const m = structuredClone(p.mcp ?? {}) as Record<string, any>
+  const fill = (at: string, s: string) => s.replace(MCP_TEMPLATE, (_, key: string) => {
+    const v = config[key]
+    if (typeof v !== 'string') throw new Error(`${at}: config.${key} has no value`)
+    return v
+  })
+  if (Array.isArray(m.args)) m.args = m.args.flatMap((a: unknown, i: number) => {
+    if (typeof a !== 'string') return [a]
+    const whole = /^\$\{config\.([a-zA-Z][a-zA-Z0-9]*)\}$/.exec(a)
+    if (whole && Array.isArray(config[whole[1]])) return config[whole[1]] as string[]
+    const keys = [...a.matchAll(MCP_TEMPLATE)].map((x) => x[1])
+    if (keys.some((k) => config[k] === undefined || config[k] === '')) return []
+    return [fill(`mcp.args[${i}]`, a)]
+  })
+  if (typeof m.url === 'string') m.url = fill('mcp.url', m.url)
+  if (isObj(m.env)) m.env = Object.fromEntries(Object.entries(m.env).map(([k, v]) => [k, typeof v === 'string' ? fill(`mcp.env.${k}`, v) : v]))
+  return m
 }
 
 function valueProblems(k: string, c: ConfigKey, v: unknown): string[] {

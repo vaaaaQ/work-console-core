@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { checkPack, loadPacks, packConfig, packKind, readPack, renderPack, schemasIn } from './packs.ts'
+import { checkPack, loadPacks, packConfig, packKind, readPack, renderMcp, renderPack, schemasIn } from './packs.ts'
 import type { PackManifest } from './packs.ts'
 import { tempDir } from '../testdirs.ts'
 
@@ -128,6 +128,46 @@ test('an mcp pack carries its server config and no tabs; a remote-browser pack n
   assert.deepEqual(checkPack(rb, all), [])
   assert.deepEqual(checkPack({ ...rb, concepts: { chat: {} } }, () => false), ['concepts.chat: no schema chat.item'])
   assert.deepEqual(checkPack({ ...rb, actions: { post: {} } }, all), ['actions.post: not an action name'])
+})
+
+const server = () => ({
+  name: 'shell', kind: 'mcp', title: 'Shell', about: 'a remote shell',
+  mcp: { command: 'npx', args: ['-y', 'shell-mcp@1.0.0', '--config=${config.file}', '${config.roots}'], env: { SHELL_KEY: '${env:SHELL_KEY}' } },
+  config: { file: { about: 'its config file' }, roots: { about: 'folders', list: true, default: ['/a'] } },
+  tools: { read: ['list', 'read'], act: ['run'] },
+})
+
+test('an mcp pack may name its tools, read and act apart, and take settings its server config puts in', () => {
+  assert.deepEqual(checkPack(server(), all), [])
+  assert.deepEqual(checkPack({ ...server(), tools: { act: ['run'] } }, all), ['tools.read: a list of tool names is needed'])
+  assert.deepEqual(checkPack({ ...server(), tools: { read: ['list', 'run'], act: ['run'] } }, all), ['tools: run is both read and act'])
+  assert.deepEqual(checkPack({ ...server(), tools: { read: [''] } }, all), ['tools.read: a list of tool names is needed'])
+  assert.deepEqual(checkPack({ ...server(), tools: ['list'] }, all), ['tools: {read, act} lists are needed'])
+  const s = server()
+  s.mcp.args.push('${config.nope}')
+  assert.deepEqual(checkPack(s, all), ['mcp.args[4]: ${config.nope} is not a config key'])
+  const u = { ...server(), mcp: { type: 'http', url: 'https://x.example/${config.roots}' } }
+  assert.deepEqual(checkPack(u, all), ['mcp.url: ${config.roots} is a list; only a whole arg takes one'])
+})
+
+test("an mcp pack's env and headers carry no literal secret: ${env:NAME} instead", () => {
+  const withEnv = (env: Record<string, string>) => ({ ...server(), mcp: { ...server().mcp, env } })
+  assert.deepEqual(checkPack(withEnv({ API_TOKEN: 'abc123' }), all), ['mcp.env.API_TOKEN: looks like a secret; write ${env:API_TOKEN} and put the value in mcp.env'])
+  assert.deepEqual(checkPack(withEnv({ DB_PASSWORD: 'x', LOG_LEVEL: 'debug', SSH_KEY: '${env:SSH_KEY}' }), all).length, 1)
+  const h = { ...server(), mcp: { type: 'http', url: 'https://x.example/mcp', headers: { Authorization: 'Bearer abc' } } }
+  assert.deepEqual(checkPack(h, all), ['mcp.headers.Authorization: looks like a secret; write ${env:NAME} and put the value in mcp.env'])
+  assert.deepEqual(checkPack({ ...h, mcp: { ...h.mcp, headers: { Authorization: 'Bearer ${env:X_TOKEN}' } } }, all), [])
+})
+
+test('renderMcp puts the settings into args, url and env: a list setting is several args, an empty one drops its arg; ${env:} stays', () => {
+  const m = server() as unknown as PackManifest
+  assert.deepEqual(renderMcp(m, { file: 'C:/x/config.toml', roots: ['/a', '/b'] }), {
+    command: 'npx', args: ['-y', 'shell-mcp@1.0.0', '--config=C:/x/config.toml', '/a', '/b'], env: { SHELL_KEY: '${env:SHELL_KEY}' },
+  })
+  assert.deepEqual((renderMcp(m, { roots: ['/a'] }) as { args: string[] }).args, ['-y', 'shell-mcp@1.0.0', '/a'])
+  const u = { ...server(), mcp: { type: 'http', url: 'https://${config.file}/mcp' } } as unknown as PackManifest
+  assert.deepEqual(renderMcp(u, { file: 'h.example' }), { type: 'http', url: 'https://h.example/mcp' })
+  assert.throws(() => renderMcp(u, {}), /mcp\.url: config\.file has no value/)
 })
 
 test('readPack checks the guide file and its length, and fills an mcp pack with empty tabs', () => {
