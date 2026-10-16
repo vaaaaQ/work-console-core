@@ -1,190 +1,240 @@
-# AD-0026: Easy MCP server connection, with a catalog that ships with the core
+# AD-0026: простое подключение MCP-серверов и каталог, который поставляется с ядром
 
-## Why
+«Ядро» здесь значит Work Console Core: репозиторий этого задания. Его копия лежит в
+`D:\agents\services\work-console`, там же находится workspace agents-dev. Так подтвердил Валерий 2026-10-16.
 
-Valery wants to connect an MCP server, for example one for SSH work, in a few clicks: either from a list
-that ships with the core, or by adding a new one. He was not sure what the core supports today. This
-section answers that from the code (core at `ac40594`, the same rev `D:\agents\services\work-console`
-vendors).
+## Откуда взяты сведения
 
-### What the core does today
+Всё, что сказано о текущем положении дел, я прочитал в коде ядра на коммите `ac40594`. На этой же версии
+сейчас стоит `D:\agents\services\work-console` (поле `core` в его `core.lock.json`). При каждом утверждении
+указан файл, где это видно. Остальные источники:
 
-A run's MCP servers are put together in `server/llm/sdk.ts` `mcpServers()`, in this order: `bridge`,
-`run`, the runs' `browser`, then the workspace's own servers. The workspace's own servers come from one of
-three places:
+- `D:\agents\services\work-console\workspaces\agents-dev\grants.json`: что разрешено agents-dev сейчас.
+- Сведения о сервере `ssh-mcp`: `npm view ssh-mcp` и его README из npm (версия 2.19.1, MIT,
+  github.com/tufantunc/ssh-mcp). Веб-поиск в этом запуске был запрещён, поэтому других источников нет.
+- Проверки на этой машине: Node v23.3.0; `npx` есть, на Windows это `npx.cmd`; Docker 28.0.1 работает;
+  служба sshd установлена, но остановлена; ключей в `~/.ssh` нет.
 
-| Path | Where | How a person does it |
+## Как MCP-серверы подключаются сейчас
+
+У каждого LLM-запуска есть свой список MCP-серверов. Его собирает функция `mcpServers()` в
+`console/server/llm/sdk.ts` в таком порядке: `bridge` (чтение источников), `run` (инструменты самого
+запуска), `browser` (браузер запусков), затем собственные серверы workspace. Собственные серверы берутся из
+одного из трёх мест:
+
+| Откуда | Для какого workspace | Как это делает человек сегодня |
 |---|---|---|
-| `llm.mcp` in `workspaces/<id>/server.ts` | unmanaged workspaces | by editing code |
-| `grants.json` `mcp` | managed workspaces such as agents-dev | Settings → Access → "Add a server": a name and a raw JSON config; or the workspace agent's `propose_grants`, accepted in Approvals |
-| a pack with `kind: "mcp"` | managed workspaces | Settings → Packs → turn it on. `applyPackChange` copies the pack's `mcp` config into `grants.mcp[<pack>]`. A run can ask for it with `request_access {add: {packs: [...]}}` |
+| `llm.mcp` в `workspaces/<id>/server.ts` | без `grants.json` | правкой кода |
+| поле `mcp` в `grants.json` | с `grants.json` (managed), например agents-dev | Settings → Access → «Add a server»: имя и конфиг в виде сырого JSON. Или агент workspace предлагает это через `propose_grants`, и человек принимает в Approvals |
+| пакет вида `kind: "mcp"` | managed | Settings → Packs → включить пакет. `applyPackChange` (`server/browser/catalogView.ts`) копирует конфиг сервера из пакета в `grants.mcp`. Запуск может попросить такой пакет через `request_access {add: {packs: [...]}}` |
 
-So the mechanism for a catalog already exists: an `mcp` pack (`server/bridge/packs.ts` `checkPack`,
-`readPack`; `catalogView.ts`; tested in `packs.test.ts` and `catalogView.test.ts`). Core `packs/` is
-vendored into every consumer by `sync-core.mjs`.
+Значит, механизм каталога уже есть: это пакет вида `mcp`. Его проверяют `checkPack` и `readPack` в
+`server/bridge/packs.ts`, есть тесты в `packs.test.ts` и `catalogView.test.ts`. Пакеты из папки `packs/`
+ядра `sync-core.mjs` копирует в каждую консоль, которая подключает ядро. Если положить туда пакеты-серверы,
+каталог будет поставляться вместе с ядром.
 
-### What is missing
+## Чего не хватает
 
-1. **No MCP server in the catalog.** `packs/` holds only browser packs (`azure-devops`, `m365-mail`,
-   `m365-teams`, `telegram-web`) and `example`. No pack uses `kind: "mcp"`. agents-dev's `grants.json` has `"mcp": {}`.
-2. **A connected server's tools are not allowed.** Sessions run with `permissionMode: 'dontAsk'`, and
-   `allowedTools` is only `ALLOW` + `runTools` (`permissions()` in `sdk.ts`; Cursor's `canMcp` in
-   `cursor/policy.ts` works the same way). Neither "Add a server" nor turning on an `mcp` pack adds
-   `mcp__<name>__<tool>` to `runTools`. The server starts, but every call to it is refused. Today a person
-   has to know to type `mcp__<name>` into "another tool name" as well, and that allows every tool,
-   including the ones that write.
-3. **No way to check a server before a run uses it.** Nothing starts the server and lists its tools. A server
-   that fails to start does not show either: `sessionEvents` reads only `session_id` from the SDK's
-   `init` message and ignores its `mcp_servers` statuses.
-4. **An `mcp` pack takes no settings.** `checkPack` refuses `config` on an `mcp` pack, so a server that
-   needs a value from the workspace (for example, a folder list) cannot be a catalog entry.
-5. **Windows commands.** A catalog server is started by a launcher such as `npx`, which on Windows is
-   `npx.cmd`. Node's `spawn` cannot start a `.cmd` file without a shell, so a plain `{"command": "npx"}`
-   can fail to start on this machine. The runs' browser avoids this because it starts as
-   `process.execPath` plus a script path. The first test confirms whether the SDK handles this case itself.
-6. **Secrets.** `grants.json` is committed to git, so an `env` with a password would end up in git.
-   Nothing warns about this.
+1. **Каталог пуст.** В `packs/` лежат только браузерные пакеты (`azure-devops`, `m365-mail`, `m365-teams`,
+   `telegram-web`) и `example`. Ни один пакет не использует `kind: "mcp"`. В `grants.json` у agents-dev стоит `"mcp": {}`.
+2. **Инструменты подключённого сервера запрещены.** Запуски работают в режиме `permissionMode: 'dontAsk'`,
+   поэтому разрешено только то, что есть в `allowedTools`. Туда попадают `ALLOW` и `runTools`
+   (`permissions()` в `sdk.ts`). У Cursor то же самое, через `canMcp` в `server/llm/cursor/policy.ts`. Ни
+   «Add a server», ни включение mcp-пакета не добавляют в `runTools` имена `mcp__<сервер>__<инструмент>`.
+   Сервер запускается, но каждый вызов к нему отклоняется. Сегодня человеку нужно отдельно вписать имя
+   инструмента в «another tool name».
+3. **Сервер нельзя проверить заранее.** Ничто не запускает сервер, чтобы показать список его
+   инструментов. Если сервер не стартовал, этого тоже не видно: `sessionEvents` в `sdk.ts` берёт из
+   стартового сообщения SDK только `session_id` и не смотрит статусы `mcp_servers`.
+4. **У mcp-пакета не бывает настроек.** `checkPack` не пускает `config` в mcp-пакет. Поэтому в каталог
+   нельзя положить сервер, которому нужно значение от workspace, например путь к его конфигу.
+5. **Команды на Windows.** Серверы из каталога запускаются через `npx`, а на Windows это `npx.cmd`. Node
+   `spawn` не запускает `.cmd` без оболочки, поэтому конфиг `{"command": "npx"}` здесь может не стартовать.
+   Браузер запусков этой проблемы не имеет: он запускается как `process.execPath` плюс путь к скрипту
+   (`server/llm/runBrowser.ts`). Первым тестом проверю, справляется ли с этим сам SDK.
+6. **Секреты.** `grants.json` лежит в git. Пароль, вписанный в `env` сервера, попадёт в коммит, и ничто
+   об этом не предупредит.
+7. **Правило о записи.** В `CLAUDE.md` сказано, что запуск ничего не меняет в инструментах. Исключений
+   два: браузер запусков и `llmActs`. Команда, которая меняет что-то на удалённом хосте, в эти исключения не
+   входит. Для SSH нужно третье исключение (см. раздел 4).
 
-## What changes
+## Что меняется
 
-All of the following is generic core. Server names appear only under `packs/<name>/`, never in
-`console/` or `schemas/`. Console tests use fictional servers.
+Всё ниже относится к общему ядру. Имена конкретных серверов появляются только в `packs/<имя>/`, в
+`console/` и `schemas/` их нет. В тестах консоли используются выдуманные серверы.
 
 ```
-packs/ssh/pack.json  kind mcp ──▶ Settings → Packs card: Check · tools (read ✓ / act ☐) · Turn on
-                                   │ one grants commit: mcp.ssh + runTools mcp__ssh__<each ticked tool>
-                                   ▼
-run session ── mcpServers (Windows-safe command) ── tools allowed by runTools ── init status → run feed
+packs/ssh/pack.json (kind mcp)
+   └─▶ Settings → Packs, карточка ssh: [Check] · инструменты: чтение ✓ / запись ☐ · [Turn on]
+         └─▶ один коммит grants.json: mcp.ssh + runTools mcp__ssh__<каждый отмеченный инструмент>
+               └─▶ запуск: сервер с командой, которая работает на Windows; разрешены отмеченные инструменты;
+                   если сервер не стартовал, в ленте запуска появляется строка
 ```
 
-### 1. The catalog: `mcp` packs under core `packs/`
+### 1. Каталог: mcp-пакеты в `packs/` ядра
 
-- **`packs/ssh/`**: `ssh-mcp` pinned at `2.19.1` (npm, MIT, github.com/tufantunc/ssh-mcp). It is
-  stdio, `{"command": "npx", "args": ["-y", "ssh-mcp@2.19.1"]}`. Hosts, users and keys live in that
-  server's own `config.toml` (on Windows `%APPDATA%\ssh-mcp\config.toml`). The server checks that file's
-  ACL, and passwords go in env vars or the SSH agent. The console therefore stores no host and no secret.
-  `guide.md` (at most 2000 characters) tells the person how to write that file, and the run how to use the tools.
-- **`packs/filesystem/`** (proposed second entry): `@modelcontextprotocol/server-filesystem`, pinned. It
-  reads folders outside the run's work dir, and its `config` takes the folder list (see 2).
-- Each catalog pack has a `test/` folder that checks `pack.json` and that its `tools` list matches a
-  recorded `tools/list` of the pinned version. A version bump re-records that list.
+- **`packs/ssh/`**: `ssh-mcp@2.19.1`, транспорт stdio, конфиг `{"command": "npx", "args": ["-y", "ssh-mcp@2.19.1", ...]}`.
+  - Хосты, пользователи, ключи и роли хранятся в собственном конфиге сервера `config.toml`. На Windows по
+    умолчанию это `%APPDATA%\ssh-mcp\config.toml`; другой путь задаётся флагом `--config`.
+  - Сервер сам проверяет ACL этого файла. Пароли передаются через env или SSH-агент.
+  - В итоге консоль не хранит ни хостов, ни секретов. У пакета одна необязательная настройка, путь к
+    конфигу; она становится `--config=<путь>`.
+  - `guide.md` (до 2000 символов) объясняет человеку, как написать `config.toml`, а запуску — как
+    пользоваться инструментами. Например: сначала `list-connections`; `read-command` для чтения;
+    `run-command` для изменений.
+- **`packs/filesystem/`** (предлагаемый второй пакет): `@modelcontextprotocol/server-filesystem` с
+  закреплённой версией. Он даёт чтение папок вне рабочей папки запуска; список папок задаётся в настройке
+  пакета.
+- У каждого пакета каталога есть `test/`. Тест проверяет `pack.json` и сверяет список `tools` с записанным
+  ответом `tools/list` закреплённой версии. При смене версии ответ записывается заново.
 
-### 2. The `mcp` pack manifest gains `tools` and `config`
+### 2. В манифест mcp-пакета добавляются `tools` и `config`
 
-- `tools: { read: string[], act?: string[] }`: the server's tool names, split by whether they change
-  anything. `checkPack` refuses a name listed in both, and a pack with no `read`.
-  - For ssh, `read` is `list-connections`, `list-sessions`, `read-command`, `read-session-output`,
-    `sftp-list` and `sftp-download`.
-  - For ssh, `act` is `open-session`, `close-session`, `run-command`, `privileged-command`,
-    `sftp-upload`, `sftp-upload-file`, `sftp-download-file` and `signal-process`.
-- `config` becomes allowed on an `mcp` pack, with the same `ConfigKey` rules as browser packs.
-  `${config.<key>}` in `mcp.args`, `mcp.url` or `mcp.env` is filled in when the pack is turned on. A list
-  key expands into several args. Settings → Packs already takes these values before turning a pack on.
-- `checkPack` refuses an `env` or `headers` value in a pack that is a literal and looks like a secret
-  (no placeholder). A pack may name a secret only as `${env:NAME}`. Whether this is allowed is open
-  question 5. If it is not, v1 ships only servers that keep their secrets in their own config.
+- `tools: { read: string[], act?: string[] }`: имена инструментов сервера, разделённые на те, что только
+  читают, и те, что что-то меняют. `checkPack` отклоняет пакет без `read` и имя, которое стоит в обоих списках.
+  - Для ssh в `read` (6 инструментов): `list-connections`, `list-sessions`, `read-command`,
+    `read-session-output`, `sftp-list`, `sftp-download`.
+  - Для ssh в `act` (8 инструментов): `open-session`, `close-session`, `run-command`,
+    `privileged-command`, `sftp-upload`, `sftp-upload-file`, `sftp-download-file`, `signal-process`.
+  - Разделение взято из таблицы инструментов в README ssh-mcp: колонки readOnly и destructive.
+- `config` разрешается в mcp-пакете по тем же правилам `ConfigKey`, что и в браузерных пакетах.
+  Подстановка `${config.<ключ>}` работает в `mcp.args`, `mcp.url` и `mcp.env`; ключ-список раскрывается в
+  несколько аргументов. Значения вводятся в Settings → Packs до включения пакета, как сейчас у браузерных пакетов.
+- `checkPack` отклоняет в `env` или `headers` буквальное значение, похожее на секрет. Секрет можно назвать
+  только как `${env:ИМЯ}`; это открытый вопрос 2.
 
-### 3. Turning a server on allows its read tools, and nothing more
+### 3. Включение сервера разрешает чтение, запись отмечается отдельно
 
-- `applyPackChange` on: it adds `mcp.<pack>` and adds `mcp__<pack>__<t>` to `runTools` for each `read`
-  tool. Off: it removes both. Per-tool ticks in the Packs card change the `runTools` entries of that pack only.
-- `act` tools are listed in the card but cannot be ticked. A run that calls one is refused, as today. See
-  open question 2 for opening them up.
-- `applyAdd` (the run's `request_access` for packs) uses the same path, so a run that asks for `ssh` gets
-  the read tools when Valery accepts.
-- `grantsDiff` already names `+ mcp ssh` and `+ runTool mcp__ssh__read-command`, so the commit reason and
-  the Approvals diff say exactly what is granted.
+- **Включение** (`applyPackChange`) добавляет `mcp.<пакет>` и для каждого `read`-инструмента
+  `mcp__<пакет>__<инструмент>` в `runTools`. **Выключение** убирает всё это.
+- В карточке пакета у каждого инструмента есть галочка. Галочки `read` при включении стоят, галочки `act`
+  не стоят. Человек ставит галочку `act`-инструмента сам, и это отдельный коммит `grants.json`.
+- `grantsDiff` помечает такие строки, и Approvals показывает, что именно выдано. Например:
+  `+ runTool mcp__ssh__run-command (меняет)`.
+- `applyAdd` идёт тем же путём, когда запуск просит пакет через `request_access`. Запуск получает только
+  чтение; запись выдаёт только человек галочкой.
 
-### 4. A new server added by hand gets the same treatment
+### 4. Запись по SSH: третье исключение в правилах
 
-- In Settings → Access → "Add a server", the person types a name and config, then presses **Check**. The
-  card lists the server's tools from `tools/list`. Tools with `readOnlyHint` are ticked, and the others
-  stay unticked. **Add** saves `mcp` and `runTools` in one `PUT /grants`, which `accessChangeIn` already
-  takes both of. Before this change, a hand-added server got no tools.
-- The **Check** button lets the person see the tools first. It does not guess which tools to allow.
+Валерий решил, что инструменты записи нужны, потому что через SSH придётся вносить изменения. Поэтому:
 
-### 5. Check: start a server, list its tools, stop it
+- **`CLAUDE.md` (правило «An LLM drafts; a person sends»)** получает третье исключение. Запуск может
+  вызывать `act`-инструменты MCP-сервера, которые `grants.json` его workspace перечисляет в `runTools`.
+  Человек отмечает их в Packs или Access. Ограничения для таких вызовов:
+  - на запуск их не больше 30;
+  - отклонённый или упавший вызов показывается на шаге как проблема (note `p`) со своим текстом и не
+    повторяется, как сейчас у `llmActs`.
+- **Подтверждение у самого ssh-mcp.** По README ssh-mcp спрашивает подтверждение на разрушительные и
+  `sudo`-команды через MCP elicitation. Если клиент этого не умеет, команда отклоняется с
+  `APPROVAL_UNAVAILABLE`; такой отказ ничего не ломает. В v1 консоль на elicitation не отвечает. Получается так:
+  - обычная команда `run-command` выполняется;
+  - разрешение на разрушительную команду и `sudo` задаётся профилем хоста в `config.toml`
+    (`approvalPolicy = "auto"`). Это решение Валерия для каждого хоста;
+  - без такого разрешения команда отклоняется, и на шаге появляется проблема с текстом
+    `APPROVAL_UNAVAILABLE`.
 
-- `server/mcp/check.ts`: `checkServer(config, {timeoutMs: 90_000})`. It starts the server with the same
-  normalized command a run would use (see 6), sends `initialize` and `tools/list`, and stops it. It returns
-  `{ok, tools: [{name, readOnly?, destructive?}], error?}`. `error` is the last 2 KB of stderr, passed
-  through `scrub`. It uses `@modelcontextprotocol/sdk`'s client, which becomes a direct dependency (it is
-  already installed through the agent SDK).
-- `POST /api/ws/<id>/mcp/check {name}` checks a granted server, or a catalog pack with its settings
-  filled in. `{config}` checks an unsaved one. Only the page calls it, never a run. Only one check runs at
-  a time.
-- The first `npx` run downloads the package, which is why the timeout is 90 s.
+  Передавать elicitation на страницу как кнопку подтверждения — открытый вопрос 1.
+- Каждый вызов `act`-инструмента виден в ленте запуска, как и другие вызовы инструментов. Журнал шага
+  получает строку: сколько изменяющих вызовов сделал запуск и каких.
 
-### 6. A Windows-safe command, and failures that show
+### 5. Сервер, добавленный вручную, получает то же
 
-- `mcpServers()` and Cursor's equivalent pass each own stdio server through `stdioCommand()`. On win32,
-  a command found on `PATH` through `PATHEXT` as `.cmd` or `.bat` runs as `cmd.exe /d /s /c <cmd> <args>`.
-  Every other command is left as it is.
-- `sessionEvents` reads `init.mcp_servers`. For a server whose status is not `connected`, it yields one
-  text line in the run's feed: "MCP server ssh did not start (failed)". The step's draft can then name
-  the problem, instead of the run just lacking the tools.
+- В Settings → Access → «Add a server» человек вводит имя и конфиг, затем жмёт **Check**.
+  - Карточка показывает инструменты из `tools/list`.
+  - Инструменты с `readOnlyHint` отмечены, остальные нет; человек может отметить любые.
+  - **Add** сохраняет `mcp` и `runTools` одним `PUT /grants`; `accessChangeIn` уже принимает оба поля.
 
-### 7. The agent and the runs know the catalog
+### 6. Check: запустить сервер, получить инструменты, остановить
 
-- The agent prompt and `request_access`'s description say that an MCP server comes as a catalog pack
-  (`add.packs`), and list the `mcp` packs that are off. The run's `## Sources` already lists packs that
-  are on, with `Server:`.
+- Новый файл `server/mcp/check.ts` с функцией `checkServer(config, {timeoutMs: 90_000})`. Она:
+  - запускает сервер той же командой, что и запуск (см. 7);
+  - выполняет `initialize` и `tools/list`, затем останавливает сервер;
+  - возвращает `{ok, tools: [{name, readOnly?, destructive?}], error?}`, где `error` — последние 2 КБ
+    stderr, прошедшие через `scrub`.
 
-### Docs
+  Клиент берётся из `@modelcontextprotocol/sdk`: пакет уже установлен вместе с SDK агента и становится
+  прямой зависимостью.
+- Маршрут `POST /api/ws/<id>/mcp/check`: `{name}` проверяет выданный сервер или пакет каталога с
+  заполненными настройками, `{config}` — ещё не сохранённый. Вызывает его только страница, запуски — нет.
+  Проверки идут по одной.
+- Тайм-аут 90 секунд: первый запуск `npx` скачивает пакет.
 
-- `docs/pack-authoring.md`: how to write an `mcp` pack (`tools`, `config`, pinning, no secrets, the recorded tools test).
-- `docs/architecture.md`: the Grants and Access rows (tools come with a server; Check).
+### 7. Команда, которая работает на Windows, и видимые отказы
 
-## How it will be proven
+- `mcpServers()` и аналог в Cursor пропускают каждый stdio-сервер через `stdioCommand()`. На win32
+  команда, которая через `PATH`/`PATHEXT` находится как `.cmd` или `.bat`, запускается как
+  `cmd.exe /d /s /c <команда> <аргументы>`. Остальные команды не меняются.
+- `sessionEvents` читает `init.mcp_servers`. Если статус сервера не `connected`, в ленту запуска идёт одна
+  строка, например «MCP-сервер ssh не запустился (failed)». Шаг может назвать причину, а не просто остаться
+  без инструментов.
 
-| Check | Where |
+### 8. Агент и запуски знают про каталог
+
+- В промпте агента и в описании `request_access` сказано, что MCP-сервер подключается как пакет каталога
+  (`add.packs`), и перечислены выключенные mcp-пакеты. Включённые пакеты запуск уже видит в разделе
+  `## Sources` со строкой `Server:`.
+
+### Документы
+
+- `docs/pack-authoring.md`: как писать mcp-пакет. Это `tools` и `config`, закрепление версии, запрет
+  секретов и тест записанного списка инструментов.
+- `docs/architecture.md`: строки Grants и Access (инструменты приходят вместе с сервером, запись
+  отмечается отдельно, Check).
+- `CLAUDE.md`: третье исключение из раздела 4.
+
+## Как это будет доказано
+
+| Проверка | Где |
 |---|---|
-| `checkPack`: `tools` and `config` on an `mcp` pack, a tool in both lists, a missing `read`, a literal secret | `bridge/packs.test.ts` |
-| on and off add and remove `mcp` and exactly the read `runTools`; a tick changes only that pack's tools; `request_access` for packs gets the same result | `catalogView.test.ts`, `access.test.ts` |
-| `${config.x}` fills args, url and env; a list key expands | `bridge/packs.test.ts` |
-| `stdioCommand`: `.cmd` wrapped on win32, `node` and absolute paths untouched, no change off win32 | `llm/sdk.test.ts`, `cursor/sdk.test.ts` |
-| a session's init with a failed server yields one feed line | `llm/sdk.test.ts` |
-| `checkServer` against a fixture stdio server (`.mjs`), a fixture HTTP server, one that exits, and one that hangs (timeout); a secret in stderr is scrubbed | `mcp/check.test.ts` |
-| `packs/ssh` and `packs/filesystem`: manifest valid; `tools` equal the recorded `tools/list` | `node --test "packs/**/test/*.test.mjs"` |
-| `npm test`, `npm run typecheck`, `npm run build && npm run smoke` all green; `core-lock.test.ts` green after sync | console |
+| `checkPack`: `tools` и `config` в mcp-пакете, имя в обоих списках, нет `read`, буквальный секрет | `server/bridge/packs.test.ts` |
+| включение и выключение добавляют и убирают `mcp` и ровно `read`-инструменты; галочка `act` добавляет одно имя и помечена в diff; `request_access` даёт только чтение | `catalogView.test.ts`, `access.test.ts`, `grants.test.ts` |
+| `${config.x}` подставляется в args, url и env; список раскрывается | `server/bridge/packs.test.ts` |
+| `stdioCommand`: `.cmd` оборачивается на win32, `node` и абсолютные пути не трогаются, вне win32 ничего не меняется | `llm/sdk.test.ts`, `cursor/sdk.test.ts` |
+| старт сессии с упавшим сервером даёт одну строку в ленте; отказ `act`-инструмента даёт проблему на шаге без повтора; не больше 30 изменяющих вызовов | `llm/sdk.test.ts`, тесты runner |
+| `checkServer` на тестовом stdio-сервере (`.mjs`), на тестовом HTTP-сервере, на сервере, который завершается, и на сервере, который висит (тайм-аут); секрет в stderr скрыт | `server/mcp/check.test.ts` |
+| `packs/ssh` и `packs/filesystem`: манифест верен, `tools` совпадают с записанным `tools/list` | `node --test "packs/**/test/*.test.mjs"` |
+| `npm test`, `npm run typecheck`, `npm run build && npm run smoke` зелёные; `core-lock.test.ts` зелёный после синхронизации | console |
 
-**Deploy.** Merge to core master. Then `sync-core.mjs --to D:\agents\services\work-console`, commit
-there, and restart the console. These go through the playbook's Merge and Deploy steps, with commands
-approved there.
+**Развёртывание.**
+1. Слияние в master ядра.
+2. `node console/scripts/sync-core.mjs --to D:\agents\services\work-console`, затем коммит там и перезапуск
+   консоли. Это делается в шагах плейбука Merge и Deploy, с подтверждением команд.
 
-**End to end on agents-dev (the SSH check).**
-1. Start a throwaway OpenSSH server in Docker on `127.0.0.1:2222` (Docker 28 runs here), with a
-   throwaway ed25519 key in a temp folder. Nothing on the machine's own sshd changes.
-2. Write an ssh-mcp profile `e2e` for that host and key (where it goes: open question 4).
-3. Settings → Packs on agents-dev → ssh card → **Check**: 14 tools appear, 6 of them read. Take a screenshot.
-4. Turn it on (Valery's click). Show the grants commit's diff: `+ pack ssh`, `+ mcp ssh`, and 6 `+ runTool` lines.
-5. Run a test job whose run calls `list-connections`, then `read-command` with `uname -a` and
-   `cat /etc/os-release`. Quote the output from the run's feed.
-6. Have the run call `run-command`, and show that it is refused.
-7. Stop the server (`docker stop` the container), start a run, and show the "did not start" line, or the
-   tool's own error.
-8. Remove the container, the key and the `e2e` profile. The pack stays on or goes off as Valery decides.
+**Проверка SSH от начала до конца на agents-dev.**
+1. Временный OpenSSH-сервер в Docker на `127.0.0.1:2222` и временный ключ ed25519 во временной папке.
+   Служба sshd машины не меняется.
+2. Отдельный `config.toml` во временной папке с профилем `e2e` на этот хост и ключ, `role = "admin"`,
+   `approvalPolicy = "auto"`. Пакет ssh указывает на этот файл настройкой `--config`, поэтому
+   `%APPDATA%` не трогается.
+3. Settings → Packs в agents-dev → карточка ssh → **Check**. Видно 14 инструментов, из них отмечены 6 на
+   чтение. Снимок экрана.
+4. Валерий включает пакет и отмечает `run-command` и `sftp-upload`. Показываю diff коммитов `grants.json`.
+5. Тестовое задание. Его запуск вызывает:
+   - `list-connections`;
+   - `read-command` с `uname -a` и `cat /etc/os-release`;
+   - `run-command` с `mkdir -p /tmp/ad26 && echo ok > /tmp/ad26/f`;
+   - `sftp-upload` второго файла;
+   - `read-command` с `cat` обоих файлов.
 
-## Open questions (notes)
+   Вывод цитируется из ленты запуска.
+6. Отказ: `privileged-command` (не отмечен) отклоняется консолью, и на шаге появляется проблема.
+7. Сервер остановлен (`docker stop`). Новый запуск показывает строку «не запустился» или ошибку самого инструмента.
+8. Уборка: контейнер, ключ и временный конфиг удаляются. Пакет остаётся включённым с путём к настоящему
+   конфигу Валерия или выключается, как он решит.
 
-1. **Which "core".** I read "connect MCP servers to the agents platform" as the Work Console core: the
-   catalog goes in `packs/`, reaches agents-dev and every console that vendors the core, and its runs get
-   the tools. The Azure platform's own hosted servers (`mcp/*` behind API Management) are not part of this.
-   They could become catalog entries later, as HTTP servers with OAuth. Is that right?
-2. **SSH write tools.** CLAUDE.md says no run changes state in a tool, except the runs' browser and
-   `llmActs`. `run-command` or `sftp-upload` on a remote host changes state there. v1 offers read tools
-   only. Should an `act` tool be tickable later, as a third exception that you grant per workspace
-   (with a CLAUDE.md change)?
-3. **The rest of the catalog.** I propose ssh plus filesystem. Should anything else go in v1? A
-   candidate is git, but `mcp-server-git` needs Python and `uvx`. Every entry has to start with no secret
-   in `grants.json`.
-4. **Where ssh-mcp's config lives.** By default it is `%APPDATA%\ssh-mcp\config.toml`, which is per user
-   and outside the console, and its ACL check passes there. Is it OK for the e2e to add an `e2e` profile
-   to that file and remove it afterwards? Or should the pack point ssh-mcp at a config under the console's
-   home, if the server takes a path flag (not yet checked)? Which real host do you want after the e2e?
-5. **Secrets for future servers.** Should a pack be allowed `${env:NAME}`, filled in from the console's
-   environment when a session starts and never written to `grants.json`? Or should v1 keep only servers
-   that hold their own secrets?
-6. **Downloading on first start.** A pinned `npx -y pkg@ver` fetches from npm the first time it runs.
-   That is our machine reaching a public registry, not a cloud of ours. The alternative is installing the
-   packages into the console's home on Check. Which do you prefer?
+## Открытые вопросы
+
+1. **Подтверждение разрушительных команд.** В v1 разрешение на разрушительные команды и `sudo` задаётся
+   профилем хоста в `config.toml` (`approvalPolicy`); без него ssh-mcp такие команды отклоняет. Нужна ли
+   позже кнопка подтверждения на странице, которая отвечает на elicitation сервера? Это отдельное задание.
+2. **Секреты будущих серверов.** Разрешить пакету `${env:ИМЯ}`, чтобы значение бралось из окружения
+   консоли при старте сессии и никогда не записывалось в `grants.json`? Или в v1 оставить только серверы,
+   которые хранят секреты сами?
+3. **Состав каталога.** Предлагаю ssh и filesystem. Добавить что-то ещё? Кандидат — git, но
+   `mcp-server-git` требует Python и `uvx`.
+4. **Настоящий хост.** Какой хост подключить после проверки, и где будет лежать его `config.toml`
+   (`%APPDATA%\ssh-mcp` или папка консоли)?
+5. **Скачивание при первом запуске.** `npx -y pkg@версия` при первом старте скачивает пакет из npm
+   (публичный реестр, не наше облако). Другой вариант — ставить пакеты в домашнюю папку консоли по кнопке
+   Check. Что лучше?
+6. **Лимит изменяющих вызовов.** Я предложил 30 на запуск. Подходит?
