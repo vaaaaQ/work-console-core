@@ -49,7 +49,7 @@ const ANSWER_MAX = 4000
 /** started: the record says running; until then cancel and interruptAll leave settling to run() */
 type Live = { ac: AbortController; why: 'cancelled' | 'interrupted' | null; reason?: string; drafted: boolean; started: boolean; blocked?: string
   /** the server's question the run waits on, and how its answer reaches the session */
-  cf?: { q: Confirm; answer(a: ElicitOut): void } }
+  cf?: { q: Confirm; answer(a: ElicitOut): Promise<void> } }
 
 const DEVICE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
 /** an artifact name that stays inside its job folder and is no Windows device */
@@ -402,7 +402,7 @@ export class Runner {
       if (bad.length) throw new HttpError(400, 'bad_args', bad.join('; '))
     }
     const r = (await this.get(id))!
-    l.cf!.answer(b.action === 'accept' ? { action: 'accept', content: content as ElicitOut['content'] } : { action: 'decline' })
+    await l.cf!.answer(b.action === 'accept' ? { action: 'accept', content: content as ElicitOut['content'] } : { action: 'decline' })
     await this.jobCmd(r, b.action === 'accept'
       ? { op: 'journal', o: `Confirmed what the MCP server ${q.srv} asked.`, c: q.msg, n: 'the run goes on.', a: 'you' }
       : { op: 'noteAdd', step: r.step, k: 'p', t: `Declined what the MCP server ${q.srv} asked: ${q.msg} Not retried.` })
@@ -543,16 +543,16 @@ export class Runner {
       elicit: (q: ElicitIn, signal: AbortSignal) => new Promise<ElicitOut>((res, rej) => {
         if (l.cf) { rej(new Error('the run already waits on a question')); return }
         const cf: Confirm = { id: randomBytes(6).toString('hex'), ...q, at: new Date().toISOString() }
-        const clear = () => {
+        const clear = async () => {
           signal.removeEventListener('abort', gone)
           if (l.cf?.q.id !== cf.id) return
           l.cf = undefined
           const { cf: _, ...rest } = r!
           r = rest
-          if (!l.why) void this.save(r, false).catch(() => {})
+          if (!l.why) await this.save(r, false).catch(() => {})
         }
-        const gone = () => { clear(); rej(new Error('the question was withdrawn')) }
-        l.cf = { q: cf, answer: (a) => { clear(); res(a) } }
+        const gone = () => { void clear(); rej(new Error('the question was withdrawn')) }
+        l.cf = { q: cf, answer: async (a) => { res(a); await clear() } }
         signal.addEventListener('abort', gone)
         r = { ...r!, cf }
         void this.save(r, false).then(() => { for (const f of this.asking) { try { f({ ...r! }) } catch { /* a notifier never breaks a run */ } } }).catch(() => {})
