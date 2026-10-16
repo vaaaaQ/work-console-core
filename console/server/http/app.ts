@@ -531,6 +531,8 @@ export function createApp(d: Deps) {
       return s.start(r.p[0], typeof b.pb === 'string' && b.pb ? b.pb : undefined, 'page')
     }],
     ['GET', /^\/packs$/, (_r, s) => ({ managed: s.grants !== null, packs: viewsFor(s) })],
+    // Settings' Check: start an MCP server as a run would, list its tools, stop it; the page asks, a run never does
+    ['POST', /^\/mcp\/check$/, async (r, s) => s.mcpCheck(await r.body())],
     ['GET', /^\/packs\/([^/]+)\/candidates$/, async (r, s) => {
       if (!isLocal(s.source)) throw new HttpError(404, 'not_local', `workspace ${s.id} reads no packs on this PC`)
       const c = await s.source.candidates(r.p[0])

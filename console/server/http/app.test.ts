@@ -499,6 +499,23 @@ test("a managed workspace acts only through what its granted packs declare and i
   } finally { await stop() }
 })
 
+test("Check: a granted server or a config not saved yet is started, its tools listed and stopped; an unknown name is 404", async () => {
+  const root = tempDir('root'), fake = join(import.meta.dirname, '..', 'mcp', 'testdata', 'fake-server.mjs')
+  mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })
+  writeFileSync(join(root, 'workspaces', 'acme', 'grants.json'), JSON.stringify({ packs: [], hosts: [], acts: [], mcp: { local: { command: process.execPath, args: [fake, 'ok'] } } }))
+  const { lp, stop } = await setup({ root })
+  try {
+    const g = await call(lp, 'POST', '/api/ws/acme/mcp/check', { body: { name: 'local' } })
+    assert.equal(g.status, 200, g.text)
+    assert.deepEqual([g.json.ok, g.json.tools.map((t: { name: string }) => t.name)], [true, ['list', 'run', 'upload']])
+    const c = await call(lp, 'POST', '/api/ws/acme/mcp/check', { body: { config: { command: process.execPath, args: [fake, 'exit'] } } })
+    assert.deepEqual([c.status, c.json.ok], [200, false]); assert.match(c.json.error, /cannot read the config file/)
+    assert.equal((await call(lp, 'POST', '/api/ws/acme/mcp/check', { body: { name: 'nope' } })).status, 404)
+    assert.equal((await call(lp, 'POST', '/api/ws/acme/mcp/check', { body: {} })).status, 400)
+    assert.equal((await call(lp, 'POST', '/api/ws/acme/mcp/check', { body: { config: { command: 'x', env: { API_TOKEN: 'abc' } } } })).status, 400, 'a literal secret is refused here too')
+  } finally { await stop() }
+})
+
 test('the packs catalog: a managed workspace lists it and a failed Settings write says why and lets go of the restart; an unmanaged one is read-only', async () => {
   const root = tempDir('root')
   mkdirSync(join(root, 'workspaces', 'acme'), { recursive: true })

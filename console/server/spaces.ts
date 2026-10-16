@@ -16,6 +16,9 @@ import { isLocal } from './bridge/local.ts'
 import { browserPlugin } from './browser/plugin.ts'
 import { actTools, viewsFor } from './browser/catalogView.ts'
 import { mcpVars } from './mcp/env.ts'
+import { checkServer, checkTarget, oneCheck } from './mcp/check.ts'
+import type { CheckResult } from './mcp/check.ts'
+import { packConfig, packKind, renderMcp } from './bridge/packs.ts'
 import { catalog, configGrants, grantsFrom, wsPackDirs } from './browser/packs.ts'
 import { accessAddIn, accessRequests, addLines } from './access.ts'
 import type { AccessRequests } from './access.ts'
@@ -77,6 +80,8 @@ export interface Space {
   build: Build
   /** needs-you, less the jobs a QA return pushes about itself */
   onNeedsYou(f: (j: Job) => void): void
+  /** Settings' Check: starts an MCP server as a run would and lists its tools; b = {name} or {config} */
+  mcpCheck(b: Record<string, unknown>): Promise<CheckResult & { name?: string; pack?: { read: string[]; act: string[] } }>
   /** stops loading, the source and the fake gateway */
   close(): Promise<void>
 }
@@ -324,6 +329,21 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
     plugins: [...browserPlugin(source), ...runBrowserPlugin(runBr), ...w.plugins?.({ id, cfg, home: o.home, jobs, source, artifactsDir: o.artifactsDir, http: guardedHttp(grants?.hosts ?? null) }) ?? []],
     // a QA return, a woken blocker or a proposal pushes its own message; the generic one would say it again
     onNeedsYou: (f) => jobs.onNeedsYou((j) => { if (!returns.handling(j.id) && !blockers.handling(j.id) && !proposer.handling(j.id)) f(j) }),
+    // a catalog pack is checked with this workspace's settings put in, so before it is turned on; its tools come back marked read or act
+    mcpCheck: async (b) => {
+      const cat = catalog(packDirs), cfgs = configGrants(cfg).config
+      const packOf = (n: string) => cat.find((e) => e.name === n && e.manifest && packKind(e.manifest) === 'mcp')?.manifest ?? null
+      const t = checkTarget(b, { mcp: mcp ?? {}, pack: (n) => {
+        const m = packOf(n)
+        if (!m) return null
+        const pc = packConfig(m, cfgs[n])
+        if (pc.problems.length) throw new HttpError(400, 'bad_args', `${n}: fill its settings first (${pc.problems.join('; ')})`)
+        return renderMcp(m, pc.config)
+      } })
+      const r = await oneCheck(() => checkServer(t.config, { vars: mcpVars(o.home) }))
+      const m = t.name ? packOf(t.name) : null
+      return { ...r, ...(t.name ? { name: t.name } : {}), ...(m?.tools ? { pack: { read: [...m.tools.read], act: [...(m.tools.act ?? [])] } } : {}) }
+    },
     // the source going away on close is no reason to interrupt the runs
     async close() {
       stopLoading(); offInterrupt(); offAuto(); offReactor(); offKept(); blockers.stop(); replies.stop(); agent?.close(); source.stop()
