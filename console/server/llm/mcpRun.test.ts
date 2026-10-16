@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ACT_CALLS_MAX, elicitHandler, elicitProblems, mcpGuard, serverStatusLine, startServers, stdioCommand } from './mcpRun.ts'
+import { ACT_CALLS_MAX, ELICIT_WAIT, elicitHandler, elicitProblems, mcpGuard, serverStatusLine, startServers, stdioCommand } from './mcpRun.ts'
 import type { ElicitIn } from './mcpRun.ts'
 import { tempDir } from '../testdirs.ts'
 
@@ -136,4 +136,8 @@ test("an answer's fields are checked against the server's flat schema: types, en
   assert.deepEqual(elicitProblems(schema, { ok: true, n: 2, mode: 'a', tags: ['x'] }), [])
   assert.deepEqual(elicitProblems(schema, { n: 1.5, mode: 'c', extra: 1, tags: [1] }), ['ok is required', 'n is not an integer', 'mode is not one of a, b', 'extra is not asked for', 'tags is not a list of strings'])
   assert.deepEqual(elicitProblems(undefined, {}), [])
+})
+
+test("a server's question waits 10 minutes, as long as the catalog's ssh server waits for its answer", () => {
+  assert.equal(ELICIT_WAIT, 10 * 60_000)
 })

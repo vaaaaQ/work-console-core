@@ -29,3 +29,13 @@ test("the form's values as the answer's content: numbers as numbers, an empty op
   assert.deepEqual(confirmContent(f, { ok: true, why: '', mode: 'later', n: '3' }), { content: { ok: true, mode: 'later', n: 3 }, missing: [] })
   assert.deepEqual(confirmContent(f, { ok: false, why: 'x', mode: '', n: 'abc' }), { content: { ok: false, why: 'x' }, missing: ['mode', 'Times'] })
 })
+
+test('an optional checkbox the person did not touch is left out: a server may read an explicit false as no', () => {
+  // a catalog server's form: an optional boolean, and Accept with confirm: false is its refusal
+  const f = confirmFields({ type: 'object', properties: { confirm: { type: 'boolean', title: 'Approve this command?' } } })
+  assert.deepEqual(confirmContent(f, {}), { content: {}, missing: [] })
+  assert.deepEqual(confirmContent(f, { confirm: true }), { content: { confirm: true }, missing: [] })
+  assert.deepEqual(confirmContent(f, { confirm: false }), { content: { confirm: false }, missing: [] })
+  // a required one always goes, with its default when untouched
+  assert.deepEqual(confirmContent(confirmFields({ type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] }), {}), { content: { ok: false }, missing: [] })
+})

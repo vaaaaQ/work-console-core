@@ -316,7 +316,7 @@ live folder and restarts. Grants change only through a person's approval.*
 - **Confirmation** (MCP elicitation). A server's question during a run, such as ssh-mcp asking before a destructive
   command, waits on the run record as `cf {id, srv, msg, schema, title, description, at}`: a Confirm card on the step
   and in Approvals, and a push. `POST /api/runs/<id>/elicit {cf, action: accept|decline, content}` answers it; the
-  fields are checked against its flat schema, and a late, repeated or other answer is 409. A decline, 15 minutes
+  fields are checked against its flat schema, and a late, repeated or other answer is 409. A decline, 10 minutes
   without an answer, or a question asking to open a link is declined with a problem note; ending the run cancels it.
   A Confirm goes in the journal. A Cursor run has no Confirm yet: whether its CLI passes such a question on is not
   checked, and a server that gets no answer declines by itself.

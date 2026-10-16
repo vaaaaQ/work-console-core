@@ -33,7 +33,8 @@ export function confirmContent(fields: ConfirmField[], values: ConfirmValues): {
   const content: Record<string, string | number | boolean> = {}, missing: string[] = []
   for (const f of fields) {
     const v = values[f.key] ?? f.value
-    if (f.kind === 'boolean') { content[f.key] = v === true; continue }
+    // an optional checkbox goes only when touched: a server may read an explicit false as a no to the whole question
+    if (f.kind === 'boolean') { if (f.required || f.key in values) content[f.key] = v === true; continue }
     const s = String(v).trim()
     if (!s) { if (f.required) missing.push(f.label); continue }
     if (f.kind === 'number') {

@@ -9,8 +9,9 @@ import { resolveEnv } from '../mcp/env.ts'
    (MCP elicitation) put to the person. Claude's and Cursor's sessions both use it. */
 
 export const ACT_CALLS_MAX = 30
-/** how long a server's question waits for the person */
-export const ELICIT_WAIT = 15 * 60_000
+/** how long a server's question waits for the person: the catalog's ssh server gives up after 10 minutes, so an answer
+    later than that would reach nobody */
+export const ELICIT_WAIT = 10 * 60_000
 
 type Env = Record<string, string | undefined>
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)

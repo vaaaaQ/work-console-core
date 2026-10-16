@@ -11,7 +11,7 @@ import { Ic } from './Icon.tsx'
 import { toast } from './toasts.tsx'
 
 /* An MCP server's question a run waits on (elicitation): its text word for word, the form its schema asks for, and
-   Confirm or Decline. Nothing goes back to the server until a button is pressed; no answer in 15 minutes declines it. */
+   Confirm or Decline. Nothing goes back to the server until a button is pressed; no answer in 10 minutes declines it. */
 
 export function Confirm({ run, head }: { run: RunRec; head?: React.ReactNode }) {
   const cf = run.cf!
