@@ -1,7 +1,7 @@
 import type { Grants } from '../grants.ts'
 import type { Applied, Ops } from '../agent/ops.ts'
 import type { Source, WsConfig } from '../workspace.ts'
-import { packConfig, packKind, renderPack } from '../bridge/packs.ts'
+import { packConfig, packKind, renderMcp, renderPack } from '../bridge/packs.ts'
 import type { PackManifest } from '../bridge/packs.ts'
 import { isLocal } from '../bridge/local.ts'
 import type { PackState } from '../bridge/local.ts'
@@ -12,7 +12,7 @@ import type { PackChange, PackView } from '../../src/model/packs.ts'
 
 /* What Settings, the run prompt and the agent see of a workspace's packs, and the one way Settings changes them. */
 
-export type GrantsLike = { packs: readonly string[]; acts?: readonly string[]; llmActs?: readonly string[]; scopes?: Readonly<Record<string, readonly string[]>> }
+export type GrantsLike = { packs: readonly string[]; runTools?: readonly string[]; acts?: readonly string[]; llmActs?: readonly string[]; scopes?: Readonly<Record<string, readonly string[]>> }
 export type StatusIn = { loaded: Record<string, string>; states: Record<string, PackState> } | null
 const RANK = ['signin_required', 'source_unavailable', 'source_error', 'rate_limited', 'warming_up']
 
@@ -36,6 +36,20 @@ export function mcpLine(c: Record<string, unknown> | undefined): string {
   return [typeof c?.command === 'string' ? c.command : '', ...args].filter(Boolean).join(' ')
 }
 
+/** an mcp pack's tools as runs name them: mcp__<pack>__<tool> */
+export const mcpTool = (pack: string, t: string) => `mcp__${pack}__${t}`
+/** the act tools of every mcp pack in the catalog, by the name a run calls */
+export function actTools(cat: readonly CatalogEntry[]): Set<string> {
+  return new Set(cat.flatMap((e) => (e.manifest && packKind(e.manifest) === 'mcp' ? (e.manifest.tools?.act ?? []).map((t) => mcpTool(e.name, t)) : [])))
+}
+/** an mcp pack's tools, read ones first, each with whether the grants tick it */
+function toolViews(e: CatalogEntry, g: GrantsLike): PackView['tools'] {
+  const t = e.manifest?.tools
+  if (!t || packKind(e.manifest!) !== 'mcp') return undefined
+  const has = new Set(g.runTools ?? [])
+  return [...t.read.map((name) => ({ name, act: false })), ...(t.act ?? []).map((name) => ({ name, act: true }))].map((x) => ({ ...x, on: has.has(mcpTool(e.name, x.name)) }))
+}
+
 export function packViews(cat: CatalogEntry[], g: GrantsLike, st: StatusIn, cfgs: Record<string, Record<string, unknown>> = {}): PackView[] {
   return cat.map((e, i) => {
     // a workspace copy of a core name is never the one that is on; a granted pack that fails to load is, with state error
@@ -45,6 +59,11 @@ export function packViews(cat: CatalogEntry[], g: GrantsLike, st: StatusIn, cfgs
     // a workspace pack's hosts are granted with it: shown before the click; none when its settings do not render
     let hosts: string[] | undefined
     if (m && !e.core) try { hosts = hostsOrThrow(e, cfgs) } catch { /* turn-on is refused then */ }
+    const tools = toolViews(e, g)
+    const config = m?.config && Object.keys(m.config).length ? Object.entries(m.config).map(([key, c]) => {
+      const v = cfgs[e.name]?.[key]
+      return { key, about: c.about, ...(c.required ? { required: true } : {}), ...(typeof v === 'string' || Array.isArray(v) ? { value: Array.isArray(v) ? v.map(String) : v } : {}) }
+    }) : undefined
     return {
       name: e.name, title: m?.title ?? e.name, kind: m ? packKind(m) : 'browser', about: m?.about ?? '', ...(m?.scopeAbout ? { scopeAbout: m.scopeAbout } : {}),
       listed: e.listed, on, concepts: Object.keys(m?.concepts ?? {}), actions,
@@ -52,6 +71,7 @@ export function packViews(cat: CatalogEntry[], g: GrantsLike, st: StatusIn, cfgs
       scopes: (g.scopes?.[e.name] ?? []).map((id) => (names[id] ? { id, name: names[id] } : { id })),
       acts: actions.filter((a) => (g.acts ?? actions).includes(a)), llmActs: actions.filter((a) => (g.llmActs ?? []).includes(a)),
       ...stateOf(e, on, st), ...(e.problem ? { problem: e.problem } : {}), ...(m && packKind(m) === 'mcp' ? { mcp: mcpLine(m.mcp) } : {}), ...(hosts?.length ? { hosts } : {}), guide: e.guide,
+      ...(tools ? { tools } : {}), ...(config ? { config } : {}),
     }
   })
 }
@@ -89,20 +109,31 @@ export function applyPackChange(g: Grants, e: CatalogEntry, ch: PackChange, cat:
   const strip = (x: Grants): Grants => {
     const acts = x.acts.filter((a) => !mine.includes(a)), llm = (x.llmActs ?? []).filter((a) => !mine.includes(a))
     const { [name]: _s, ...scopes } = x.scopes ?? {}, { [name]: _m, ...mcp } = x.mcp
-    const out: Grants = { ...x, packs: x.packs.filter((p) => p !== name), acts, mcp }
+    const pre = mcpTool(name, '')
+    const out: Grants = { ...x, packs: x.packs.filter((p) => p !== name), acts, mcp, runTools: x.runTools.filter((t) => t !== `mcp__${name}` && !t.startsWith(pre)) }
     if (llm.length) out.llmActs = llm; else delete out.llmActs
     if (Object.keys(scopes).length) out.scopes = scopes; else delete out.scopes
     return out
   }
   if (ch.on === true && !n.packs.includes(name)) {
     n = { ...n, packs: [...n.packs, name], acts: uniq([...n.acts, ...mine]) }
-    if (packKind(m) === 'mcp') n.mcp = { ...n.mcp, [name]: structuredClone(m.mcp!) }
+    if (packKind(m) === 'mcp') {
+      const { config, problems } = packConfig(m as PackManifest, cfgs[name])
+      let server: Record<string, unknown> | null = null
+      try { if (!problems.length) server = renderMcp(m as PackManifest, config) } catch (x) { problems.push((x as Error).message) }
+      if (!server) throw bad(`${name}: fill its settings first (${problems.join('; ')})`)
+      n.mcp = { ...n.mcp, [name]: server }
+      // read tools come with the server; act ones wait for the person's tick. A pack that names no tools grants the whole server, as before
+      const read = m.tools ? m.tools.read.map((t) => mcpTool(name, t)) : [`mcp__${name}`]
+      n.runTools = uniq([...n.runTools, ...read])
+      if (m.tools) why.push(`turn on ${name}; tools of ${name}: ${m.tools.read.join(', ') || 'none'}`)
+    }
+    if (!why.length) why.push(`turn on ${name}`)
     if (!e.core) {
       let hs: string[]
       try { hs = hostsOrThrow(e, cfgs) } catch (x) { throw bad(`${name}: fill its settings first (${(x as Error).message})`) }
       n.hosts = uniq([...n.hosts, ...hs])
     }
-    why.push(`turn on ${name}`)
   }
   if (ch.on === false && n.packs.includes(name)) {
     n = strip(n)
@@ -114,7 +145,17 @@ export function applyPackChange(g: Grants, e: CatalogEntry, ch: PackChange, cat:
     why.push(`turn off ${name}`)
   }
   const isOn = n.packs.includes(name)
-  if ((ch.scopes || ch.acts || ch.llmActs) && !isOn) throw bad(`turn ${name} on first`)
+  if ((ch.scopes || ch.acts || ch.llmActs || ch.tools) && !isOn) throw bad(`turn ${name} on first`)
+  if (ch.tools) {
+    const t = m.tools
+    if (!t) throw bad(`${name} names no tools; grant them in Access`)
+    const all = [...t.read, ...(t.act ?? [])], picked = uniq(ch.tools)
+    for (const x of picked) if (!all.includes(x)) throw bad(`${x} is not a tool of ${name}`)
+    const pre = mcpTool(name, '')
+    n.runTools = [...n.runTools.filter((x) => !x.startsWith(pre)), ...all.filter((x) => picked.includes(x)).map((x) => mcpTool(name, x))]
+    const acting = all.filter((x) => picked.includes(x) && (t.act ?? []).includes(x))
+    why.push(`tools of ${name}: ${all.filter((x) => picked.includes(x)).join(', ') || 'none'}${acting.length ? ` (changes things: ${acting.join(', ')})` : ''}`)
+  }
   if (ch.scopes) {
     const ids = uniq(ch.scopes), { [name]: _, ...rest } = n.scopes ?? {}
     n.scopes = ids.length ? { ...rest, [name]: ids } : rest

@@ -79,3 +79,20 @@ test('requests: one file per workspace, the same add joins the waiting one, at m
   assert.equal(seen.at(-1), `|${id}`)
   assert.ok(existsSync(f)); assert.equal(JSON.parse(readFileSync(f, 'utf8')).length, 19)
 })
+
+const shell = () => {
+  const base = cat().find((e) => e.name === 'talk')!
+  return { ...base, name: 'shell', manifest: { ...base.manifest!, name: 'shell', kind: 'mcp' as const, tabs: {}, concepts: {}, actions: {}, mcp: { command: 'npx', args: ['shell-mcp@1'] }, tools: { read: ['list'], act: ['run'] } } }
+}
+
+test("a run's ask for an mcp pack gets its read tools only; its lines mark a tool that changes things", () => {
+  const c = [...cat(), shell()]
+  const n = applyAdd(g0, { packs: ['shell'] }, c)!
+  assert.deepEqual([n.mcp, n.runTools], [{ shell: { command: 'npx', args: ['shell-mcp@1'] } }, ['Read', 'mcp__shell__list']])
+  assert.deepEqual(addLines(g0, { runTools: ['mcp__shell__run'] }, c), ['+ runTool mcp__shell__run (changes things)'])
+})
+
+test('Access refuses a literal secret in a server\'s env or headers and says to write ${env:…}', () => {
+  assert.throws(() => accessChangeIn({ mcp: { box: { command: 'x', env: { API_TOKEN: 'abc' } } } }), /mcp\.box\.env\.API_TOKEN: looks like a secret; write \$\{env:API_TOKEN\}/)
+  assert.deepEqual(accessChangeIn({ mcp: { box: { command: 'x', env: { API_TOKEN: '${env:API_TOKEN}' } } } }).mcp, { box: { command: 'x', env: { API_TOKEN: '${env:API_TOKEN}' } } })
+})

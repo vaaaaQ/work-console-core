@@ -12,5 +12,10 @@ export interface PackView {
   /** a workspace pack: the hosts turning it on grants, with its settings put in; absent when none or its settings do not render */
   hosts?: string[]
   guide: string
+  /** an mcp pack's tools: read ones only read, act ones change things; on = the grants let runs call it */
+  tools?: { name: string; act: boolean; on: boolean }[]
+  /** the settings the pack takes from the workspace's config (packConfig.<pack>), with the value given there */
+  config?: { key: string; about: string; required?: boolean; value?: string | string[] }[]
 }
-export interface PackChange { on?: boolean; scopes?: string[]; acts?: string[]; llmActs?: string[] }
+/** tools = an mcp pack's tools runs may call, by bare name: the whole ticked set */
+export interface PackChange { on?: boolean; scopes?: string[]; acts?: string[]; llmActs?: string[]; tools?: string[] }

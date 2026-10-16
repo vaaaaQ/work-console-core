@@ -5,7 +5,8 @@ import type { AccessAdd, AccessChange, AccessRequest } from '../src/model/access
 import { grantsDiff, normGrants } from './grants.ts'
 import type { Grants } from './grants.ts'
 import { HttpError } from './events.ts'
-import { applyPackChange } from './browser/catalogView.ts'
+import { actTools, applyPackChange } from './browser/catalogView.ts'
+import { literalSecrets } from './mcp/env.ts'
 import type { CatalogEntry } from './browser/packs.ts'
 
 /* Settings → Access: hosts, runTools, MCP servers and the runs' browser, each change one grants.json commit as in Packs.
@@ -27,6 +28,8 @@ export function accessChangeIn(b: Record<string, unknown>): AccessChange {
   if (b.mcp !== undefined) {
     if (!b.mcp || typeof b.mcp !== 'object' || Array.isArray(b.mcp)) throw bad('mcp is an object of servers by name')
     for (const [n, c] of Object.entries(b.mcp)) if (!c || typeof c !== 'object' || Array.isArray(c)) throw bad(`mcp ${n} must be an object (command and args, or url)`)
+    const secrets = Object.entries(b.mcp).flatMap(([n, c]) => literalSecrets(c, `mcp.${n}`))
+    if (secrets.length) throw bad(secrets.join('; '))
     ch.mcp = b.mcp as Record<string, unknown>
   }
   if (b.browser !== undefined) {
@@ -93,7 +96,7 @@ export function applyAdd(g: Grants, add: AccessAdd, cat: CatalogEntry[], cfgs: R
 
 /** what a request adds, one line each, as the grants' own diff says it */
 export function addLines(g: Grants, add: AccessAdd, cat: CatalogEntry[], cfgs?: Record<string, Record<string, unknown>>): string[] {
-  try { const n = applyAdd(g, add, cat, cfgs); return n ? grantsDiff(g, n) : [] } catch (e) { return [`! ${(e as Error).message}`] }
+  try { const n = applyAdd(g, add, cat, cfgs); return n ? grantsDiff(g, n, actTools(cat)) : [] } catch (e) { return [`! ${(e as Error).message}`] }
 }
 
 const MAX = 20

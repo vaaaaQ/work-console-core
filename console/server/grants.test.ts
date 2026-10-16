@@ -107,3 +107,9 @@ test('guardedHttp reaches granted hosts only, every redirect hop included; null 
   assert.ok(!seen.some((s) => s.includes('evil')))
   assert.equal(await (await guardedHttp(null, f)('https://evil.example/')).text(), 'ok')
 })
+
+test('grantsDiff marks a runTool that changes things when told which do', () => {
+  const a = { ...EMPTY_GRANTS }, b = { ...EMPTY_GRANTS, runTools: ['mcp__s__list', 'mcp__s__run'] }
+  assert.deepEqual(grantsDiff(a, b, new Set(['mcp__s__run'])), ['+ runTool mcp__s__list', '+ runTool mcp__s__run (changes things)'])
+  assert.deepEqual(grantsDiff(b, a, new Set(['mcp__s__run'])), ['- runTool mcp__s__list', '- runTool mcp__s__run (changes things)'])
+})

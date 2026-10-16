@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { catalog } from './packs.ts'
-import { applyPackChange, packViews, settingsWrite } from './catalogView.ts'
+import { actTools, applyPackChange, packViews, settingsWrite } from './catalogView.ts'
 import { EMPTY_GRANTS } from '../grants.ts'
 import type { Grants } from '../grants.ts'
 
@@ -110,4 +110,56 @@ test("views: a workspace pack shows the hosts a click grants, with its settings 
   assert.equal(host([ws]), undefined, 'its settings do not render')
   assert.equal(host([{ ...ws, core: true }], { talk: { site: 'a' } }), undefined)
   assert.equal(host([{ ...ws, manifest: { ...m, kind: 'mcp' as const, mcp: { url: 'https://x.example/mcp' } } }]), undefined)
+})
+
+const shellEntry = (core = true) => {
+  const base = entry('talk')
+  const manifest = {
+    ...base.manifest!, name: 'shell', kind: 'mcp' as const, tabs: {}, concepts: {}, actions: {}, hosts: undefined,
+    mcp: { command: 'npx', args: ['-y', 'shell-mcp@1.0.0', '--config=${config.file}'], env: { K: '${env:SHELL_KEY}' } },
+    config: { file: { about: 'its config file' }, mode: { about: 'a mode', required: true, enum: ['a', 'b'] } },
+    tools: { read: ['list', 'read'], act: ['run', 'upload'] },
+  }
+  return { ...base, name: 'shell', core, manifest }
+}
+const T = (t: string) => `mcp__shell__${t}`
+
+test('turning an mcp pack on grants its server with the settings put in and its read tools; act tools wait for a tick', () => {
+  const e = shellEntry()
+  assert.throws(() => applyPackChange(EMPTY_GRANTS, e, { on: true }, [e], {}), /shell: fill its settings first \(config\.mode: required\)/)
+  const up = applyPackChange({ ...EMPTY_GRANTS, runTools: ['Read'] }, e, { on: true }, [e], { shell: { file: 'C:/s/config.toml', mode: 'a' } })!
+  assert.deepEqual(up.grants.mcp, { shell: { command: 'npx', args: ['-y', 'shell-mcp@1.0.0', '--config=C:/s/config.toml'], env: { K: '${env:SHELL_KEY}' } } })
+  assert.deepEqual(up.grants.runTools, ['Read', T('list'), T('read')])
+  assert.equal(up.reason, 'turn on shell; tools of shell: list, read (Settings)')
+  // an act tool is one more tick: its own commit, its line marked as one that changes things
+  const tick = applyPackChange(up.grants, e, { tools: ['list', 'read', 'run'] }, [e])!
+  assert.deepEqual(tick.grants.runTools, ['Read', T('list'), T('read'), T('run')])
+  assert.equal(tick.reason, 'tools of shell: list, read, run (changes things: run) (Settings)')
+  assert.throws(() => applyPackChange(up.grants, e, { tools: ['rm'] }, [e]), /rm is not a tool of shell/)
+  assert.throws(() => applyPackChange(EMPTY_GRANTS, e, { tools: ['list'] }, [e]), /turn shell on first/)
+  // unticking a read tool takes it away too
+  assert.deepEqual(applyPackChange(tick.grants, e, { tools: ['run'] }, [e])!.grants.runTools, ['Read', T('run')])
+  // off: the server and every tool of it go, other tools stay
+  const down = applyPackChange(tick.grants, e, { on: false }, [e])!
+  assert.deepEqual([down.grants.mcp, down.grants.runTools, down.grants.packs], [{}, ['Read'], []])
+})
+
+test('an mcp pack without a tools list grants every tool of its server on turn-on, as before', () => {
+  const e = shellEntry(), m = { ...e.manifest, tools: undefined, config: undefined, mcp: { command: 'node', args: ['s.mjs'] } }
+  const up = applyPackChange(EMPTY_GRANTS, { ...e, manifest: m }, { on: true }, [e])!
+  assert.deepEqual(up.grants.runTools, ['mcp__shell'])
+})
+
+test("views: an mcp pack's tools, each read or act and whether it is ticked", () => {
+  const e = shellEntry(), g = { ...EMPTY_GRANTS, packs: ['shell'], runTools: [T('list'), T('run')] }
+  const [v] = packViews([e], g, null)
+  assert.deepEqual(v.tools, [
+    { name: 'list', act: false, on: true }, { name: 'read', act: false, on: false },
+    { name: 'run', act: true, on: true }, { name: 'upload', act: true, on: false },
+  ])
+  assert.deepEqual(v.config?.map((c) => c.key), ['file', 'mode'])
+})
+
+test('actTools names every act tool of every mcp pack, for diff lines that mark them', () => {
+  assert.deepEqual([...actTools([shellEntry(), entry('talk')])], [T('run'), T('upload')])
 })

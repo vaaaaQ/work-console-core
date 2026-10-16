@@ -58,12 +58,13 @@ export function writeGrants(root: string, id: string, g: Grants) {
 }
 
 const ONE = { packs: 'pack', hosts: 'host', acts: 'act', runTools: 'runTool' } as const
-/** what a change does, one line each: + added, - removed, ~ an MCP server changed */
-export function grantsDiff(a: Grants, b: Grants): string[] {
+/** what a change does, one line each: + added, - removed, ~ an MCP server changed; acting = the runTools that change things, marked so */
+export function grantsDiff(a: Grants, b: Grants, acting: ReadonlySet<string> = new Set()): string[] {
   const out: string[] = []
+  const mark = (k: string, x: string) => (k === 'runTools' && acting.has(x) ? ' (changes things)' : '')
   for (const k of LISTS) {
-    for (const x of b[k]) if (!a[k].includes(x)) out.push(`+ ${ONE[k]} ${x}`)
-    for (const x of a[k]) if (!b[k].includes(x)) out.push(`- ${ONE[k]} ${x}`)
+    for (const x of b[k]) if (!a[k].includes(x)) out.push(`+ ${ONE[k]} ${x}${mark(k, x)}`)
+    for (const x of a[k]) if (!b[k].includes(x)) out.push(`- ${ONE[k]} ${x}${mark(k, x)}`)
   }
   for (const n of Object.keys(b.mcp)) {
     if (!Object.hasOwn(a.mcp, n)) out.push(`+ mcp ${n}`)

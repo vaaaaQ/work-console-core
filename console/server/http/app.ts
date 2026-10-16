@@ -9,7 +9,7 @@ import type { Cmd, Job, Playbook, RunIntent, RunRec, Tpl } from '../../src/model
 import { chatsOfPack, resolveAct } from '../bridge/actions.ts'
 import { isLocal } from '../bridge/local.ts'
 import { catalog, configGrants } from '../browser/packs.ts'
-import { applyPackChange, settingsWrite, viewsFor } from '../browser/catalogView.ts'
+import { actTools, applyPackChange, settingsWrite, viewsFor } from '../browser/catalogView.ts'
 import { accessChangeIn, addLines, applyAccessChange, applyAdd } from '../access.ts'
 import { grantsDiff } from '../grants.ts'
 import type { Ops } from '../agent/ops.ts'
@@ -538,13 +538,13 @@ export function createApp(d: Deps) {
       const b = await r.body()
       const ch: PackChange = {}
       if (b.on !== undefined) { if (typeof b.on !== 'boolean') throw new HttpError(400, 'bad_args', 'on is true or false'); ch.on = b.on }
-      for (const k of ['scopes', 'acts', 'llmActs'] as const) {
+      for (const k of ['scopes', 'acts', 'llmActs', 'tools'] as const) {
         const v = b[k]
         if (v === undefined) continue
         if (!Array.isArray(v) || !v.every((x) => typeof x === 'string')) throw new HttpError(400, 'bad_args', `${k} is a list of names`)
         ch[k] = v
       }
-      if (!Object.keys(ch).length) throw new HttpError(400, 'bad_args', 'send on, scopes, acts or llmActs')
+      if (!Object.keys(ch).length) throw new HttpError(400, 'bad_args', 'send on, scopes, acts, llmActs or tools')
       const next = applyPackChange(s.grants, e, ch, cat, configGrants(s.cfg).config)
       // restart: whether the console restarts to apply it; false = the grants already held the change
       if (!next) return { managed: true, restart: false, packs: viewsFor(s) }
@@ -576,13 +576,13 @@ export function createApp(d: Deps) {
         await tellSteps(s, rq.by, `Access request rejected: ${why}`, `asked for ${rq.lines.join('; ') || 'access'}`, 'do the step without it, or say in the draft what is missing')
         return { ...accessView(s), restart: false }
       }
-      const next = applyAdd(s.grants!, rq.add, catalog(s.packDirs), configGrants(s.cfg).config)
+      const cat = catalog(s.packDirs), next = applyAdd(s.grants!, rq.add, cat, configGrants(s.cfg).config)
       if (!next) {
         s.requests!.remove(rq.id)
         await tellSteps(s, rq.by, 'Access request: the grants already hold it.', '-', 'run the step again')
         return { ...accessView(s), restart: false }
       }
-      const lines = grantsDiff(s.grants!, next)
+      const lines = grantsDiff(s.grants!, next, actTools(cat))
       const w = await settingsWrite(gw, s.id, next, `${lines.join('; ')}: ${rq.reason} (asked by ${rq.by.join(', ')})`)
       r.res.once('finish', w.done); r.res.once('close', w.done)
       if (!w.applied.ok) { w.done(); throw new HttpError(409, 'grants_failed', [w.applied.error, ...(w.applied.failures ?? [])].join('\n')) }
