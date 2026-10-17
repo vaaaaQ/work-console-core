@@ -109,6 +109,7 @@ turning it on writes its server into `grants.mcp.<pack>` and lets runs call its 
 | Field | Meaning |
 |---|---|
 | `mcp` | The server: `command` and `args` (stdio) or `type: "http"` and `url`, with `env` or `headers`. Pin the package's exact version (`pkg@1.2.3`); `npx -y` downloads it on the first start |
+| `mcp.roots` | Only `false`, only on a stdio server. Claude Code offers a run's work dir to every server as an MCP root, and a server that honours roots (the reference filesystem one does, with no flag to stop it) puts them in place of the folders its args name. With `roots: false` the server starts through `console/server/mcp/noroots.mjs`, which takes the roots capability out of `initialize` and drops roots-changed notifications; runs and Check both start it so. The key never reaches a session |
 | `tools.read` | The tools that only read. Turning the pack on grants each as `mcp__<pack>__<tool>` in `runTools` |
 | `tools.act` | The tools that change something. Never granted with the pack: the person ticks each in Settings → Packs, one commit each, and the diff marks it `(changes things)`. A name in both lists is refused |
 | `config` | Settings as for a browser pack; `${config.<key>}` is put into `mcp.args`, `mcp.url` and `mcp.env` when the pack is turned on. A list setting must be a whole arg and becomes several; an arg naming an empty optional setting is dropped |

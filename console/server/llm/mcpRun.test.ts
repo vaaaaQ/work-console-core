@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ACT_CALLS_MAX, ELICIT_WAIT, elicitHandler, elicitProblems, mcpGuard, serverStatusLine, startServers, stdioCommand } from './mcpRun.ts'
+import { ACT_CALLS_MAX, ELICIT_WAIT, NOROOTS, elicitHandler, elicitProblems, mcpGuard, serverStatusLine, startServers, stdioCommand } from './mcpRun.ts'
 import type { ElicitIn } from './mcpRun.ts'
 import { tempDir } from '../testdirs.ts'
 
@@ -35,6 +35,19 @@ test("startServers: each workspace server with its ${env:} put in and its comman
   assert.deepEqual(r.servers, { ssh: { command: 'cmd.exe', args: ['/d', '/s', '/c', 'npx', '-y', 'shell-mcp@1', '--key=C:/keys/id_e2e'] } })
   assert.deepEqual(r.lines, ["The MCP server api is not started for this run: no variable API_TOKEN (set it in the console's environment or in mcp.env)"])
   assert.deepEqual(r.secrets, ['C:/keys/id_e2e'])
+})
+
+test("startServers: a server whose config says roots: false starts through the roots wrapper, after its command is fit to the platform; the key never reaches the session", () => {
+  const d = binDir(), env = { PATH: d, PATHEXT: '.EXE;.CMD', ComSpec: 'cmd.exe' }
+  const r = startServers({
+    folders: { command: 'npx', args: ['-y', 'fs@1', 'C:/data'], roots: false },
+    plain: { command: 'tool', args: ['x'], roots: true },
+    web: { type: 'http', url: 'https://w.example/mcp', roots: false },
+  }, {}, 'win32', env)
+  assert.deepEqual(r.servers.folders, { command: process.execPath, args: [NOROOTS, 'cmd.exe', '/d', '/s', '/c', 'npx', '-y', 'fs@1', 'C:/data'] })
+  assert.deepEqual(r.servers.plain, { command: 'tool', args: ['x'] })
+  assert.deepEqual(r.servers.web, { type: 'http', url: 'https://w.example/mcp' })
+  assert.deepEqual(startServers({ f: { command: 'srv', args: ['/data'], roots: false } }, {}, 'linux', env).servers.f, { command: process.execPath, args: [NOROOTS, 'srv', '/data'] })
 })
 
 test("a session's start names each MCP server that did not connect, once; connected and pending ones say nothing", () => {

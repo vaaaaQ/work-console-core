@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { killTree } from '../llm/cursor/cli.ts'
-import { stdioCommand } from '../llm/mcpRun.ts'
+import { spawnConfig } from '../llm/mcpRun.ts'
 import { HttpError } from '../events.ts'
 import { literalSecrets, resolveEnv, scrubSecrets } from './env.ts'
 
@@ -132,7 +132,7 @@ export async function checkServer(config: Record<string, unknown>, o: { vars: Re
   const scrub = (t: string) => scrubSecrets(t, secrets), wait = o.timeoutMs ?? CHECK_WAIT
   const type = c.type ?? (typeof c.command === 'string' ? 'stdio' : undefined)
   if (type === 'stdio' && typeof c.command === 'string') {
-    const r = await stdio(stdioCommand(c), wait, scrub)
+    const r = await stdio(spawnConfig(c), wait, scrub)
     return r.ok ? r : { ok: false, error: r.error + npxHint(c, r.error) }
   }
   if (type === 'http' && typeof c.url === 'string') return http(c, wait, scrub)

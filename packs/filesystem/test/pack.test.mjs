@@ -27,3 +27,7 @@ test('the folders it serves are a required list setting, each one an arg', () =>
   assert.equal(pack.mcp.args.at(-1), '${config.roots}');
   assert.ok(readFileSync(new URL('../guide.md', import.meta.url), 'utf8').length <= 2000);
 });
+
+test("the server never hears of a run's MCP roots: it would put them in place of the folders set here", () => {
+  assert.equal(pack.mcp.roots, false);
+});

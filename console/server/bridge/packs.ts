@@ -70,6 +70,10 @@ export function checkPack(p: unknown, hasSchema: (key: string) => boolean = () =
     const config = configProblems(p, out)
     if (isObj(p.mcp)) mcpTemplates(p.mcp, config, out)
     if (isObj(p.mcp)) out.push(...literalSecrets(p.mcp))
+    if (isObj(p.mcp) && p.mcp.roots !== undefined) {
+      if (p.mcp.roots !== false) out.push("mcp.roots: only false, which hides the client's MCP roots from the server")
+      else if (typeof p.mcp.command !== 'string' || (p.mcp.type !== undefined && p.mcp.type !== 'stdio')) out.push("mcp.roots: only a command (stdio) server's roots can be hidden")
+    }
     if (p.tools !== undefined) toolsProblems(p.tools, out)
     return out
   }

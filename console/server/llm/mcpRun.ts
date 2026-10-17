@@ -37,6 +37,19 @@ export function stdioCommand<T extends Record<string, unknown>>(c: T, platform: 
   return { ...c, command: env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', c.command, ...args] }
 }
 
+/** the wrapper a roots: false server starts through, so it never hears of a client's MCP roots */
+export const NOROOTS = join(import.meta.dirname, '..', 'mcp', 'noroots.mjs')
+
+/** a server's config as it is spawned: its command fit to the platform, and with roots: false (the console's own key, which
+    no client gets) a stdio server started through NOROOTS by this node. Claude Code offers a run's work dir as an MCP root,
+    and a server such as the filesystem one puts the roots it hears in place of the folders its args name */
+export function spawnConfig(c: Record<string, unknown>, platform: NodeJS.Platform = process.platform, env: Env = process.env): Record<string, unknown> {
+  const { roots, ...rest } = stdioCommand(c, platform, env)
+  if (roots !== false || typeof rest.command !== 'string' || (rest.type !== undefined && rest.type !== 'stdio')) return rest
+  const args = Array.isArray(rest.args) ? rest.args.map(String) : []
+  return { ...rest, command: process.execPath, args: [NOROOTS, rest.command, ...args] }
+}
+
 /** a workspace's servers as a run starts them; a server whose values are missing stays out, with a line that names them */
 export function startServers(mcp: Record<string, unknown> | undefined, vars: Record<string, string>, platform: NodeJS.Platform = process.platform, env: Env = process.env) {
   const servers: Record<string, Record<string, unknown>> = {}, lines: string[] = [], secrets: string[] = []
@@ -44,7 +57,7 @@ export function startServers(mcp: Record<string, unknown> | undefined, vars: Rec
     if (!isObj(c)) continue
     try {
       const r = resolveEnv(c, vars)
-      servers[name] = stdioCommand(r.config, platform, env)
+      servers[name] = spawnConfig(r.config, platform, env)
       secrets.push(...r.secrets)
     } catch (e) { lines.push(`The MCP server ${name} is not started for this run: ${(e as Error).message}`) }
   }

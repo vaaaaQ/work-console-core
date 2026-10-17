@@ -4,7 +4,7 @@
   "title": "Folders",
   "about": "the folders you list, outside a run's own work dir, through the reference filesystem MCP server",
   "guide": "guide.md",
-  "mcp": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem@2026.8.31", "${config.roots}"] },
+  "mcp": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem@2026.8.31", "${config.roots}"], "roots": false },
   "config": {
     "roots": { "about": "the folders the server may reach, one path each; nothing outside them", "list": true, "required": true }
   },

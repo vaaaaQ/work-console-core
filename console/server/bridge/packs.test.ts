@@ -150,6 +150,14 @@ test('an mcp pack may name its tools, read and act apart, and take settings its 
   assert.deepEqual(checkPack(u, all), ['mcp.url: ${config.roots} is a list; only a whole arg takes one'])
 })
 
+test("an mcp pack's command server may say roots: false, so a run's MCP roots never replace the folders its args name", () => {
+  const withRoots = (roots: unknown) => ({ ...server(), mcp: { ...server().mcp, roots } })
+  assert.deepEqual(checkPack(withRoots(false), all), [])
+  assert.deepEqual(checkPack(withRoots(true), all), ['mcp.roots: only false, which hides the client\'s MCP roots from the server'])
+  assert.deepEqual(checkPack({ ...server(), mcp: { type: 'http', url: 'https://x.example/mcp', roots: false } }, all), ['mcp.roots: only a command (stdio) server\'s roots can be hidden'])
+  assert.equal((renderMcp(withRoots(false) as unknown as PackManifest, { roots: ['/a'] }) as { roots?: boolean }).roots, false)
+})
+
 test("an mcp pack's env and headers carry no literal secret: ${env:NAME} instead", () => {
   const withEnv = (env: Record<string, string>) => ({ ...server(), mcp: { ...server().mcp, env } })
   assert.deepEqual(checkPack(withEnv({ API_TOKEN: 'abc123' }), all), ['mcp.env.API_TOKEN: looks like a secret; write ${env:API_TOKEN} and put the value in mcp.env'])

@@ -14,6 +14,11 @@ test('Check starts a stdio server, lists its tools over every page with their hi
   assert.deepEqual(r, { ok: true, tools: TOOLS, server: 'fake 1.0.0' })
 })
 
+test('Check starts a roots: false server as a run does, through the roots wrapper, with its args as they were', async () => {
+  const r = await checkServer(node('roots', { args: [FAKE, 'roots', 'C:/data'], roots: false }), { vars: {} })
+  assert.deepEqual(r, { ok: true, tools: [{ name: 'list' }, { name: 'saw-arg-C:/data' }], server: 'fake 1.0.0' })
+})
+
 test("Check says why a server did not answer: it exited (with its stderr), it hung past the time, a variable is missing; secrets never show", async () => {
   const exit = await checkServer(node('exit'), { vars: {} })
   assert.equal(exit.ok, false)
