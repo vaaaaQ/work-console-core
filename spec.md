@@ -1,136 +1,159 @@
-# AD-0018: открытые вопросы — инструмент запуска `ask_question`, список на шаге, и открытый вопрос останавливает автопродвижение
+# AD-0016: Typed step outputs
 
-(Этот файл заменяет в ветке `job/ad-0018` спецификацию AD-0026; она остаётся в истории git.)
+Branch, PR and checks, review, deploy, live check and fix round become typed records on a step. The page shows them
+and later runs' prompts carry them. All of this lives in the core (Work Console Core, this repo). The agents-dev
+playbook only declares which step produces which kind, and that change goes through a sync job in `D:\agents`.
 
-## Откуда взяты сведения
+Read from the core at `a2101d4` (the base of `job/ad-0016`). Each claim names the file it comes from.
 
-Всё о нынешнем положении прочитано в коде ядра на коммите `a2101d4` (вершина ветки на момент анализа).
-У каждого утверждения указан файл. Кода в этом шаге нет.
+## Why
 
-## Что уже есть
+A step's output today is one Markdown blob. On accept, the draft's text becomes `Flow.out` (`src/model/transitions.ts`
+`acceptDraft`, lines 676/687). Every later prompt carries all of them under `## Earlier outputs`
+(`server/llm/prompt.ts` line 45), whole and unparsed. So:
 
-- **Заметки шага.** У шага есть список `f.b: Badge[]` (`src/model/types.ts`: `k` — `q` вопрос, `c` противоречие,
-  `d` проектная заметка, `p` проблема; `t` текст; `r` ответ; `o` 1 = открыта). Операции `noteAdd`, `noteAnswer`,
-  `noteReopen` (`src/model/transitions.ts`, около строки 702). Человек добавляет и отвечает на странице
-  (`src/actions/flow.tsx` `bAdd`/`bAnswer`), сессия Claude Code — через MCP консоли (`server/mcp/mcp.ts`), агент
-  workspace — через `server/agent/prompt.ts`. Консоль сама пишет заметки-проблемы (`runner.ts`: `notSent`, `mcpProblem`,
-  отклонённый вопрос MCP-сервера).
-- **На странице.** На доске заметки шага — только иконки (`src/views/Job.tsx`, `Node`, блок `bdgs`). Полный список с
-  кнопками Answer…/Reopen — в боковой панели, раздел «Questions and notes» (`src/views/Drawer.tsx`, `BadgeSec`).
-  Открытая заметка помечает задание как требующее внимания (`transitions.ts`, строка 55).
-- **Автоприём уже учитывает вопрос.** `holdOf` (`server/llm/autoAsk.ts`) не даёт консоли принять черновик шага
-  со `start: 'auto'`, если на шаге есть открытый вопрос, и пишет в журнал «Held back the automatic accept…: an open question».
-- **Инструменты запуска** описаны один раз в `runToolDefs` (`server/llm/sdk.ts`) и общие для Claude и Cursor
-  (`server/llm/cursor/sdk.ts` берёт тот же список; `cursor/policy.ts` пропускает то, что есть в `ALLOW`).
+- **A later run has to dig facts out of prose.** "Merge and push" has to find the branch and the last tested commit
+  in the TDD step's text. "Deploy" has to work out what was merged. "Smoke test" has to work out which version it
+  should see. When a draft words a fact loosely ("the branch", no sha), the run guesses.
+- **The page cannot show state at a glance.** To see whether a PR's checks passed, which build is deployed, or
+  whether the live check passed, Valery opens each step and reads its output.
+- **Rounds lose their reason.** When Smoke test fails and the job goes back to Build, `returnTo` keeps the round's `why`
+  (one line) and the old flow (`Round`, `src/model/types.ts`). The next pass's prompt gets the journal line and nothing
+  structured: which check failed, against which version, and which commit came before the fix.
+- **Nothing checks that a step produced what it must.** A "Deploy" draft with no version in it can be accepted as done.
 
-## Чего не хватает
+## What changes
 
-1. **У запуска нет способа задать вопрос.** Среди инструментов `run` нет ничего, что добавляет заметку. Поэтому
-   «open questions as notes» из критериев шагов запуск сегодня выполняет только текстом внутри черновика: вопрос
-   не виден на шаге, на него нельзя ответить кнопкой, он не держит шаг.
-2. **Ответы не доходят до следующего запуска.** Промпт (`contextText`/`promptText` в `server/llm/prompt.ts`) не
-   содержит заметок шага. В журнал попадает только ответ («Question resolved on “X”: …») без самого вопроса.
-3. **Открытый вопрос не держит приём ответом.** Ответ человека, понятый как «принять» (запуск с `intent: 'accept'`,
-   `acceptDraft` с `said: true`, `runner.ts` `submitDraft`), принимает черновик, даже если на шаге открыты вопросы:
-   `acceptDraft` проверяет только блокеры (`noBlockers`). После приёма следующий llm-шаг стартует сам (`madeCurrent` → `ask`).
-4. **Ответ на последний вопрос ничего не будит.** Шаг, который ждал только ответов, так и стоит: пересмотр черновика
-   запускается лишь при закрытии последнего блокера (`freedDraft`, только `blockerClosed`).
-5. **Вопрос плохо виден при просмотре черновика.** Кнопка Accept (`Drawer.tsx`, строка 43) стоит в разделе черновика,
-   а вопросы — в другом разделе ниже; на доске — безымянная иконка.
+### 1. Fact kinds (core, `src/model/facts.ts`, new)
 
-## Что меняется
+A fixed set of kinds. Each kind is a generic development concept: it names no workplace, host or product, so the
+core rule holds. Every string is trimmed and capped. URLs must be http(s), and any other URL is refused.
 
-### 1. Инструмент запуска `ask_question`
+| kind | fields | who writes it |
+|---|---|---|
+| `branch` | `repo`, `name`, `sha`, `base?` | a run (TDD, Merge) |
+| `pr` | `url`, `n?`, `title?`, `state`: open/merged/closed, `checks`: `[{name, state: pass/fail/pending, url?}]` | a run (Merge) |
+| `review` | `by`, `verdict`: accepted/sent_back, `of?` (the sha reviewed), `note?` | the console, when a person closes a review step (see 4) |
+| `deploy` | `what`, `where`, `version`, `ok`, `url?` | a run (Deploy) |
+| `check` | `name`, `ok`, `against?` (the version it ran against), `url?` / `art?` (an artifact of the step), `note?` | a run (Prove it live, Smoke test) |
+| `round` | `n`, `back_to`, `why`, `failed`: the names of the failed checks | the console, on a return (see 5) |
 
-- `runToolDefs` получает `ask_question {text}` (1…1000 символов): «Ask Valery a question only they can answer, one per call.
-  It goes on this step as an open question; the step waits for the answer. Then finish the draft as far as it goes.»
-- `RunTools.askQuestion(t)` в `runner.ts` выполняет `noteAdd {step: rec.step, k: 'q', t}` от имени `runner`
-  (тем же путём, что `mcpProblem`). Возвращает «question N is open on “Шаг”».
-- Ограничения: не больше **10 вопросов за запуск** (11-й — ошибка инструмента, без заметки); тот же текст, уже открытый
-  на шаге, второй раз не добавляется — возвращается номер существующего.
-- `ALLOW` в `sdk.ts` получает `mcp__run__ask_question`; Cursor получает инструмент автоматически.
-- Автор в журнале — LLM (проверить `BY.runner` в `server/jobs/jobs.ts`; если там не LLM, передать `as`/имя явно).
-- Это не исключение из правила «LLM drafts; a person sends»: вопрос пишется на шаг консоли, не в источник.
+A fact always carries `at` and the step that made it. The console adds these; a run never writes them.
 
-### 2. Вопросы и ответы — в промпте
+`Draft.fx?: Fact[]` holds what a draft reports. `Flow.fx?: Fact[]` holds what an accepted draft left on its step. Both are
+optional JSON in the job document. The pg store keeps a job as `doc jsonb` (`server/store/pg.ts:61`), and the file
+store writes JSON, so no migration is needed.
 
-- Новый раздел `## Questions on this step` в `promptText`/`contextText`: каждая заметка шага — вид, текст, `open`
-  или ответ. Так пересмотр и повторный запуск видят и свои вопросы, и ответы на них.
-- В «How to work» строка: «If something only Valery can decide holds part of the step, ask it with ask_question, one
-  question per call, rather than only in the draft's text; then finish the draft as far as it goes.» Только там, где
-  есть сам инструмент (запуски; у ручных сессий Claude Code уже есть `noteAdd`).
+### 2. A step declares what it must produce
 
-### 3. Список открытых вопросов на шаге
+`Step.fx?: FactKind[]` (and `NewStep.fx`, the playbook file's `facts:`, and `stepAdd`/`stepEdit` checks like the
+existing `out`). A draft whose outcome is done must carry at least one fact of each declared kind. Otherwise
+`report()` in `transitions.ts` refuses it while the run is still live (`bad_args: "Deploy" reports a deploy`), the
+same way a bad `return_to` is refused today. A draft that reports not_done or failed does not need the declared
+kinds. A step that declares nothing may still report any facts.
 
-- **Боковая панель:** в разделе черновика, над Accept, блок «Open questions (N)» — текст каждого и кнопка Answer…
-  (те же `bAnswer`). Раздел «Questions and notes» остаётся как есть.
-- **Доска:** в строке состояния узла (`n-m` в `Job.tsx`) при открытых вопросах — «❓ N open questions»,
-  как сейчас «⏳ J-0007» для блокеров.
+### 3. How a run reports facts
 
-### 4. Открытые вопросы останавливают автопродвижение
+- `submit_draft` gets an optional `facts` array. In `server/llm/sdk.ts` it is a zod discriminated union on `kind`
+  (`REPORT_SCHEMA`, `reportOf`). Claude runs and Cursor runs both use `runToolDefs`, so both get it with one change.
+- A session taken up by hand gets the same `facts` property on the console MCP's `submit_draft` (`server/mcp/mcp.ts:215`).
+- `runDraft`/`draftIn` carry `fx` through `DraftReport`. Editing a draft on the page keeps its facts. If someone
+  needs to correct a fact, they reject the draft with a note.
+- On accept, `F.fx = dr.fx`, in both branches of `acceptDraft`. A draft that reports not done keeps its facts on the
+  open step, because they are real evidence, for example a failed check.
 
-- `acceptDraft` с `auto` или `said` отказывает (`bad_state`: «“Шаг” has N open questions; answer them first»), если на шаге
-  есть открытый вопрос `q`. Автоприём (`holdOf`) это и так делает — остаётся как есть; новое — приём ответом.
-  `notAccepted` пишет в журнал, что держат вопросы, а не только блокеры.
-- **Приём человеком на странице** не запрещается: кнопка Accept при открытых вопросах сначала спрашивает
-  «N open questions stay open. Accept anyway?» (см. вопрос Q1).
-- Отказ в приёме значит, что шаг не завершён, и следующий шаг сам не стартует — отдельной правки `madeCurrent` не нужно.
+### 4. Review: written by the console
 
-### 5. Ответ на последний вопрос будит черновик
+"Review" (`ad5`) is a `you` step, so no run drafts it. The console writes the `review` fact itself:
+- `stepDone` on a step that declares `review`: `{by: <who>, verdict: accepted, of: <the latest branch sha>}`.
+- `returnTo`/`stepReopen` while such a step is current, or right after it: `{verdict: sent_back, note: why}`. This
+  fact goes into the kept round, so the next pass sees that the last review sent the change back and why.
 
-- `freed` (`autoAsk.ts`) требует ещё и отсутствия открытых вопросов. Новая `freedByAnswer(cmd, prev, job)`: `noteAnswer`
-  закрыл последний открытый вопрос шага, черновик ждёт, запуска нет, блокеров нет. Как и с блокерами — только для шагов,
-  что стартуют сами (`self`/`auto`): запуск получает `reply(..., 'revise')` с текстом «Every question this step asked has
-  an answer: …вопрос → ответ… Go on from your draft.» Для `auto`-шага чистый пересмотренный черновик консоль примет сама.
-- Если последним закрылся блокер, а вопросы ещё открыты, — шаг не будится (раньше будился бы).
+### 5. Fix round: written by the console
 
-### 6. Документы
+When `returnTo` starts a new round, the console adds a `round` fact to the step the job goes back to:
+`{n, back_to, why, failed}`. `failed` lists the names of the `check` facts with `ok: false` from the draft that
+sent it back. A round started by hand (`stepReopen`) gets a `round` fact with an empty `failed` list.
 
-- `docs/architecture.md`: `ask_question` в описании инструментов запуска; что открытый вопрос держит автоприём и
-  приём ответом и что ответ на последний будит черновик.
+### 6. Earlier facts in later prompts (`server/llm/prompt.ts`)
 
-## Как будет доказано
+A new section, `## Facts`, goes before `## Earlier outputs`:
+- **This round:** the latest fact of each kind, one line each, each with the step that made it, e.g.
+  `- branch job/ad-0016 at 3f2c9e1 (repo core; from "TDD on the job branch")`,
+  `- pr [#41](url) open; checks: build pass, test fail ([test](url))`,
+  `- deploy console at core 3f2c9e1 on this PC: ok`.
+- **Earlier rounds:** one line per round:
+  `- round 1 → back to "TDD on the job branch": smoke "rounds view" failed against 3f2c9e1; review sent_back: …`.
+  A run doing a fix can then see which version failed and which check to make pass.
+- How to work gets one more line when the step declares kinds:
+  `- This step reports facts with submit_draft(facts): branch, pr. A done draft without them is refused.`
 
-Модульные тесты (`cd console && npm test`, `npm run typecheck`):
+`## Earlier outputs` stays as it is, so the prose is still there. Facts add to it and replace nothing. The run's
+`context()` and `step_context` share `parts()`, so both get the section for free. The agent's `step_output` tool
+(`server/agent/jobTools.ts`) lists the step's facts as well.
 
-| Что | Тест |
-|---|---|
-| инструмент в списке и в `ALLOW`, проходит политику Cursor | `sdk.test.ts`, `cursor/policy.test.ts` |
-| `askQuestion` пишет открытый `q` на шаг запуска, автор LLM; 11-й за запуск отказан; дубль не множится | `runner.test.ts` |
-| `acceptDraft` с `said`/`auto` отказан при открытом вопросе; без них (страница) проходит; ответ-«принять» оставляет шаг и пишет причину в журнал | `transitions` тесты, `runner.test.ts` |
-| `holdOf` держит черновик с вопросом, заданным запуском | `autoAsk.test.ts` |
-| ответ на последний вопрос будит `self`/`auto`-шаг, но не `hand`; ответ при открытом блокере и закрытие блокера при открытом вопросе — не будят | `autoAsk.test.ts` |
-| раздел `## Questions on this step` с вопросами и ответами | `prompt.test.ts` |
+### 7. The page
 
-На странице: `npm run build && npm run smoke`, затем снимок боковой панели и доски с шагом, где открыты два вопроса
-(демо-данные Acme), как артефакт шага.
+- **Drawer:** a `Facts` section above the draft and the accepted output (`src/views/Drawer.tsx`, `LlmSec`). Each fact is
+  one row with a lamp: a branch with its sha (copy button); a PR link with one lamp per check; a deploy's version and
+  where it went; a live check pass/fail with its link or artifact; a review verdict. A waiting draft shows the facts
+  it would leave.
+- **Job header:** one strip with the latest fact of each kind across the job: `branch · PR #41 ✓3 ✗1 · deployed 3f2c9e1 ·
+  live check ✓`. This is the "where is it" view without opening a step.
+- **Rounds** (`src/views/Rounds.tsx`): a round's row shows its `round` fact (why it went back and which checks
+  failed), and its detail shows each step's facts.
+- **Demo:** one Acme demo job gets facts, so they show without a backend. Hosts end in `.example`.
 
-Вживую, на настоящей консоли этой ветки: llm-шаг тестового задания, где инструкция требует спросить; в задании видно
-— вопрос на шаге от LLM, «Held back…»/отказ приёма ответом в журнале, после ответа «Draft … revised». Цитаты журнала — в
-черновике шага проверки. (Где именно — см. Q6.)
+### 8. agents-dev (not in this job's diff)
 
-## Открытые вопросы
+The agents-dev playbook lives in `D:\agents\services\work-console\workspaces\agents-dev\page.ts`, a consumer.
+After the core sync, a follow-up agents job sets `fx`: ad3 `branch`; ad4 `check`; ad5 `review`; ad6 `branch`, `pr`;
+ad7 `deploy`; ad8 `check`. The Merge, Deploy and Smoke test texts then refer to the facts ("deploy the `branch` sha";
+"`against` is the deployed `version`").
 
-Задать их заметками-вопросами на шаге этот запуск пока не может — именно это и строится; поэтому они здесь.
-У каждого — что я сделаю, если ответа не будет.
+## How it will be proven
 
-- **Q1. Приём человеком при открытых вопросах.** Подтверждение «Accept anyway?» и разрешить (мой вариант), или
-  запретить совсем до ответа? Если разрешить — оставлять вопросы открытыми (мой вариант) или закрывать их пометкой
-  «accepted without an answer»?
-- **Q2. Имя инструмента:** `ask_question` (мой вариант) или `question`?
-- **Q3. Лимит:** 10 вопросов за запуск — достаточно?
-- **Q4. Только вопросы или любые заметки?** Дать запуску один `add_note {k}` (вопрос, противоречие, проектная заметка)
-  или только вопросы (мой вариант; `c`/`d` можно добавить позже, они не держат шаг)?
-- **Q5. Будить шаги `hand`?** Шаг, который человек запускает сам, после ответа на последний вопрос остаётся ждать
-  (мой вариант, как с блокерами) — или и его пересматривать?
-- **Q6. Где проверять вживую:** на консоли ядра из этой ветки (мой вариант) или после `sync-core.mjs` в
-  `D:\agents\services\work-console` (agents-dev)? Синхронизацию в рамках этого задания делать не собираюсь, если не скажете.
+**Tests (TDD step), each failing first:**
+- `facts.test.ts`: each kind validates. A non-http URL, a missing required field, an unknown kind and an over-cap
+  string are each refused, with a message the run can act on.
+- `transitions.test.ts`:
+  - a done draft without a declared kind is refused;
+  - a not_done draft without it is accepted;
+  - accept copies `fx`, and an edited accept keeps it;
+  - `stepDone` on a review step writes `review` with the latest branch sha;
+  - `returnTo` writes `round` with the failed checks, and the kept round keeps the old facts;
+  - a removed or added step does not bring facts back (the `ns` rule).
+- `prompt.test.ts`: `## Facts` lists the latest fact of each kind per round and earlier rounds one line each, and
+  the How to work line names the declared kinds. There is no section when there are no facts.
+- `sdk.test.ts` / `mcp.test.ts`: `facts` reaches `runDraft`/`draftIn` through both tools, and a bad fact comes back
+  as the tool's error.
+- `playbookFile.test.ts`: `facts:` round-trips. `core-lock` and the workspace tests stay green.
+- `npm test`, `npm run typecheck`, `npm run build && npm run smoke`. The smoke's fake SDK submits a `branch` fact,
+  and the smoke asserts it is on the job.
 
-## Ответы Valery (2026-10-23)
+**Live (Prove it live):** run the console from the job branch with the demo workspace. Take screenshots of the drawer's
+Facts section (with a waiting draft and with an accepted output), the job header strip, and an expanded round with
+its `round` fact. Then run one real LLM step on a scratch Acme job whose step declares `branch`. Its first draft
+without the fact is refused, which shows in the run feed, and its retry is accepted. Quote the prompt's `## Facts`
+section from the next step's run record.
 
-- **Q1.** Accept при открытых вопросах — подтверждение «Accept anyway?», вопросы остаются открытыми.
-- **Q2.** Имя инструмента — `ask_question` (AD-0022 потом расширяет его готовым сообщением).
-- **Q3.** Лимит — 10 вопросов за запуск.
-- **Q4.** Только вопросы; `c`/`d` позже.
-- **Q5.** Шаг `hand` после ответа на последний вопрос не будится.
-- **Q6.** Вживую — на консоли ядра из этой ветки; sync в D:\agents здесь не делается.
+**After deploy (Smoke test):** on the deployed console, the next agents-dev job shows its branch and deploy facts on
+the page. The core version is `core.lock.json`'s `core` field.
+
+## Open questions (notes)
+
+1. **PR checks go stale.** A `pr` fact is a snapshot taken when the draft was submitted. Should the page refresh check
+   states through the `ci`/`review` concepts? I suggest no for v1: agents-dev has no sources (`src: {}`), and the
+   Smoke test step reads them anyway. Later, a pack could update them.
+2. **Should a missing declared kind be refused?** Refusing is the proposal, as with `return_to`. The softer option
+   is a warning on the draft (`reports no deploy`) that still lets it through. Refusing does block a step whose
+   honest result has nothing to report, for example a deploy skipped because only docs changed. For that, a fact
+   could carry `none: why`, e.g. `{kind: 'deploy', none: 'docs only'}`. Is that acceptable?
+3. **Review written by the console.** Is a page-side Mark done enough for `review`? Or should Review get Accept /
+   Send back buttons with a note, so the note becomes the fact's `note`?
+4. **`{var}` in templates.** Should facts fill message templates (`{branch}`, `{pr}`, `{deploy.version}` in `tvars`,
+   `src/model/world.ts:180`)? Not needed for agents-dev, but it fits other workspaces' messages (a "deployed X"
+   chat post). I suggest leaving it out of v1.
+5. **The kind list is fixed in the core.** Can a workspace add its own kinds? I suggest no: the six kinds cover this
+   job, and a free-form kind is just `Flow.out` again.
+6. **Language.** This spec is in English, like AD-0013. AD-0026's spec was in Russian. Tell me if you prefer that.
