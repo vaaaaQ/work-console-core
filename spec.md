@@ -1,205 +1,190 @@
-# AD-0016: Typed step outputs
+# AD-0017: auto steps, the one-time approval (okCmds) and retry {to, max} fix rounds
 
-Branch, PR and checks, review, deploy, live check and fix round become typed records on a step. The page shows them
-and later runs' prompts carry them. All of this lives in the core (Work Console Core, this repo). The agents-dev
-playbook only declares which step produces which kind, and that change goes through a sync job in `D:\agents`.
+Where the scope comes from:
+- AD-0015 `followups.md` §2 and `analysis.md` rev 3, concerns 2, 3 and 5, with Valery's answers of 2026-10-15: one
+  approval also covers core, fix rounds have a playbook limit with a default of 3, and the PR opens as usual.
+- The core at `a2101d4`, the base of `job/ad-0017`. Paths are under `console/`.
+- The agents-dev playbook in `D:\agents\services\work-console\workspaces\agents-dev\page.ts`.
 
-Read from the core at `a2101d4` (the base of `job/ad-0016`). Each claim names the file it comes from.
+This job changes the **core only**. agents-dev's own playbook moves to the new fields in AD-0019 (playbook v2). This job
+proves the fields with a test playbook in the demo workspace.
 
-## Why
+## What exists today
 
-A step's output today is one Markdown blob. On accept, the draft's text becomes `Flow.out` (`src/model/transitions.ts`
-`acceptDraft`, lines 676/687). Every later prompt carries all of them under `## Earlier outputs`
-(`server/llm/prompt.ts` line 45), whole and unparsed. So:
+| Fact | Where |
+|---|---|
+| A step's `start` is `'hand' \| 'self' \| 'auto'`; absent follows the workspace's `autoAsk`. `auto` = the run starts by itself and the console accepts its clean draft. | `src/model/types.ts:22-27`; `server/llm/autoAsk.ts:13,92` |
+| `holdOf` holds the automatic accept on: an outcome (`not_done`/`failed`), commands to approve (`cm`), a draft that reports approved commands (`ap`), an open question, a problem note, a blocker asked for, open blockers. | `server/llm/autoAsk.ts:16-26` |
+| A failed draft with `rt` goes back on Accept (`returnTo` → a new **round**); without `rt` the step stays open. | `src/model/transitions.ts:672-685`, `:273-294` |
+| **Gap:** an `acceptDraft` that goes back does not make the console ask the step it went back to: `madeCurrent` counts only steps that were `fut`/`tpl` before, and the returned-to step was `done`. A fix round would stall at its first step. | `server/llm/autoAsk.ts:37-41` |
+| Only the person approves commands: `runner.reply(…, 'approve', {via})` throws `not_yours` for any `via`. The approval is a reply that makes the draft's own session run exactly `cm`, then hand in a new draft with `ap: 1`. | `server/llm/runner.ts:186-212`; `src/model/transitions.ts:761-781` |
+| A page Accept of a draft that has `cm` and no outcome **closes the step although its commands never ran** (concern 5). Nothing checks the step's `a` artifacts. | `src/model/transitions.ts:686-691` |
+| A run's prompt shows earlier steps' accepted drafts (`## Earlier outputs`) and the journal. After a `returnTo` the failed step's text is only in the kept round and in one journal line. | `server/llm/prompt.ts:45-64` |
+| A job's work dir is a worktree on `job/<id>` from the repo its project names, base `main` (core) or `master` (agents). | `server/llm/worktree.ts:11-57`; agents-dev `server.ts:27-30` |
 
-- **A later run has to dig facts out of prose.** "Merge and push" has to find the branch and the last tested commit
-  in the TDD step's text. "Deploy" has to work out what was merged. "Smoke test" has to work out which version it
-  should see. When a draft words a fact loosely ("the branch", no sha), the run guesses.
-- **The page cannot show state at a glance.** To see whether a PR's checks passed, which build is deployed, or
-  whether the live check passed, Valery opens each step and reads its output.
-- **Rounds lose their reason.** When Smoke test fails and the job goes back to Build, `returnTo` keeps the round's `why`
-  (one line) and the old flow (`Round`, `src/model/types.ts`). The next pass's prompt gets the journal line and nothing
-  structured: which check failed, against which version, and which commit came before the fix.
-- **Nothing checks that a step produced what it must.** A "Deploy" draft with no version in it can be accepted as done.
+## What changes and why
 
-## What changes
+### 1. Auto steps that really go on by themselves
 
-### 1. Fact kinds (core, `src/model/facts.ts`, new)
+**Why:** `start: 'auto'` exists, but a job of auto steps still stops at three points. Every command needs Valery's
+approval. A draft that ran approved commands is held for him to read. A failed check either waits for him or goes back and
+then stalls.
 
-A fixed set of kinds. Each kind is a generic development concept: it names no workplace, host or product, so the
-core rule holds. Every string is trimmed and capped. URLs must be http(s), and any other URL is refused.
+- **Fix the stall.** `madeCurrent` also counts an `acceptDraft` whose draft had `rt` and that made `rt` current. The
+  console then asks that step when its `start` is `self` or `auto`, as it already does for `returnTo` and `stepReopen`.
+  This also fixes the case where a person accepts a failed draft by hand.
+- A draft that reports commands the **console** approved under `okCmds` (§2) is not held for `ap`. One the person
+  approved is still held, as today.
+- No new "gate" field. The job stops for Valery where a step is `self` or `m: 'you'`, or where `holdOf` holds. AD-0015
+  rejected a `gate` flag as the same thing in another spelling.
 
-| kind | fields | who writes it |
-|---|---|---|
-| `branch` | `repo`, `name`, `sha`, `base?` | a run (TDD, Merge) |
-| `pr` | `url`, `n?`, `title?`, `state`: open/merged/closed, `checks`: `[{name, state: pass/fail/pending, url?}]` | a run (Merge) |
-| `review` | `by`, `verdict`: accepted/sent_back, `of?` (the sha reviewed), `note?` | the console, when a person closes a review step (see 4) |
-| `deploy` | `what`, `where`, `version`, `ok`, `url?` | a run (Deploy) |
-| `check` | `name`, `ok`, `against?` (the version it ran against), `url?` / `art?` (an artifact of the step), `note?` | a run (Prove it live, Smoke test) |
-| `round` | `n`, `back_to`, `why`, `failed`: the names of the failed checks | the console, on a return (see 5) |
+### 2. The one-time approval: `okCmds`
 
-A fact always carries `at` and the step that made it. The console adds these; a run never writes them.
+**Why:** in the PR flow every ship step (push, open PR, merge, deploy) waits on an approval of commands Valery already
+agreed to when he accepted the analysis.
 
-`Draft.fx?: Fact[]` holds what a draft reports. `Flow.fx?: Fact[]` holds what an accepted draft left on its step. Both are
-optional JSON in the job document. The pg store keeps a job as `doc jsonb` (`server/store/pg.ts:61`), and the file
-store writes JSON, so no migration is needed.
+- **Playbook field.** `Playbook.ok?: { at: string; cmds: string[] }`:
+  - `at` is the step whose Accept grants the list (agents-dev: Analysis).
+  - `cmds` are command templates. The only placeholders are `{branch}` and `{base}`, which the console fills from the
+    job's work dir (`WorkDir.branch`, and a new `WorkDir.base`, which is the `RepoSpec.base` of the job's project).
+  - With these, core and agents jobs share one list, since the same text fills to `main` or `master`.
+  - A template with any other `{…}` is refused when the playbook loads.
+  - Up to `CMDS_MAX` (10) templates.
+- **Granting.** When the **person** accepts step `at` from the page (not `auto` and not `said`), the console fills the
+  templates and stores `job.ok = { cmds, at, by }`.
+  - The journal says "Approved for this job: N commands: …".
+  - Before he accepts, the draft card of step `at` lists the filled commands: "Accepting also approves these commands for
+    this job". So he sees exactly what he approves.
+  - Without a work dir, or with a template that does not fill, nothing is granted, and the card says why.
+- **Using it.** When a run hands in a draft whose `cm` are **all** in `job.ok.cmds` (exact text after trimming), the console
+  approves them itself:
+  - It calls `runner.reply(…, 'approve', { via: 'console' })`, and `Run.ap` / `Draft.ap` record `'ok'` instead of `1`.
+  - This works on any llm step whose draft came from a session (not one handed in by hand, `hd`).
+  - The journal says "Approved N commands under this job's one-time approval: …".
+  - One command outside the list, and the whole draft waits for Valery as today.
+- **Withdrawing.**
+  - A new page op `okDrop` drops `job.ok`. Approvals shows the job's list with Withdraw.
+  - A `returnTo` to step `at` or before it also drops `job.ok`, because the shape is approved again.
+- **Rule.** Sessions still never approve anything: `draft_reply` with `approve` stays refused, and only the console's own
+  path, which `via: 'console'` marks, may approve, and only within `job.ok`. `CLAUDE.md` gets a fourth exception that
+  says this.
+- **What it is not.** It is not a shell allowlist. The commands still run in the draft's session, with its grants. A
+  playbook simply does not list what must always stop. For agents-dev that is the console's own `update.ps1` (AD-0019).
 
-### 2. A step declares what it must produce
+### 3. Fix rounds: `retry: { to, max }`
 
-`Step.fx?: FactKind[]` (and `NewStep.fx`, the playbook file's `facts:`, and `stepAdd`/`stepEdit` checks like the
-existing `out`). A draft whose outcome is done must carry at least one fact of each declared kind. Otherwise
-`report()` in `transitions.ts` refuses it while the run is still live (`bad_args: "Deploy" reports a deploy`), the
-same way a bad `return_to` is refused today. A draft that reports not_done or failed does not need the declared
-kinds. A step that declares nothing may still report any facts.
+**Why:** a failed live check should go back to Build, fix, redeploy and re-check by itself, without looping forever.
 
-### 3. How a run reports facts
+- **Step field.** `Step.retry?: { to: string; max?: number }`. `max` defaults to **3** and runs 1–10. When the playbook
+  loads, it is refused unless `to` is an earlier step and the step is an llm step.
+- **Handing in.** When a run hands in `outcome: failed` on a step with `retry` and names no `return_to`, the draft
+  gets `rt = retry.to`. The draft card shows where it goes back to, even for a person.
+- **The console accepts it by itself** when all of these hold:
+  - the step is `start: 'auto'`;
+  - the draft is `failed` with `rt === retry.to`;
+  - the job has had fewer than `max` fix rounds;
+  - nothing else in `holdOf` holds it (no question, problem note, blocker or unapproved `cm`).
+- **Holding.** `holdOf` keeps holding `not_done`, a `failed` draft without `retry`, a `failed` draft whose `rt` is
+  another step, and a `failed` draft at the limit.
+  - At the limit the hold reads "the job has had its 3 fix rounds".
+  - "When the run asks" means it opened a question or problem note. That holds already, and AD-0018 adds the question tool.
+- **Counting.** `Round` gets `fx?: 1` on a round the console opened for a retry. Fix rounds are counted **per job** as
+  `rounds.filter(r => r.fx).length`. Rounds a person opens (a Reject at Look at it live, Return to) do not count.
+- **Every fix round leaves a record.**
+  - A journal line: "Fix round 2 of 3: “Live check” failed, back to “Build”: <why>".
+  - An artifact `fix-round-<n>.md` on the failed step, written by the console. It holds the round number and the limit,
+    the failed step, where the job went back to and why, and the failed draft's full text. It is a plain `Art` today and
+    becomes AD-0016's typed `fix-round` output when that lands.
+  - The first run of the round gets a `## Fix round <n> of <max>` section in its prompt with the same text, so the
+    fix starts from the cause and not from one journal line.
+- A step without `retry` behaves exactly as today.
 
-- `submit_draft` gets an optional `facts` array. In `server/llm/sdk.ts` it is a zod discriminated union on `kind`
-  (`REPORT_SCHEMA`, `reportOf`). Claude runs and Cursor runs both use `runToolDefs`, so both get it with one change.
-- A session taken up by hand gets the same `facts` property on the console MCP's `submit_draft` (`server/mcp/mcp.ts:215`).
-- `runDraft`/`draftIn` carry `fx` through `DraftReport`. Editing a draft on the page keeps its facts. If someone
-  needs to correct a fact, they reject the draft with a note.
-- On accept, `F.fx = dr.fx`, in both branches of `acceptDraft`. A draft that reports not done keeps its facts on the
-  open step, because they are real evidence, for example a failed check.
+### 4. Stricter step completion (concern 5A): folded in, because it is small and §2 needs it
 
-### 4. Review: written by the console
+**Why:** a page Accept of a draft that waits for commands closes the step although nothing ran.
 
-"Review" (`ad5`) is a `you` step, so no run drafts it. The console writes the `review` fact itself:
-- `stepDone` on a step that declares `review`: `{by: <who>, verdict: accepted, of: <the latest branch sha>}`.
-- `returnTo`/`stepReopen` while such a step is current, or right after it: `{verdict: sent_back, note: why}`. This
-  fact goes into the kept round, so the next pass sees that the last review sent the change back and why.
+- `acceptDraft` of a draft with `cm` (not `ap`) is refused with `bad_state`: "approve its commands, or say you ran them".
+- A new flag `ran: true`, available only on the page, lets the person accept it anyway. This covers commands Valery runs
+  outside the console, such as `update.ps1`.
+  - The journal then says "Accepted … ; you ran its N commands yourself".
+  - The page's Accept on such a draft becomes **Approve** and **I ran them**.
+- `auto` and `said` never close a draft with `cm`.
+- **Concern 5B (expected artifacts block done) stays with AD-0016**, as AD-0015 planned. It needs typed outputs.
 
-### 5. Fix round: written by the console
+## Files that change
 
-When `returnTo` starts a new round, the console adds a `round` fact to the step the job goes back to:
-`{n, back_to, why, failed}`. `failed` lists the names of the `check` facts with `ok: false` from the draft that
-sent it back. A round started by hand (`stepReopen`) gets a `round` fact with an empty `failed` list.
-
-### 6. Earlier facts in later prompts (`server/llm/prompt.ts`)
-
-A new section, `## Facts`, goes before `## Earlier outputs`:
-- **This round:** the latest fact of each kind, one line each, each with the step that made it, e.g.
-  `- branch job/ad-0016 at 3f2c9e1 (repo core; from "TDD on the job branch")`,
-  `- pr [#41](url) open; checks: build pass, test fail ([test](url))`,
-  `- deploy console at core 3f2c9e1 on this PC: ok`.
-- **Earlier rounds:** one line per round:
-  `- round 1 → back to "TDD on the job branch": smoke "rounds view" failed against 3f2c9e1; review sent_back: …`.
-  A run doing a fix can then see which version failed and which check to make pass.
-- How to work gets one more line when the step declares kinds:
-  `- This step reports facts with submit_draft(facts): branch, pr. A done draft without them is refused.`
-
-`## Earlier outputs` stays as it is, so the prose is still there. Facts add to it and replace nothing. The run's
-`context()` and `step_context` share `parts()`, so both get the section for free. The agent's `step_output` tool
-(`server/agent/jobTools.ts`) lists the step's facts as well.
-
-### 7. The page
-
-- **Drawer:** a `Facts` section above the draft and the accepted output (`src/views/Drawer.tsx`, `LlmSec`). Each fact is
-  one row with a lamp: a branch with its sha (copy button); a PR link with one lamp per check; a deploy's version and
-  where it went; a live check pass/fail with its link or artifact; a review verdict. A waiting draft shows the facts
-  it would leave.
-- **Job header:** one strip with the latest fact of each kind across the job: `branch · PR #41 ✓3 ✗1 · deployed 3f2c9e1 ·
-  live check ✓`. This is the "where is it" view without opening a step.
-- **Rounds** (`src/views/Rounds.tsx`): a round's row shows its `round` fact (why it went back and which checks
-  failed), and its detail shows each step's facts.
-- **Demo:** one Acme demo job gets facts, so they show without a backend. Hosts end in `.example`.
-
-### 8. agents-dev (not in this job's diff)
-
-The agents-dev playbook lives in `D:\agents\services\work-console\workspaces\agents-dev\page.ts`, a consumer.
-After the core sync, a follow-up agents job sets `fx`: ad3 `branch`; ad4 `check`; ad5 `review`; ad6 `branch`, `pr`;
-ad7 `deploy`; ad8 `check`. The Merge, Deploy and Smoke test texts then refer to the facts ("deploy the `branch` sha";
-"`against` is the deployed `version`").
+- `src/model/types.ts`:
+  - `Playbook.ok`, `Step.retry`, `Job.ok`, `Round.fx`;
+  - `Run.ap` and `Draft.ap` become `1 | 'ok'`;
+  - `acceptDraft.ran`, op `okDrop`.
+- `src/model/transitions.ts`:
+  - grant on accept, `okDrop`;
+  - the `retry` default `rt` in `report`;
+  - `fx` in `returnTo`, which also drops `ok` when it goes back to `at` or before;
+  - the `cm` rule in `acceptDraft`;
+  - a playbook check for `ok` and `retry`.
+- `server/llm/autoAsk.ts`:
+  - `madeCurrent` for an `acceptDraft` that goes back;
+  - `holdOf(f, step, job)` for retry, the limit and `ap: 'ok'`;
+  - auto-approve under `job.ok`.
+- `server/llm/runner.ts`: `reply` takes `via: 'console'` for `approve` only when every command is in `job.ok`.
+- `server/llm/worktree.ts`: `WorkDir.base`.
+- `server/llm/prompt.ts`: the `## Fix round` section.
+- The fix-round artifact is written next to the run's artifacts (`server/llm/runner.ts`, where `Art` files are written).
+- Page:
+  - the draft card's "also approves" list;
+  - Approve and I ran them;
+  - the fix-round line in Rounds;
+  - the job's approval with Withdraw in Approvals.
+- `docs/architecture.md` (jobs and steps), `CLAUDE.md` (fourth exception), `EXTENDING.md` (the playbook fields).
+- The demo workspace: a test playbook `auto-ship` in Acme with `ok` and `retry`, with example hosts only.
 
 ## How it will be proven
 
-**Tests (TDD step), each failing first:**
-- `facts.test.ts`: each kind validates. A non-http URL, a missing required field, an unknown kind and an over-cap
-  string are each refused, with a message the run can act on.
+**Unit tests**, each failing first:
 - `transitions.test.ts`:
-  - a done draft without a declared kind is refused;
-  - a not_done draft without it is accepted;
-  - accept copies `fx`, and an edited accept keeps it;
-  - `stepDone` on a review step writes `review` with the latest branch sha;
-  - `returnTo` writes `round` with the failed checks, and the kept round keeps the old facts;
-  - a removed or added step does not bring facts back (the `ns` rule).
-- `prompt.test.ts`: `## Facts` lists the latest fact of each kind per round and earlier rounds one line each, and
-  the How to work line names the declared kinds. There is no section when there are no facts.
-- `sdk.test.ts` / `mcp.test.ts`: `facts` reaches `runDraft`/`draftIn` through both tools, and a bad fact comes back
-  as the tool's error.
-- `playbookFile.test.ts`: `facts:` round-trips. `core-lock` and the workspace tests stay green.
-- `npm test`, `npm run typecheck`, `npm run build && npm run smoke`. The smoke's fake SDK submits a `branch` fact,
-  and the smoke asserts it is on the job.
+  - grant on a person's Accept of `at`, not on `auto` or `said`;
+  - a template that does not fill grants nothing;
+  - `okDrop`, and the drop on a `returnTo` to `at`;
+  - `retry` gives `rt`;
+  - `fx` counting;
+  - Accept of a `cm` draft refused, and accepted with `ran`;
+  - the playbook check refuses a bad `to`, `max` or placeholder.
+- `autoAsk.test.ts`:
+  - an `acceptDraft` with `rt` asks the returned-to step (the stall);
+  - a failed auto draft goes back by itself 3 times and the 4th is held, with the limit text;
+  - `not_done` is held;
+  - a failed draft with an open question is held;
+  - every `cm` in `ok` is approved by the console, one outside it waits;
+  - a draft with `ap: 'ok'` is accepted and one with `ap: 1` is held.
+- `runner.test.ts` and `app.test.ts`: `approve` with `via: 'console'` outside `job.ok` gives 403, and `via: 'session'` is
+  still refused.
+- `mcp.test.ts`: a session still cannot approve.
+- `prompt.test.ts`: the fix-round section.
+- `npm test`, `npm run typecheck`, `npm run build && npm run smoke`, all green.
 
-**Live (Prove it live):** run the console from the job branch with the demo workspace. Take screenshots of the drawer's
-Facts section (with a waiting draft and with an accepted output), the job header strip, and an expanded round with
-its `round` fact. Then run one real LLM step on a scratch Acme job whose step declares `branch`. Its first draft
-without the fact is refused, which shows in the run feed, and its retry is accepted. Quote the prompt's `## Facts`
-section from the next step's run record.
-
-**After deploy (Smoke test):** on the deployed console, the next agents-dev job shows its branch and deploy facts on
-the page. The core version is `core.lock.json`'s `core` field.
+**Live, on this PC** (the Prove step), on a scratch console from the job branch: its own `WORK_CONSOLE_HOME` and port,
+the demo workspace, the `auto-ship` test playbook, and real Claude runs whose commands are harmless (`git status`,
+`echo`). I will quote the journal for each, and take a screenshot of each changed view:
+1. Accept Analysis: the journal shows the filled commands granted.
+2. An auto step's `echo` command draft is approved by the console and runs, and the step goes on by itself.
+3. A command off the list waits, and its Accept shows Approve and I ran them.
+4. A step told to fail goes back 3 times, each with its journal line and `fix-round-<n>.md`, and the 4th failure waits
+   with "the job has had its 3 fix rounds".
 
 ## Open questions (notes)
 
-1. **PR checks go stale.** A `pr` fact is a snapshot taken when the draft was submitted. Should the page refresh check
-   states through the `ci`/`review` concepts? I suggest no for v1: agents-dev has no sources (`src: {}`), and the
-   Smoke test step reads them anyway. Later, a pack could update them.
-2. **Should a missing declared kind be refused?** Refusing is the proposal, as with `return_to`. The softer option
-   is a warning on the draft (`reports no deploy`) that still lets it through. Refusing does block a step whose
-   honest result has nothing to report, for example a deploy skipped because only docs changed. For that, a fact
-   could carry `none: why`, e.g. `{kind: 'deploy', none: 'docs only'}`. Is that acceptable?
-3. **Review written by the console.** Is a page-side Mark done enough for `review`? Or should Review get Accept /
-   Send back buttons with a note, so the note becomes the fact's `note`?
-4. **`{var}` in templates.** Should facts fill message templates (`{branch}`, `{pr}`, `{deploy.version}` in `tvars`,
-   `src/model/world.ts:180`)? Not needed for agents-dev, but it fits other workspaces' messages (a "deployed X"
-   chat post). I suggest leaving it out of v1.
-5. **The kind list is fixed in the core.** Can a workspace add its own kinds? I suggest no: the six kinds cover this
-   job, and a free-form kind is just `Flow.out` again.
-6. **Language.** This spec is in English, like AD-0013. AD-0026's spec was in Russian. Tell me if you prefer that.
-
-## Valery's answers (2026-10-23)
-
-1. No refresh in v1: a `pr` fact stays the snapshot taken at submit.
-2. Refuse a done draft that lacks a declared kind; an honest empty result reports `{kind, none: why}` (e.g. `{kind: 'deploy', none: 'docs only'}`).
-3. Review gets **Accept / Send back** buttons with a note field; the note becomes the `review` fact's `note`, and Send back goes back like a return.
-4. No facts in message templates (`{var}`) in v1.
-5. The six kinds stay fixed in the core; no workspace kinds.
-6. Specs stay in English.
-
-## What the implementation settled (TDD step)
-
-- `src/model/facts.ts` holds the kinds, their checks (`factsIn`), the one-line text (`factLine`), the newest of each kind
-  (`latestFacts`), lamps and the header strip's parts. A run or a session reports only `branch`, `pr`, `deploy` and
-  `check` (`RUN_KINDS`); `review` and `round` are the console's, refused from a run even as `{kind, none}`, and left out
-  of the run tool's and the MCP's kind enum. A step that declares `review` is satisfied only by the console's review
-  fact: its draft never needs one, and accepting the draft (or Mark done, or Accept) writes it.
-- Every fact's text is one line: the checks fold whitespace and newlines to one space, the console folds the why it copies
-  into a round fact (capped at 1000), and `factLine` and the `## Facts` round lines fold again, so no fact can forge a
-  heading or another fact's line in a later prompt.
-- `## Facts` gives the latest 5 earlier rounds (`ROUNDS_SHOWN`) and counts the older ones left out.
-- Accept on a review step takes `force` like Mark done (the page asks first); Send back and Accept move the job for
-  auto-ask (Send back like a return, Accept like Mark done); the MCP's `review` takes `to` by id or exact title.
-- `submit_draft`'s `facts` is a list of `{kind, ...}` in both the run tool (zod) and the console MCP (JSON schema); the
-  fields of each kind are in the tool's description (`FACTS_HELP`). The core checks every field as the draft goes in, so a
-  bad fact comes back as the tool's error with the field named (`facts: fact 1 (branch): sha is a commit hash …`). This
-  stands in for the zod discriminated union the spec named: one checker, one message, for both tools.
-- Accept/Send back is a new command, `review {step, verdict, note?, to?, force?}` (a page and session op, listed on `job_command`).
-  Send back needs a note and goes back to `to`, by default the step that made the latest `branch`, else the step before.
-  `stepDone` on such a step still writes an accepted review; a plain `returnTo` from it writes a sent_back one.
-- A `round` fact's `n` is the round that went back; it sits on the step gone back to, `step` = the step it was sent from.
-  Its `failed` lists the failed checks of the draft that sent it back (none for Send back or a reopen by hand).
-- Accepted facts are added after the step's own (a round fact stays), so "latest of each kind" reads the step's history.
-- `get_job` shows each step's declared kinds (`reports`), its `facts` and its draft's (`draftFacts`), in words.
-
-## What the Prove step changed (after the live run)
-- A field a kind does not have is refused, never dropped: `facts: fact 1 (check): check has no field version; its fields are
-  name, ok, against, url, art, note`. The same goes for a PR check's fields (`a check has no field conclusion; its fields are
-  name, state, url`), and a none fact is only `{kind, none}` (`a none fact has only kind and none; drop version`). The fields
-  per kind are `KIND_FIELDS` in `facts.ts`.
-- A round's line in `## Facts` says its reason once: a Send back's review note that equals the round's why is left out, and
-  one that says something else is kept. A part that ends a sentence loses its closing `.`, `,`, `;` or `:` before the next
-  part, so there is no `deploy.;` (`clause`). A round fact's own line does the same before `; failed:`.
-- The journal adds no second period after a review note or a waiting reason that already ends a sentence (`sentence`).
-- A branch fact's copy button stays on the name's line (`.fx-row .iconbtn` is inline).
-- Left as is, for Review: a Send back round's `failed` stays empty even when that round's PR had a failing check.
+1. **`{pr}`.** I left it out. `gh pr merge {branch} --merge` names the PR by its branch, so the list needs no PR
+   number and does not wait on AD-0016. Is that enough, or should `{pr}` come in with AD-0016's `pr` output?
+2. **Exact match.** The match is exact text after trimming. A run that writes `git push origin job/ad-0017 ` with an
+   extra flag falls back to Valery. Do you agree that strict is right?
+3. **Which outcome retries.** Only `failed` retries. `not_done` ("I could not finish") always waits for you. Is that right?
+4. **The fix-round count.** Fix rounds count per job across all `retry` steps, with no reset after your own Return to.
+   Should your return reset the count?
+5. **Auto timers after a restart.** An automatic accept or approve waits 6 s (`delay`) in memory. If the console restarts
+   in that window, the draft waits for you. I propose to leave it, since it fails towards you. Should a sweep on start
+   take it up instead?
+6. **Approval scope.** The grant covers the whole job, including later rounds, until you Withdraw it or the job goes
+   back to Analysis. Should it also lapse after a time?
+7. **Live proof.** It costs a few real Claude runs on the scratch console. Are those fine, or should a fake provider be
+   enough?
