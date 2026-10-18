@@ -88,8 +88,10 @@ agreed to when he accepted the analysis.
   another step, and a `failed` draft at the limit.
   - At the limit the hold reads "the job has had its 3 fix rounds".
   - "When the run asks" means it opened a question or problem note. That holds already, and AD-0018 adds the question tool.
-- **Counting.** `Round` gets `fx?: 1` on a round the console opened for a retry. Fix rounds are counted **per job** as
-  `rounds.filter(r => r.fx).length`. Rounds a person opens (a Reject at Look at it live, Return to) do not count.
+- **Counting.** `Round` gets `fx?: 1` on a round the console opened for a retry.
+  - Fix rounds are counted **per job**, across all `retry` steps: the `fx` rounds after the last round a person opened.
+  - A round the person opens (a Reject at Look at it live, a Return to, a reopen that goes back) does not count, and it
+    **resets the count to 0**. That was Valery's answer to question 4.
 - **Every fix round leaves a record.**
   - A journal line: "Fix round 2 of 3: “Live check” failed, back to “Build”: <why>".
   - An artifact `fix-round-<n>.md` on the failed step, written by the console. It holds the round number and the limit,
@@ -147,7 +149,7 @@ agreed to when he accepted the analysis.
   - a template that does not fill grants nothing;
   - `okDrop`, and the drop on a `returnTo` to `at`;
   - `retry` gives `rt`;
-  - `fx` counting;
+  - `fx` counting, and a person's Return to resets it;
   - Accept of a `cm` draft refused, and accepted with `ran`;
   - the playbook check refuses a bad `to`, `max` or placeholder.
 - `autoAsk.test.ts`:
@@ -172,19 +174,19 @@ the demo workspace, the `auto-ship` test playbook, and real Claude runs whose co
 4. A step told to fail goes back 3 times, each with its journal line and `fix-round-<n>.md`, and the 4th failure waits
    with "the job has had its 3 fix rounds".
 
-## Open questions (notes)
+5. After that, your own Return to resets the count: the next failure goes back by itself again, as round 1 of 3.
 
-1. **`{pr}`.** I left it out. `gh pr merge {branch} --merge` names the PR by its branch, so the list needs no PR
-   number and does not wait on AD-0016. Is that enough, or should `{pr}` come in with AD-0016's `pr` output?
-2. **Exact match.** The match is exact text after trimming. A run that writes `git push origin job/ad-0017 ` with an
-   extra flag falls back to Valery. Do you agree that strict is right?
-3. **Which outcome retries.** Only `failed` retries. `not_done` ("I could not finish") always waits for you. Is that right?
-4. **The fix-round count.** Fix rounds count per job across all `retry` steps, with no reset after your own Return to.
-   Should your return reset the count?
-5. **Auto timers after a restart.** An automatic accept or approve waits 6 s (`delay`) in memory. If the console restarts
-   in that window, the draft waits for you. I propose to leave it, since it fails towards you. Should a sweep on start
-   take it up instead?
-6. **Approval scope.** The grant covers the whole job, including later rounds, until you Withdraw it or the job goes
-   back to Analysis. Should it also lapse after a time?
-7. **Live proof.** It costs a few real Claude runs on the scratch console. Are those fine, or should a fake provider be
-   enough?
+The live proof uses **real Claude runs** (answer 7).
+
+## Decisions (Valery, 2026-10-18, answers to the open questions of the first draft)
+
+1. **`{pr}`: no.** Valery answered "-". The placeholders stay `{branch}` and `{base}`, and the merge is
+   `gh pr merge {branch} --merge`. This job does not wait on AD-0016.
+2. **Exact match: yes.** A command that differs in any way from the list waits for Valery.
+3. **Only `failed` retries: yes.** `not_done` always waits for Valery.
+4. **A person's round resets the fix-round count: yes** (see Counting in §3).
+5. **Auto timers after a restart: leave them.** A draft caught by a restart waits for Valery. No sweep on start.
+6. **No time limit on the approval.** It lasts until Withdraw, or until the job goes back to Analysis.
+7. **The live proof uses real Claude runs**, not a fake provider.
+
+No open questions remain.
