@@ -35,7 +35,7 @@ const ACTIONS = new Set(['chat.open', 'chat.post', 'mail.send', 'review.vote', '
 /** B's concepts */
 const STATE = ['jobs', 'runs', 'playbooks', 'marks']
 const CONSOLE_ONLY = new Set(['/api/act', '/api/state/put', '/api/state/new-job-id'])
-const MAX_DOC = 256 * 1024
+const MAX_DOC = 512 * 1024
 
 /** the demo's one picture, a 32x20 png, for every image a demo work item lists */
 const PIC = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAUCAIAAABj86gYAAAAKElEQVR42mP4SmPAMGoBSRbcsTGiChq1YNSCUQtGLaDEgtHiekAsAAD8b2YsPCRrAwAAAABJRU5ErkJggg=='
@@ -51,10 +51,11 @@ const PEOPLE0 = [
 const BASE = ['chat', 'mail', 'cal', 'work', 'review', 'board', 'time', 'ci']
 
 /** seed = what A starts with; me = who Start puts an item on; board = the workspace's board, whose columns Start
-    moves an item between; log = where a request that threw is written */
+    moves an item between; log = where a request that threw is written; echo = a put answers the whole documents, as
+    a bridge from before 2026-10-19 did, instead of their versions */
 export async function startFakeGateway(o: {
   port?: number; token?: string; llmToken?: string; statusMs?: number; seed?: FakeSeed; me?: string; board?: Pick<Board, 'ready' | 'dev'>
-  log?: (line: string) => void
+  log?: (line: string) => void; echo?: boolean
 } = {}): Promise<FakeGateway> {
   const token = o.token ?? 'fake-console-token', llmToken = o.llmToken ?? 'fake-llm-token', me = o.me ?? 'You'
   const log = o.log ?? console.error
@@ -123,13 +124,13 @@ export async function startFakeGateway(o: {
       return { status: 'conflict', message: `${concept} '${id}' is at v${cur?.v ?? '-'}, not v${expectV ?? '-'}`, items: cur ? { current: cur } : null }
     if (doc === null) {
       if (cur) { change({ concept, removes: [id] }); rejoin(concept) }
-      return { status: 'ok', rev: cs[concept].rev, items: { doc: null, replaced: cur ?? null } }
+      return { status: 'ok', rev: cs[concept].rev, items: o.echo ? { doc: null, replaced: cur ?? null } : { v: null, replacedV: cur?.v ?? null } }
     }
     const saved: Item = { ...doc, id, v: (expectV ?? 0) + 1, updated: now() }
-    if (JSON.stringify(saved).length > MAX_DOC) return { status: 'too_large', message: 'a document is capped at 256 KB' }
+    if (JSON.stringify(saved).length > MAX_DOC) return { status: 'too_large', message: 'a document is capped at 512 KB' }
     change({ concept, upserts: [saved] })
     rejoin(concept)
-    return { status: 'ok', rev: cs[concept].rev, items: { doc: saved, replaced: cur ?? null } }
+    return { status: 'ok', rev: cs[concept].rev, items: o.echo ? { doc: saved, replaced: cur ?? null } : { v: saved.v, replacedV: cur?.v ?? null } }
   }
 
   // as the pack: a free item or one already on you; one in the board's ready column moves to its dev column

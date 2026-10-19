@@ -15,7 +15,7 @@ import type { Target } from './session.ts'
 /** jobs over a store whose writes fail with 413 while big.v, and a hear that records */
 function setup() {
   const st = fileStore(join(tempDir('re'), 's.json'), demoSeed), big = { v: false }
-  const store: Store = { ...st, putJob: (j, v) => (big.v ? Promise.reject(Object.assign(new Error('a document is capped at 256 KB'), { status: 413 })) : st.putJob(j, v)) }
+  const store: Store = { ...st, putJob: (j, v) => (big.v ? Promise.reject(Object.assign(new Error('a document is capped at 512 KB'), { status: 413 })) : st.putJob(j, v)) }
   const jobs = new Jobs({ store, bus: new Bus(), ctx: demoCtx, gate: () => true })
   const heard: [Target, string, boolean][] = []
   const off = agentReactor({ jobs, agent: { hear: async (t, l, turn) => { heard.push([t, l, turn]) } }, ctx: demoCtx })
@@ -89,7 +89,7 @@ test('a 413 on accept tells the agent and starts its turn', async (t) => {
   big.v = true
   await assert.rejects(jobs.cmd(j.id, { op: 'ppAccept' }), (e: unknown) => (e as { status?: number }).status === 413)
   await assert.rejects(jobs.cmd(j.id, { op: 'noteAdd', step: at, k: 'q', t: 'x' }), (e: unknown) => (e as { status?: number }).status === 413)
-  assert.deepEqual(heard, [[{ conv: 'conv-7' }, `Your proposal for ${j.id} was not applied: the job would pass 256 KB. Propose fewer or shorter changes.`, true]])
+  assert.deepEqual(heard, [[{ conv: 'conv-7' }, `Your proposal for ${j.id} was not applied: the job would pass 512 KB. Propose fewer or shorter changes.`, true]])
   big.v = false
   off()
   await jobs.cmd(j.id, { op: 'ppAccept' })

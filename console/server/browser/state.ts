@@ -13,7 +13,7 @@ export interface StateDocs {
   seq(n: number): Promise<void>
 }
 
-const MAX_DOC = 256 * 1024, CHAT_CAP = 30
+const MAX_DOC = 512 * 1024, CHAT_CAP = 30
 type Item = { id: string; [k: string]: unknown }
 
 /** one JSON file {kind:'state', docs, seq}, rewritten through a temp file and a rename */
@@ -116,7 +116,7 @@ export class StateB {
       if ((cur?.v ?? null) !== expectV)
         return { status: 'conflict', message: `${concept} '${id}' is at v${cur?.v ?? '-'}, not v${expectV ?? '-'}`, items: cur ? { current: cur } : null }
       const saved: Doc | null = doc ? { ...doc, id, v: (expectV ?? 0) + 1, updated: new Date(this.now()).toISOString() } : null
-      if (saved && JSON.stringify(saved).length > MAX_DOC) return { status: 'too_large', message: 'a document is capped at 256 KB' }
+      if (saved && JSON.stringify(saved).length > MAX_DOC) return { status: 'too_large', message: 'a document is capped at 512 KB' }
       if (!saved && !cur) return { status: 'ok', rev: this.revs[concept], items: { doc: null, replaced: null } }
       try { await this.docs.put(concept, id, saved) } catch (e) { return this.unavailable(e) }
       if (saved) m.set(id, saved); else m.delete(id)

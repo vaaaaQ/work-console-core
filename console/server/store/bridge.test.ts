@@ -10,10 +10,11 @@ import { GatewayError } from '../bridge/wire.ts'
 import { Bus } from '../events.ts'
 import { demoFake, demoSeed } from '../testkit.ts'
 import { bridgeStore } from './bridge.ts'
+import type { StateGateway } from './bridge.ts'
 import { Conflict } from './port.ts'
 
-async function setup(prefix = 'J') {
-  const fake = await startFakeGateway({ statusMs: 50, seed: demoFake() })
+async function setup(prefix = 'J', echo = false) {
+  const fake = await startFakeGateway({ statusMs: 50, seed: demoFake(), echo })
   const bus = new Bus()
   const client = new BridgeClient({ url: fake.url, token: () => fake.token, bus, backoff: [30, 60] })
   const store = bridgeStore({ bridge: client, bus, playbooks: PB0, prefix })
@@ -76,6 +77,46 @@ test('a late delta never takes a job back to an older v', async () => {
     await new Promise((r) => setTimeout(r, 100))
     assert.equal((await store.job('J-0001'))?.t, 'second')
   } finally { await stop() }
+})
+
+test('B answers a write with versions only; the store returns the job it sent under the new v', async () => {
+  const { fake, store, stop } = await setup()
+  try {
+    const raw = await put(fake.url, fake.token, { concept: 'runs', id: 'r-raw', doc: { q: 'x' }, expectV: null })
+    assert.deepEqual(raw.body.items, { v: 1, replacedV: null })
+    const v1 = await store.putJob(newJob(), null)
+    const v2 = await store.putJob({ ...v1, t: 'second' }, 1)
+    assert.equal(v2.v, 2); assert.equal(v2.id, 'J-0001'); assert.equal(v2.t, 'second')
+    assert.deepEqual(await store.job('J-0001'), v2)
+    await store.putMark('chat:c1', { kept: true })
+    await store.putMark('chat:c1', null)
+    assert.equal((await store.marks())['chat:c1'], undefined)
+  } finally { await stop() }
+})
+
+test('a bridge that still echoes the documents is understood the same way', async () => {
+  const { fake, store, stop } = await setup('J', true)
+  try {
+    const raw = await put(fake.url, fake.token, { concept: 'runs', id: 'r-raw', doc: { q: 'x' }, expectV: null })
+    assert.equal(raw.body.items.doc.v, 1)
+    const v1 = await store.putJob(newJob(), null)
+    const v2 = await store.putJob({ ...v1, t: 'second' }, 1)
+    assert.equal(v2.v, 2); assert.equal(v2.t, 'second')
+    assert.deepEqual(await store.job('J-0001'), v2)
+  } finally { await stop() }
+})
+
+test('a write answered without its version is bad_reply, and the next read asks B again', async () => {
+  let reads = 0
+  const empty = { status: 'ok', rev: 1, items: [] }
+  const bridge: StateGateway = {
+    read: async () => { reads++; return { jobs: empty, runs: empty, playbooks: empty, marks: empty } },
+    state: async () => ({ status: 'ok', rev: 1, items: {} }),
+  }
+  const store = bridgeStore({ bridge, bus: new Bus(), playbooks: PB0, prefix: 'J' })
+  await assert.rejects(store.putJob(newJob(), null), (e: unknown) => e instanceof GatewayError && e.code === 'bad_reply' && e.status === 502)
+  await store.jobs()
+  assert.equal(reads, 2)
 })
 
 test('marks merge, and mail comes back joined from the bridge', async () => {

@@ -8,7 +8,7 @@ import type { Push } from '../spaces.ts'
 /* An agent's changes reach a job only as a proposal through here: tried on a copy, kept under the store's cap,
    set by the console and pushed once. The person accepts or rejects it on the page. */
 
-export const PP_MAX = 250_000
+export const PP_MAX = 500_000
 const PP_CMDS = 30
 const clip = (t: string, n: number) => (t.length > n ? t.slice(0, n - 1) + '…' : t)
 
@@ -40,7 +40,7 @@ export class Proposer {
       if (e instanceof T.CmdError) return `Not proposed: ${e.message}`
       throw e
     }
-    if (JSON.stringify(after).length > PP_MAX) return 'Not proposed: the job would grow past 250 KB; propose fewer or shorter changes.'
+    if (JSON.stringify(after).length > PP_MAX) return 'Not proposed: the job would grow past 500 KB; propose fewer or shorter changes.'
     this.busy.add(id)
     try { await this.o.jobs.cmd(id, { op: 'ppSet', say: s, cmds, by }, undefined, 'console') } catch (e) {
       if (e instanceof HttpError && e.status < 500) return `Not proposed: ${e.message}`

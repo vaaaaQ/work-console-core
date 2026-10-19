@@ -28,7 +28,7 @@ export function agentReactor(o: { jobs: Pick<Jobs, 'onCmd' | 'onFail'>; agent: P
   })
   const offFail = o.jobs.onFail(({ cmd: c, prev, error }) => {
     if (c.op === 'ppAccept' && error.status === 413)
-      hear(to(prev), `Your proposal for ${prev.id} was not applied: the job would pass 256 KB. Propose fewer or shorter changes.`, true)
+      hear(to(prev), `Your proposal for ${prev.id} was not applied: the job would pass 512 KB. Propose fewer or shorter changes.`, true)
   })
   return () => { offCmd(); offFail() }
 }

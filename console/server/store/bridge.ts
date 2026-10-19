@@ -20,7 +20,8 @@ type Doc = { id: string; v: number; [k: string]: unknown }
 const KINDS = ['jobs', 'runs', 'playbooks', 'marks'] as const
 type Kind = typeof KINDS[number]
 type Mirror = Record<Kind, Map<string, Doc>>
-type Written = { doc?: Doc | null; replaced?: Doc | null; current?: Doc | null }
+/** B answers a write with versions only; an older B and a local source echo the documents as doc and replaced */
+type Written = { v?: number | null; replacedV?: number | null; doc?: Doc | null; replaced?: Doc | null; current?: Doc | null }
 
 const isKind = (c: string): c is Kind => (KINDS as readonly string[]).includes(c)
 const clone = <T>(x: T): T => structuredClone(x)
@@ -74,7 +75,8 @@ export function bridgeStore(o: { bridge: StateGateway; bus: Bus; playbooks: Reco
     for (const id of e.removes) { mirror?.[e.concept].delete(id); gone.delete(`${e.concept}/${id}`) }
   })
 
-  async function put(k: Kind, id: string, doc: Record<string, unknown> | null, expectV: number | null): Promise<Written> {
+  /** the stored document, null after a delete */
+  async function put(k: Kind, id: string, doc: Record<string, unknown> | null, expectV: number | null): Promise<Doc | null> {
     await docs() // a mirror to keep current: the reply below and any late delta go through the v guard
     const r = await o.bridge.state('POST', '/api/state/put', { concept: k, id, doc, expectV })
     const it = (r.items ?? {}) as Written
@@ -85,9 +87,14 @@ export function bridgeStore(o: { bridge: StateGateway; bus: Bus; playbooks: Reco
     // unconfirmed: the mirror may be wrong either way, so the next read asks B
     if (r.status === 'outcome_unknown') reset()
     if (!READY.has(r.status)) throw stateError(r)
-    if (it.doc) keep(k, it.doc)
-    else { mirror?.[k].delete(id); if (it.replaced) gone.set(`${k}/${id}`, it.replaced.v) }
-    return it
+    // what B stored is what was sent, stamped with id and v
+    const saved = it.doc !== undefined ? it.doc
+      : doc && typeof it.v === 'number' ? { ...JSON.parse(JSON.stringify(doc)), id, v: it.v } as Doc : null
+    if (doc && !saved) { reset(); throw new GatewayError(502, 'bad_reply', `the bridge answered the write of ${k} ${id} without its version`) }
+    const removed = it.replaced?.v ?? it.replacedV
+    if (saved) keep(k, saved)
+    else { mirror?.[k].delete(id); if (typeof removed === 'number') gone.set(`${k}/${id}`, removed) }
+    return saved
   }
   /** a write that only this console makes: on a conflict take B's v and write again */
   async function putLatest(k: Kind, id: string, doc: (cur: Doc | undefined) => Record<string, unknown> | null) {
@@ -104,7 +111,7 @@ export function bridgeStore(o: { bridge: StateGateway; bus: Bus; playbooks: Reco
   return {
     async jobs() { return [...(await docs()).jobs.values()].map(asJob).sort((a, b) => b.id.localeCompare(a.id)) },
     async job(id) { const d = (await docs()).jobs.get(id); return d && asJob(d) },
-    async putJob(job, expectV) { return asJob((await put('jobs', job.id, { ...job }, expectV)).doc!) },
+    async putJob(job, expectV) { return asJob((await put('jobs', job.id, { ...job }, expectV))!) },
     async runs() { return [...(await docs()).runs.values()].map(asRun) },
     async putRun(r) { await putLatest('runs', r.id, () => ({ ...r })) },
     async playbooks() {

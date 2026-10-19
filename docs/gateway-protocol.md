@@ -57,7 +57,7 @@ Every endpoint except `/api/events` and `/api/snapshot` answers `200` with one r
 | `GET /api/snapshot?concepts=a,b` | empty means all | the whole answer is `{bridge:{state,at}, counts:{chatUnread, mailToReply}, concepts:{name: reply}}` |
 | `GET /api/items/{concept}/{id}` | optional `?cursor=`, `?pack=` | the detail (`*.get` schema); for a B concept, the document |
 | `POST /api/act` | `{action, actionId, args}` | the act's own result, or `null` |
-| `POST /api/state/put` | `{concept, id, doc \| null, expectV}` | `{doc, replaced}`; `conflict` carries `{current}` |
+| `POST /api/state/put` | `{concept, id, doc \| null, expectV}` | `{v, replacedV}`, `v` null after a delete; a gateway may answer `{doc, replaced}` instead, the whole documents; `conflict` carries `{current}` |
 | `POST /api/state/new-job-id` | none | `{id: 'J-0001'}`, always `J-NNNN`; a console renames it to its workspace's prefix and stores the job under that id, as `put` takes any id |
 | `GET /api/events` | | SSE: `status` and `delta` frames |
 
@@ -99,7 +99,7 @@ suggestions, 0 none, -5 waiting, -10 rejected), `merge` and, while it is active,
 shows less.
 
 `put` with `expectV: null` creates the document; any other value must equal the stored `v`. The
-stored document gets `v = expectV + 1` and `updated`. A document is capped at 256 KB.
+stored document gets `v = expectV + 1` and `updated`. A document is capped at 512 KB.
 
 ## Events
 

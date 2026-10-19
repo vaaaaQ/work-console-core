@@ -50,9 +50,9 @@ test('a delete replies with what it replaced', async () => {
   assert.deepEqual(b.items('marks'), [])
 })
 
-test('a document over 256 KB is too_large; an unknown concept or an empty id is bad_request', async () => {
+test('a document over 512 KB is too_large; an unknown concept or an empty id is bad_request', async () => {
   const { b } = await fresh()
-  assert.equal((await b.put({ concept: 'runs', id: 'r', doc: { log: 'x'.repeat(256 * 1024) }, expectV: null })).status, 'too_large')
+  assert.equal((await b.put({ concept: 'runs', id: 'r', doc: { log: 'x'.repeat(512 * 1024) }, expectV: null })).status, 'too_large')
   assert.equal((await b.put({ concept: 'mail', id: 'm', doc: {}, expectV: null })).status, 'bad_request')
   assert.equal((await b.put({ concept: 'jobs', id: '', doc: {}, expectV: null })).status, 'bad_request')
   assert.equal((await b.put('nonsense')).status, 'bad_request')

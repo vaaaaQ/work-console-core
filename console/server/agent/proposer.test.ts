@@ -52,7 +52,7 @@ test('a proposal that would pass PP_MAX is refused', async () => {
   let sets = 0
   const pp = new Proposer({ jobs: { get: async () => j, all: async () => [j], cmd: async () => { sets++; return {} as never } }, ctx: demoCtx, push: async () => {} })
   assert.equal(await pp.propose(j.id, 'x', [{ op: 'noteAdd', step: 'tr', k: 'q', t: 'who?' }], 'c'), '')
-  assert.equal(await pp.propose(j.id, 'x', [{ op: 'noteAdd', step: 'tr', k: 'q', t: 'y'.repeat(2000) }], 'c'), 'Not proposed: the job would grow past 250 KB; propose fewer or shorter changes.')
+  assert.equal(await pp.propose(j.id, 'x', [{ op: 'noteAdd', step: 'tr', k: 'q', t: 'y'.repeat(2000) }], 'c'), 'Not proposed: the job would grow past 500 KB; propose fewer or shorter changes.')
   assert.equal(sets, 1, 'only the small one is set')
 })
 
