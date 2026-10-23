@@ -50,6 +50,12 @@ test("a session never reads the user's own CLAUDE.md, which a work dir under the
   assert.deepEqual(permissions([]).settings.claudeMdExcludes, [`${h}/.claude/CLAUDE.md`, `${h}/.claude/rules/**`])
 })
 
+test("a run's and the workspace agent's commits and PRs carry no Claude attribution, whatever the user's settings say", () => {
+  const limits = agentLimits(join(tmpdir(), 'consumer'), 'w1', [])
+  for (const s of [permissions([]).settings, permissions(['Read'], false, true).settings, agentOptions({ limits, tools: [], system: '' }).settings])
+    assert.deepEqual(s.attribution, { commit: '', pr: '' })
+})
+
 test("a session's MCP servers: A's bridge with the LLM token, its run tools, and the workspace's own", () => {
   const run = { type: 'sdk' } as never, tracker = { type: 'http', url: 'http://127.0.0.1:1/mcp' }
   const s = mcpServers({ gatewayUrl: 'http://127.0.0.1:47821/', llmToken: () => 'llm-tok', mcp: { tracker } }, run)

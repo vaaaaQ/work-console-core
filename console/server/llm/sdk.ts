@@ -92,6 +92,9 @@ export const DENY = [
 const HOME = homedir().split(sep).join('/')
 /** the user's own CLAUDE.md and rules, which Claude Code reads as any parent folder's */
 const USER_MD = [`${HOME}/.claude/CLAUDE.md`, `${HOME}/.claude/rules/**`]
+/** a session's own settings, above the repo's project settings: the user's CLAUDE.md stays out, and its commits and PRs
+    carry no Co-Authored-By trailer or other Claude attribution. The object form, which an older Claude Code binary also takes */
+const SETTINGS = { claudeMdExcludes: USER_MD, attribution: { commit: '', pr: '' } }
 
 /** the permission half of a session's options: which settings load and which tools it may use.
     strictMcpConfig keeps the user's own user-scope MCP servers, the console's own job tools among them, out;
@@ -99,7 +102,7 @@ const USER_MD = [`${HOME}/.claude/CLAUDE.md`, `${HOME}/.claude/rules/**`]
 export function permissions(runTools: string[], bridge = true, browser = false) {
   return {
     settingSources: ['project'] as ('project')[],
-    settings: { claudeMdExcludes: USER_MD },
+    settings: SETTINGS,
     strictMcpConfig: true,
     permissionMode: 'dontAsk' as const,
     allowedTools: [...(bridge ? ALLOW : ALLOW.filter((t) => !BRIDGE.includes(t))), ...(browser ? BROWSER_TOOLS : []), ...runTools],
@@ -128,7 +131,7 @@ export function agentOptions(o: { limits: Limits; tools: string[]; system: strin
   return {
     cwd: l.cwd,
     settingSources: ['project'] as SettingSource[],
-    settings: { claudeMdExcludes: USER_MD },
+    settings: SETTINGS,
     strictMcpConfig: true,
     permissionMode: 'dontAsk' as const,
     tools: ['Read', 'Glob', 'Grep', 'Edit', 'Write'],
