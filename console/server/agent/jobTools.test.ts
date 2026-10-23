@@ -62,6 +62,15 @@ test('step_output gives the draft, the output and the artifact names', async () 
   assert.equal(await tool('step_output').run({ id: j.id, step: 'nope' }), `${j.id} has no step nope`)
 })
 
+test('step_output lists the step\'s facts, and the ones its draft would leave', async () => {
+  const { j, tool } = await setup()
+  const m = { at: '2026-10-09T12:00:00Z', step: 'dr' }
+  j.flow.dr.fx = [{ kind: 'branch', repo: 'core', name: 'job/x', sha: 'abcdef1', ...m }]
+  j.flow.dr.dr = { t: 'v2', at: m.at, fx: [{ kind: 'check', name: 'unit', ok: true, ...m }] }
+  const t = await tool('step_output').run({ id: j.id, step: 'dr' })
+  assert.match(t, /\n## Facts\n- branch job\/x at abcdef1 \(repo core; from "Draft the answer"\)\n- check "unit" passed \(from "Draft the answer"\) — in the draft$/)
+})
+
 test('there are no send, act or job_command tools; propose answers Proposed and signs with the conversation', async () => {
   const { j, d, tools, proposed, tool } = await setup()
   assert.deepEqual(tools.map((t: AskTool) => t.name), ['list_jobs', 'get_job', 'step_output', 'propose', 'knowledge_search', 'knowledge_read'])

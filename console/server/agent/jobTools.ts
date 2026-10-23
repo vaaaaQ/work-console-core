@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import * as T from '../../src/model/transitions.ts'
+import { factLine } from '../../src/model/facts.ts'
 import type { Cmd, Job, RunRec } from '../../src/model/types.ts'
 import type { Jobs } from '../jobs/jobs.ts'
 import type { Notes } from '../knowledge/notes.ts'
@@ -68,12 +69,15 @@ export function jobAgentTools(o: { ws: string; conv: string; d: JobDeps }): AskT
         if (typeof j === 'string') return j
         const s = stepOf(x, j, a.step), f = s && j.flow[s.id]
         if (!s || !f) return `${j.id} has no step ${str(a.step)}`
+        const title = (id: string) => T.stepOf(x, j, id)?.t ?? id
         const arts = f.arts.map((r) => r.n + (r.ok ? '' : ' (planned)'))
         return [
           `${j.id} step ${s.id} “${s.t}” (${f.s})`,
           ...(f.dr ? ['## Draft', clip(f.dr.t)] : ['## Draft', 'none']),
           ...(f.out ? ['## Output', clip(f.out)] : ['## Output', 'none']),
           '## Artifacts', clip(arts.join('\n') || 'none'),
+          ...(f.fx?.length || f.dr?.fx?.length ? ['## Facts', ...(f.fx ?? []).map((g) => `- ${factLine(g, title)}`),
+            ...(f.dr?.fx ?? []).map((g) => `- ${factLine(g, title)} — in the draft`)] : []),
         ].join('\n')
       },
     },

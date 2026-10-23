@@ -2,6 +2,8 @@ import { BK } from '../../src/data/core.ts'
 import { contextSection, ctxLabel, renderNote } from '../../src/model/context.ts'
 import type { Resolved } from '../../src/model/context.ts'
 import * as T from '../../src/model/transitions.ts'
+import { factLine, factText, isNone, latestFacts } from '../../src/model/facts.ts'
+import type { CheckFact, Fact, RoundFact } from '../../src/model/facts.ts'
 import type { Flow, Job, RunIntent, WaitLink } from '../../src/model/types.ts'
 import type { Note } from '../knowledge/notes.ts'
 
@@ -38,6 +40,29 @@ export function blockersText(f: Flow | undefined): string {
   ].join('\n\n')
 }
 
+/** the facts a run is given: this round's latest of each kind, then one line per earlier round: why it went back,
+    the checks that failed in it and against what, and a review that sent it back */
+export function factsText(x: T.Ctx, j: Job): string {
+  const title = (id: string) => T.stepOf(x, j, id)?.t ?? id
+  const now = latestFacts(T.factsNow(x, j).filter((f) => f.kind !== 'round')).map((f) => `- ${factLine(f, title)}`)
+  const rounds = j.rounds ?? [], all: Fact[] = [...rounds.flatMap((r) => Object.values(r.flow)), ...Object.values(j.flow)].flatMap((f) => f.fx ?? [])
+  const past = rounds.map((r) => {
+    const rf = all.find((f): f is Fact & RoundFact => f.kind === 'round' && !isNone(f) && (f as RoundFact).n === r.n)
+    const fx = Object.values(r.flow).flatMap((f) => f.fx ?? [])
+    const bad = fx.filter((f): f is Fact & CheckFact => f.kind === 'check' && !isNone(f) && !(f as CheckFact).ok).map((f) => factText(f))
+    const back = fx.filter((f) => f.kind === 'review' && !isNone(f) && (f as { verdict: string }).verdict === 'sent_back').map((f) => factText(f))
+    const head = rf ? `round ${r.n} → back to "${title(rf.back_to)}": ${rf.why}` : `round ${r.n}: ${r.why}`
+    return rf || bad.length || back.length ? `- ${[head, ...bad, ...back].join('; ')}` : ''
+  }).filter(Boolean)
+  if (!now.length && !past.length) return ''
+  return ['## Facts', ...(now.length ? ['This round:', ...now] : []), ...(past.length ? ['Earlier rounds:', ...past] : [])].join('\n')
+}
+/** the How to work line of a step that declares facts; how = how its session hands them in */
+const factsRule = (x: T.Ctx, j: Job, step: string, how: string) => {
+  const k = T.stepOf(x, j, step)?.fx ?? []
+  return k.length ? [`- This step reports facts with ${how}: ${k.join(', ')}. A done draft without them is refused; when there is honestly nothing to report, give {kind, none: why}.`] : []
+}
+
 function parts(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn) {
   const s = T.stepOf(x, j, step), pb = x.PB[j.pb], ctx = o.ctx ?? []
   const own = ctx.filter((r) => r.k === 'note'), mine = new Set(own.map((r) => r.id))
@@ -65,6 +90,7 @@ function parts(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn) {
     notes.length ? `## Knowledge\n${notes.join('\n\n')}` : '',
     bl ? `## Blockers\n${bl}` : '',
     block(`## Questions on this step${all.length > kept.length ? ` (the latest ${kept.length} of ${all.length})` : ''}`, qs),
+    factsText(x, j),
     outs.length ? `## Earlier outputs\n${outs.join('\n\n')}` : '',
     rs.section,
     block(`## Journal (oldest first${j.jr.length > JR_MAX ? `; the latest ${JR_MAX} of ${j.jr.length}` : ''})`, jr),
@@ -122,6 +148,7 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: Prompt
       ...(o.files ? [`- A source message lists the files it carries in files; save one with save_source_file(concept, id, file) when its content matters to the step, then read the copy under .source-files/<job id>/.`] : []),
       LINKS_LINE,
       `- Finish by calling submit_draft(text) exactly once with the draft for ${w} to review. Without it the run counts as failed.`,
+      ...factsRule(x, j, step, 'submit_draft(facts)'),
       NOT_DONE_LINE,
       ...(by.length ? [messageAlone(by, w, 'submit_draft', 'in journal()')] : []),
       ...(p.resend ? [p.resend] : []),
@@ -152,6 +179,7 @@ export function manualText(x: T.Ctx, j: Job, step: string, q: string, o: PromptI
       `- You never send anything to a source (no chat posts, mails, votes, comments or state changes): ${w} sends after review.`,
       LINKS_LINE,
       `- Finish by calling submit_draft {id: "${j.id}", step: "${step}", output} on the work-console MCP server exactly once, with the draft for ${w} to review; files the step expects go in its artifacts as {name, content}.`,
+      ...factsRule(x, j, step, "submit_draft's facts"),
       NOT_DONE_LINE,
       ...(by.length ? [messageAlone(by, w, "submit_draft's output", 'in this session, not in the draft')] : []),
       ...(p.resend ? [p.resend] : []),

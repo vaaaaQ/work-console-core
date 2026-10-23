@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { approveText, redoText, replyPrompt, buildPrompt, blockersText, manualText, contextText } from './prompt.ts'
 import { apply, freshJob } from '../../src/model/transitions.ts'
 import { demoCtx } from '../testkit.ts'
-import type { Cmd, Flow } from '../../src/model/types.ts'
+import type { Cmd, Flow, Job } from '../../src/model/types.ts'
 
 test('a reply prompt carries the text and one line by intent', () => {
   assert.match(replyPrompt('make it shorter', 'revise', 'Valery'), /^Valery replied to your draft:\n\nmake it shorter\n\nChange the draft .*submit_draft with the whole new text\.$/s)
@@ -166,4 +166,45 @@ test('the save_source_file line only where runs can save source files', () => {
   const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
   assert.match(buildPrompt(x, j, 'dr', 'go', { files: true }), /save_source_file\(concept, id, file\)/)
   assert.doesNotMatch(buildPrompt(x, j, 'dr', 'go', {}), /save_source_file/)
+})
+
+/** a dev flow whose steps declare facts, on the demo playbooks */
+function devCtx() {
+  const x = demoCtx()
+  x.PB.fxdev = { ws: 'acme', n: 'Dev', ph: [{ c: 'B', n: 'B', s: [
+    { id: 'fxb', t: 'Build it', m: 'llm', x: 'green', fx: ['branch'] }, { id: 'fxd', t: 'Deploy', m: 'llm', x: 'deployed', fx: ['deploy'] },
+    { id: 'fxs', t: 'Smoke test', m: 'llm', x: 'live', fx: ['check'] }] }] }
+  return x
+}
+const by = (x: ReturnType<typeof demoCtx>, j: Job, step: string, cmds: Cmd[]) => cmds.reduce((k, c) => apply(x, k, c).job, apply(x, j, { op: 'runStart', step, q: 'go', id: `r-${step}` }).job)
+
+test('## Facts: the latest fact of each kind this round, earlier rounds one line each, before Earlier outputs; none without facts', () => {
+  const x = devCtx()
+  let j = apply(x, freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'fxdev', prj: 'p', ws: 'acme' }), { op: 'start' }).job
+  assert.doesNotMatch(buildPrompt(x, j, 'fxb', 'go', {}), /## Facts/)
+  const br = (sha: string) => ({ kind: 'branch', repo: 'core', name: 'job/x', sha })
+  j = by(x, j, 'fxb', [{ op: 'runDraft', step: 'fxb', t: 'built', fx: [br('aaaaaaa')] } as Cmd, { op: 'acceptDraft', step: 'fxb' }])
+  j = by(x, j, 'fxd', [{ op: 'runDraft', step: 'fxd', t: 'deployed', fx: [{ kind: 'deploy', what: 'console', where: 'this PC', version: 'aaaaaaa', ok: true }] } as Cmd, { op: 'acceptDraft', step: 'fxd' }])
+  j = by(x, j, 'fxs', [{ op: 'runDraft', step: 'fxs', t: 'blank', o: 'failed', rt: 'fxb', why: 'the view is blank', fx: [{ kind: 'check', name: 'rounds view', ok: false, against: 'aaaaaaa' }] } as Cmd, { op: 'acceptDraft', step: 'fxs' }])
+  j = by(x, j, 'fxb', [{ op: 'runDraft', step: 'fxb', t: 'fixed', fx: [br('bbbbbbb')] } as Cmd, { op: 'acceptDraft', step: 'fxb' }])
+  const p = buildPrompt(x, j, 'fxd', 'go', {})
+  const sec = p.slice(p.indexOf('## Facts'), p.indexOf('\n\n## ', p.indexOf('## Facts') + 1))
+  assert.equal(sec, [
+    '## Facts',
+    'This round:',
+    '- branch job/x at bbbbbbb (repo core; from "Build it")',
+    'Earlier rounds:',
+    '- round 1 → back to "Build it": the view is blank; check "rounds view" failed against aaaaaaa',
+  ].join('\n'))
+  assert.ok(p.indexOf('## Facts') < p.indexOf('## Earlier outputs'))
+  assert.match(contextText(x, j, 'fxd', 'go', {}), /## Facts\nThis round:/)
+  assert.match(manualText(x, j, 'fxd', 'go', {}), /## Facts\nThis round:/)
+})
+
+test('How to work names the kinds the step reports, in a run and a hand-made session; none for a step that declares none', () => {
+  const x = devCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'fxdev', prj: 'p', ws: 'acme' })
+  assert.match(buildPrompt(x, j, 'fxd', 'go', {}), /\n- This step reports facts with submit_draft\(facts\): deploy\. A done draft without them is refused; when there is honestly nothing to report, give \{kind, none: why\}\./)
+  assert.match(manualText(x, j, 'fxd', 'go', {}), /\n- This step reports facts with submit_draft's facts: deploy\./)
+  const a = freshJob(x, 'J-2', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
+  assert.doesNotMatch(buildPrompt(x, a, 'tr', 'go', {}), /reports facts/)
 })
