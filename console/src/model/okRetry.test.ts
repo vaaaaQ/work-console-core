@@ -1,7 +1,7 @@
 import '../testkit.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { CmdError, apply, checkPlaybook, fillOk, fixRoundText, fixRounds, okPreview } from './transitions.ts'
+import { CmdError, acceptWay, apply, checkPlaybook, checkedPlaybook, fillOk, fixRoundText, fixRounds, okPreview } from './transitions.ts'
 import type { Ctx } from './transitions.ts'
 import type { Cmd, DraftReport, Job, Playbook } from './types.ts'
 import { freshJob } from './transitions.ts'
@@ -21,6 +21,8 @@ const SHIP: Playbook = {
 }
 const X: Ctx = { PB: { ship: SHIP }, TPL: {}, now: () => T0 }
 const as = (by: string): Ctx => ({ ...X, by })
+/** what the page's own apply and Jobs.cmd for the page set: the command is the person's, on the page */
+const PG: Ctx = { ...X, page: true }
 const WD = { branch: 'job/s-1', base: 'main' }
 const FILLED = ['git status', 'git push origin job/s-1', 'gh pr create --base main --head job/s-1']
 const code = (f: () => unknown, c: string, m?: RegExp) =>
@@ -32,7 +34,7 @@ const started = () => run(X, freshJob(X, 'S-1', { t: 'Ship it', key: 'K-1', pb: 
 const drafted = (j: Job, sid: string, rep: DraftReport = {}, t = 'the draft') =>
   run(X, run(X, j, { op: 'runStart', step: sid, q: 'go', id: `r-${sid}`, wd: WD }), { op: 'runDraft', step: sid, t, ...rep })
 /** Analysis accepted by the person on the page */
-const granted = () => run(X, drafted(started(), 'a1'), { op: 'acceptDraft', step: 'a1' })
+const granted = () => run(PG, drafted(started(), 'a1'), { op: 'acceptDraft', step: 'a1' })
 /** at Live check, with a draft that reports failed */
 const failedAt = (j: Job, why = 'the health check answers 500') => drafted(j, 'a3', { o: 'failed', why })
 
@@ -61,14 +63,73 @@ test('the person\'s Accept of the ok step grants the filled commands to the job,
 
 test('an Accept that is automatic, said in a reply or a session\'s grants nothing; nor one without a work dir', () => {
   const d = drafted(started(), 'a1')
-  assert.equal(run(X, d, { op: 'acceptDraft', step: 'a1', auto: true }).ok, undefined)
-  assert.equal(run(X, d, { op: 'acceptDraft', step: 'a1', said: true }).ok, undefined)
+  assert.equal(run(PG, d, { op: 'acceptDraft', step: 'a1', auto: true }).ok, undefined)
+  assert.equal(run(PG, d, { op: 'acceptDraft', step: 'a1', said: true }).ok, undefined)
   assert.equal(run(as('Claude Code'), d, { op: 'acceptDraft', step: 'a1' }).ok, undefined)
-  const bare = run(X, run(X, run(X, started(), { op: 'runStart', step: 'a1', q: 'go', id: 'r1' }), { op: 'runDraft', step: 'a1', t: 'd' }), { op: 'acceptDraft', step: 'a1' })
+  const bare = run(PG, run(X, run(X, started(), { op: 'runStart', step: 'a1', q: 'go', id: 'r1' }), { op: 'runDraft', step: 'a1', t: 'd' }), { op: 'acceptDraft', step: 'a1' })
   assert.equal(bare.ok, undefined)
   assert.match(bare.jr[0].o, /^Approved nothing for this job: the job has no work dir yet/)
   assert.deepEqual(okPreview(X, run(X, run(X, started(), { op: 'runStart', step: 'a1', q: 'go', id: 'r1' }), { op: 'runDraft', step: 'a1', t: 'd' }), 'a1'),
     { why: 'the job has no work dir yet, so {branch} and {base} do not fill' })
+})
+
+test('only the page grants: a session or anything else whose signer is named "you" grants nothing', () => {
+  const d = drafted(started(), 'a1')
+  assert.equal(run(as('you'), d, { op: 'acceptDraft', step: 'a1' }).ok, undefined)
+  assert.equal(run(X, d, { op: 'acceptDraft', step: 'a1' }).ok, undefined, 'no page flag, the default signer')
+  assert.deepEqual(run({ ...PG, by: 'Valery' }, d, { op: 'acceptDraft', step: 'a1' }).ok?.cmds, FILLED)
+})
+
+test('ok commands are trimmed as draft commands are, so a trailing newline does not stop the console approving', () => {
+  assert.deepEqual(fillOk(['  git status\n', 'echo {branch}\r\n'], WD), ['git status', 'echo job/s-1'])
+  const nl: Playbook = { ...SHIP, ok: { at: 'a1', cmds: ['git status\n', ' git push origin {branch} '] } }
+  assert.doesNotThrow(() => checkPlaybook('ship', nl))
+  const x: Ctx = { ...PG, PB: { ship: nl } }
+  const j = run(x, run(x, run(x, started(), { op: 'runStart', step: 'a1', q: 'go', id: 'r1', wd: WD }), { op: 'runDraft', step: 'a1', t: 'd' }), { op: 'acceptDraft', step: 'a1' })
+  assert.deepEqual(j.ok!.cmds, ['git status', 'git push origin job/s-1'])
+  // the limit counts the trimmed text, as for a draft's commands
+  assert.doesNotThrow(() => checkPlaybook('ship', { ...SHIP, ok: { at: 'a1', cmds: [' ' + 'x'.repeat(2000) + '\n'] } }))
+  assert.throws(() => checkPlaybook('ship', { ...SHIP, ok: { at: 'a1', cmds: ['x'.repeat(2001)] } }), /longer/)
+})
+
+test('reopening the ok step alone, nothing after it reached, lets the approval lapse too', () => {
+  const ONE: Playbook = { n: 'One', ok: { at: 'b2', cmds: ['git status'] }, ph: [{ c: 'A', n: 'A', s: [
+    { id: 'b1', t: 'Build', m: 'llm', x: 'x' }, { id: 'b2', t: 'Analysis', m: 'llm', x: 'x' }] }] }
+  const x: Ctx = { ...PG, PB: { one: ONE } }
+  let j = run(x, freshJob(x, 'O-1', { t: 'One', key: 'K', pb: 'one', prj: 'p', ws: 'acme' }), { op: 'start' })
+  j = run(x, j, { op: 'stepDone', step: 'b1' })
+  j = run(x, run(x, run(x, j, { op: 'runStart', step: 'b2', q: 'go', id: 'r', wd: WD }), { op: 'runDraft', step: 'b2', t: 'd' }), { op: 'acceptDraft', step: 'b2' })
+  assert.deepEqual(j.ok?.cmds, ['git status'])
+  const r = run(x, j, { op: 'stepReopen', step: 'b2' })
+  assert.equal(r.rounds, undefined, 'reopened alone, no new round')
+  assert.equal(r.ok, undefined)
+  assert.ok(r.jr.some((e) => e.o === 'The one-time approval of 1 command lapsed.'))
+  assert.deepEqual(run(x, j, { op: 'stepReopen', step: 'b1' }).ok, undefined, 'going back before it')
+})
+
+test('checkedPlaybook keeps a stored playbook that fails the check, without its ok and retry, and says why', () => {
+  assert.deepEqual(checkedPlaybook('ship', SHIP), { pb: SHIP })
+  const bad: Playbook = { ...SHIP, ok: { at: 'a1', cmds: ['gh pr merge {pr}'] } }
+  const c = checkedPlaybook('ship', bad)
+  assert.match(c.err!, /\{pr\}/)
+  assert.equal(c.pb.ok, undefined)
+  assert.ok(c.pb.ph.flatMap((p) => p.s).every((s) => !s.retry))
+  assert.equal(c.pb.ph.flatMap((p) => p.s).length, 4, 'the steps stay, so its jobs go on')
+  assert.ok(bad.ok, 'the input is not changed')
+})
+
+test('acceptWay: a draft that reports an outcome asks how first, even with commands; one with commands only is I ran them', () => {
+  assert.equal(acceptWay({ t: 'd', at: '' }), 'accept')
+  assert.equal(acceptWay({ t: 'd', at: '', cm: ['x'] }), 'ran')
+  assert.equal(acceptWay({ t: 'd', at: '', o: 'failed', cm: ['x'] }), 'reported')
+  assert.equal(acceptWay({ t: 'd', at: '', o: 'not_done' }), 'reported')
+})
+
+test('Mark done anyway on a reported draft that waits for commands needs ran too; the other ways never close it', () => {
+  const j = drafted(granted(), 'a2', { o: 'failed', rt: 'a1', cm: ['update.ps1'] })
+  code(() => apply(PG, j, { op: 'acceptDraft', step: 'a2', asDone: true }), 'bad_state', /say you ran them/)
+  assert.equal(run(PG, j, { op: 'acceptDraft', step: 'a2', asDone: true, ran: true }).flow.a2.s, 'done')
+  assert.equal(run(PG, j, { op: 'acceptDraft', step: 'a2', stay: true }).flow.a2.s, 'cur')
 })
 
 test('okDrop withdraws the approval; a Return to the ok step drops it too, a Return to a later step keeps it', () => {

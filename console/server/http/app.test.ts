@@ -694,6 +694,24 @@ test('playbooks: saved in their own workspace; an id another workspace owns is 4
   } finally { await stop() }
 })
 
+test('playbooks: a saved one with a bad one-time approval or retry is 400 bad_args, and nothing is saved', async () => {
+  const { lp, stop } = await setup()
+  try {
+    const ship = structuredClone(acme.playbooks['auto-ship'])
+    const steps = (max: number) => ship.ph.map((p) => ({ ...p, s: p.s.map((s) => (s.retry ? { ...s, retry: { ...s.retry, max } } : s)) }))
+    for (const [pb, m] of [
+      [{ ...ship, ws: 'beta', custom: 1, ph: steps(0) }, /retry\.max is 1–10/],
+      [{ ...ship, ws: 'beta', custom: 1, ok: { at: ship.ok!.at, cmds: ['gh pr merge {pr}'] } }, /\{pr\}/],
+    ] as const) {
+      const r = await call(lp, 'PUT', '/api/ws/beta/playbooks/ship2', { body: { pb } })
+      assert.equal(r.status, 400, r.text); assert.equal(r.json.error.code, 'bad_args'); assert.match(r.json.error.message, m)
+    }
+    assert.equal((await call(lp, 'GET', '/api/state')).json.ws.beta.playbooks.ship2, undefined)
+    const ok = await call(lp, 'PUT', '/api/ws/beta/playbooks/ship2', { body: { pb: { ...ship, ws: 'beta', custom: 1, ph: steps(5) } } })
+    assert.equal(ok.status, 200, ok.text)
+  } finally { await stop() }
+})
+
 test('playbooks: a saved one keeps its planned messages, which may name only its own steps', async () => {
   const { lp, stop } = await setup()
   try {

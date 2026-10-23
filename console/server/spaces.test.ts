@@ -302,6 +302,31 @@ test('with autoAsk a space asks the llm step a job moves onto and resumes a due 
   }
 })
 
+test('a stored playbook that fails the check loads without its one-time approval and retry, its steps kept', async () => {
+  install([{ page: acme }])
+  const dir = tempDir('spaces')
+  const fake = await startFakeGateway({ seed: fakeSeed(acmeServer), me: acme.me, board: acme.board })
+  const tokenPath = join(dir, 'acme.token')
+  writeFileSync(tokenPath, fake.token)
+  const cfg = { ...wsCfg(dir), gatewayUrl: fake.url, consoleTokenPath: tokenPath }
+  let a: Space | undefined
+  try {
+    a = await makeSpace(acmeServer, { cfg, home: dir, artifactsDir: join(dir, 'arts'), sdk: fakeSdk().sdk, fake: false, push: async () => {} })
+    a.source.start()
+    await until(() => a!.source.available())
+    const pb: Playbook = { n: 'Bad', custom: 1, ok: { at: 'bad/1', cmds: ['git push {remote}'] }, ph: [{ c: 'A', n: 'A', s: [
+      { id: 'bad/1', t: 'Build', m: 'llm', x: 'x' }, { id: 'bad/2', t: 'Check', m: 'llm', x: 'x', start: 'auto', retry: { to: 'bad/1', max: 99 } }] }] }
+    await a.putPlaybook('bad', pb)
+    const got = a.ctx().PB.bad
+    assert.equal(got.ok, undefined)
+    assert.deepEqual(got.ph[0].s.map((s) => [s.id, s.retry]), [['bad/1', undefined], ['bad/2', undefined]])
+    const good: Playbook = { ...pb, n: 'Good', ok: { at: 'bad/1', cmds: ['git status'] }, ph: [{ ...pb.ph[0], s: pb.ph[0].s.map((s) => (s.retry ? { ...s, retry: { to: 'bad/1', max: 2 } } : s)) }] }
+    await a.putPlaybook('bad', good)
+    assert.deepEqual(a.ctx().PB.bad.ok, { at: 'bad/1', cmds: ['git status'] })
+    assert.deepEqual(a.ctx().PB.bad.ph[0].s[1].retry, { to: 'bad/1', max: 2 })
+  } finally { await a?.close(); await fake.close() }
+})
+
 test("a stored playbook's planned messages outlive a restart: sent works on the space made anew over the same B", async () => {
   install([{ page: acme }])
   const dir = tempDir('spaces')

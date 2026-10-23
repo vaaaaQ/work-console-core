@@ -496,6 +496,22 @@ function ship(delay = 0) {
   return { dir, jobs, runner, sessions, off, get, hand, granted }
 }
 
+test('a session whose MCP client calls itself "you" accepting the ok step grants nothing; the page\'s Accept does', async () => {
+  const s = ship()
+  const j0 = await s.jobs.create({ t: 'Ship it', key: 'K-1', pb: 'ship', prj: 'core', ws: 'acme' })
+  await s.jobs.cmd(j0.id, { op: 'start' }, j0.v)
+  await s.runner.ask(j0.id, 'a1', 'go')
+  await until(() => s.sessions.length === 1)
+  await s.hand('the spec')
+  await until(async () => !!(await s.get(j0.id)).flow.a1.dr && (await s.runner.all()).every((r) => r.ended))
+  const r = await s.jobs.cmd(j0.id, { op: 'acceptDraft', step: 'a1' }, undefined, 'session', undefined, 'you')
+  assert.equal(r.job.flow.a1.s, 'done')
+  assert.equal(r.job.jr.find((e) => e.o.startsWith('Accepted'))!.a, 'you', 'the name is only a signature')
+  assert.equal(r.job.ok, undefined)
+  assert.ok(!r.job.jr.some((e) => e.o.startsWith('Approved')))
+  s.off()
+})
+
 test('accepting a failed draft that names a step to go back to makes that step current: it is asked, not left stalled', () => {
   let j = T.apply(SX, T.freshJob(SX, 'S-1', { t: 'Ship', key: 'K-1', pb: 'ship', prj: 'core', ws: 'acme' }), start).job
   for (const s of ['a1', 'a2']) j = T.apply(SX, j, { op: 'stepDone', step: s }).job
