@@ -190,3 +190,28 @@ The live proof uses **real Claude runs** (answer 7).
 7. **The live proof uses real Claude runs**, not a fake provider.
 
 No open questions remain.
+
+## What the implementation found (TDD step, 2026-10-23)
+
+Where the code differs from the plan above, and why:
+
+1. **The work dir's branch and base live on the job (`Job.wd`).** The runner names them in `runStart` as each run starts
+   (`WorkDir.branch` and the new `WorkDir.base`). The transitions are pure and run on the page too, so the grant fills from
+   `Job.wd`, and the draft card shows the same filled list. A job with no run in a work dir yet grants nothing, and the
+   card and journal say so.
+2. **`Round.fx` is `{ n, max, step }`**, not `1`, so Rounds, the prompt and the artifact can name the round without
+   working it out again.
+3. **The artifact is `fix-round-<k>.md`, where `k` counts every fix round of the job.** The count shown ("Fix round 1 of 3")
+   starts again after your own round, so naming the file by it would overwrite an earlier file.
+4. **A loop guard.** A draft from an approved run (`ap` set) that asks for commands again waits for you, even when they
+   are on the list. Without the guard, a session that keeps asking for `git status` would loop.
+5. **An Accept of a draft with commands is refused whenever it has `cm`,** including one that reports approved commands
+   and then asks for new ones.
+6. **The transitions refuse the console's own accept** of a `not_done` draft, and of a `failed` one that its retry does not
+   cover or that is at the limit. Before, only `holdOf` stopped it. Two old tests that accepted such drafts with `auto`
+   now expect the refusal.
+7. **A lapse is journaled.** "The one-time approval of N commands lapsed" appears when a return goes to `ok.at` or before.
+8. **The `## Fix round` section goes only to the step the round went back to** (the round's first step), not to the steps
+   after it.
+9. **The demo playbook is Acme's `auto-ship`.** Its commands are harmless: `git status`, `git log --oneline -1 {branch}` and
+   `echo ship {branch} onto {base}`. It is the playbook for the live proof.
