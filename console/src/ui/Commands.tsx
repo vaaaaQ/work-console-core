@@ -2,7 +2,7 @@ import * as React from 'react'
 import { acceptDraft, acceptRan, failText } from '../actions/flow.tsx'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
-import { cmdsN, okPreview } from '../model/transitions.ts'
+import { acceptWay, cmdsN, okPreview } from '../model/transitions.ts'
 import { approveTo, thread } from '../model/thread.ts'
 import type { Job } from '../model/types.ts'
 import { CTX } from '../model/world.ts'
@@ -41,11 +41,12 @@ export function OkList({ job, step }: { job: Job; step: string }) {
   )
 }
 
-/** Accept; on a draft that waits for commands it is I ran them, since an Accept alone would close a step whose commands never ran */
+/** Accept; on a draft that waits for commands it is I ran them, since an Accept alone would close a step whose commands never
+    ran. A draft that reports an outcome asks how first, commands or not (acceptWay) */
 export function AcceptBtn({ job, step }: { job: Job; step: string }) {
   const f = job.flow[step]
   if (!f?.dr) return null
-  if (f.dr.cm?.length) return <button type="button" className={'btn sm' + (approveHead(job, step) ? '' : ' pri')} disabled={!!f.run}
+  if (acceptWay(f.dr) === 'ran') return <button type="button" className={'btn sm' + (approveHead(job, step) ? '' : ' pri')} disabled={!!f.run}
     title="You ran these commands yourself, outside the console: accept the draft as done" onClick={() => acceptRan(job.id, step)}><Ic n="check" sm />I ran them</button>
   return <button type="button" className={'btn sm' + (approveHead(job, step) ? '' : ' pri')} disabled={!!f.run} onClick={() => acceptDraft(job.id, step)}><Ic n="check" sm />Accept</button>
 }

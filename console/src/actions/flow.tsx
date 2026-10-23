@@ -276,7 +276,9 @@ function acceptReported(id: string, sid: string, text?: string) {
   const j = byId(id), dr = j?.flow[sid].dr
   if (!j || !dr?.o) return
   const t = stepOf(j, sid)!.t, back = dr.rt ? stepOf(j, dr.rt)?.t : undefined, rep = dr.o === 'failed' ? 'failed' : 'not done'
-  const send = (extra: { stay?: true; asDone?: true }, say: string, force = false) => {
+  // a draft that also waits for commands closes only when the person says they ran them
+  const cm = dr.cm?.length ?? 0
+  const send = (extra: { stay?: true; asDone?: true; ran?: true }, say: string, force = false) => {
     closeModal()
     const f = byId(id)?.flow[sid]
     if (extra.asDone && !force && f && openOf(f).length) { confirmForce(byId(id)!, sid, () => send(extra, say, true)); return }
@@ -287,9 +289,10 @@ function acceptReported(id: string, sid: string, text?: string) {
     body: <>
       <p>{draftReport(j, dr)}</p>
       <p className="why" style={{ margin: 0 }}>Accepting keeps the draft as the step’s output. The step is not marked done unless you say so.</p>
+      {cm ? <p className="why" style={{ margin: 0 }}>It also waits for {cmdsN(cm)}: marking it done says you ran them yourself. Return to and Keep open leave them unrun.</p> : null}
     </>,
     foot: <><CancelBtn />
-      <button type="button" className="btn" onClick={() => send({ asDone: true }, `Marked done although it reported ${rep} · ${t}`)}>Mark done anyway</button>
+      <button type="button" className="btn" onClick={() => send(cm ? { asDone: true, ran: true } : { asDone: true }, `Marked done although it reported ${rep} · ${t}`)}>{cm ? 'Mark done anyway; I ran them' : 'Mark done anyway'}</button>
       <button type="button" className={'btn' + (back ? '' : ' pri')} onClick={() => send({ stay: true }, `Kept open · ${t}`)}>Keep the step open</button>
       {back && <button type="button" className="btn pri" onClick={() => send({}, `Back to ${back}`)}><Ic n="check" sm />Return to {back}</button>}</>,
   })
@@ -299,6 +302,8 @@ function acceptReported(id: string, sid: string, text?: string) {
 export function acceptRan(id: string, sid: string, force = false) {
   const j = byId(id), f = j?.flow[sid], cm = f?.dr?.cm
   if (!j || !f || !cm?.length) return
+  // a draft that reports an outcome would go back or stay open, not close: it asks how first
+  if (f.dr!.o) { acceptReported(id, sid); return }
   const t = stepOf(j, sid)!.t
   const send = (force: boolean) => {
     closeModal()

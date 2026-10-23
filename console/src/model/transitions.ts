@@ -17,7 +17,10 @@ import type {
 
 /** by = who the journal names for this change: the page and its runs are 'you', a Claude Code session or the console itself sign their own;
     jobOf = another job by its id, for the checks a link needs; absent = links cannot be added */
-export interface Ctx { PB: Record<string, Playbook>; TPL: Record<string, Tpl[]>; now?: () => Date; by?: string; jobOf?: (id: string) => Job | undefined }
+export interface Ctx { PB: Record<string, Playbook>; TPL: Record<string, Tpl[]>; now?: () => Date; by?: string; jobOf?: (id: string) => Job | undefined
+  /** the command is the person's, on the page: set by Jobs.cmd for the page and by the page's own apply, never from a
+      signer's name (a session's MCP client names itself) */
+  page?: boolean }
 export type CmdCode = 'bad_step' | 'bad_state' | 'bad_args'
 export class CmdError extends Error {
   code: CmdCode
@@ -311,22 +314,31 @@ function returnTo(x: Ctx, j: Job, sid: string, why: string, failed?: string[]) {
   syncStatus(x, j)
   jr(x, j, `Returned to “${all[ti].t}”: ${why}`, `round ${kept.n + 1} starts here; ${back.length} step${back.length > 1 ? 's' : ''} from “${all[ti].t}” on start again, round ${kept.n} is kept.`,
     `work on “${all[ti].t}”.`, by(x), 'cur')
-  // going back to the step that granted the approval, or before it, means the shape is approved again
-  const oi = j.ok ? all.findIndex((s) => s.id === j.ok!.at) : -1
-  if (j.ok && (oi < 0 || ti <= oi)) {
-    jr(x, j, `The one-time approval of ${cmdsN(j.ok.cmds.length)} lapsed.`, `the job went back to “${all[ti].t}”; accepting “${stepOf(x, j, j.ok.at)?.t ?? j.ok.at}” again approves them again.`, `work on “${all[ti].t}”.`, by(x), 'off')
-    delete j.ok
-  }
+  lapse(x, j, sid, 'the job went back to')
+}
+
+/** going back to the step that granted the job's approval, or before it, by a return or a reopen, means the shape is
+    approved again: the approval lapses until that step is accepted again */
+function lapse(x: Ctx, j: Job, sid: string, how: string) {
+  if (!j.ok) return
+  const all = stepsOf(x, j), ti = all.findIndex((s) => s.id === sid), oi = all.findIndex((s) => s.id === j.ok!.at)
+  if (oi >= 0 && ti > oi) return
+  jr(x, j, `The one-time approval of ${cmdsN(j.ok.cmds.length)} lapsed.`, `${how} “${all[ti]?.t ?? sid}”; accepting “${stepOf(x, j, j.ok.at)?.t ?? j.ok.at}” again approves them again.`,
+    `work on “${all[ti]?.t ?? sid}”.`, by(x), 'off')
+  delete j.ok
 }
 
 /* ===== the one-time approval and fix rounds ===== */
 /** the placeholders a playbook's approved commands may hold; the console fills them from the job's work dir */
 const OK_VARS = ['branch', 'base'] as const
-/** the templates filled from the job's work dir; null without one */
+/** the templates filled from the job's work dir, each trimmed as a draft's commands are; null without one */
 export function fillOk(cmds: string[], wd: WdVars | undefined): string[] | null {
   if (!wd) return null
-  return cmds.map((c) => c.replace(/\{(branch|base)\}/g, (_, k: 'branch' | 'base') => wd[k]))
+  return cmds.map((c) => c.trim().replace(/\{(branch|base)\}/g, (_, k: 'branch' | 'base') => wd[k]))
 }
+/** how the page accepts a draft: one that reports an outcome asks how first (go back, keep open, mark done anyway),
+    one that waits for commands only is I ran them, any other is a plain Accept */
+export const acceptWay = (dr: Draft): 'reported' | 'ran' | 'accept' => (dr.o ? 'reported' : dr.cm?.length ? 'ran' : 'accept')
 /** what the person's Accept of sid approves for the job: the filled commands, or why none; null = sid grants nothing */
 export function okPreview(x: Ctx, j: Job, sid: string): { cmds: string[] } | { why: string } | null {
   const ok = x.PB[j.pb]?.ok
@@ -359,7 +371,7 @@ export function checkPlaybook(key: string, pb: Playbook) {
     const cm = pb.ok.cmds
     if (!Array.isArray(cm) || !cm.length || cm.length > CMDS_MAX) bad(`ok.cmds are a list of 1 to ${CMDS_MAX}`)
     cm.forEach((c, i) => {
-      if (typeof c !== 'string' || !c.trim() || c.length > CMD_MAX) bad(`ok command ${i + 1} is empty or longer than ${CMD_MAX} characters`)
+      if (typeof c !== 'string' || !c.trim() || c.trim().length > CMD_MAX) bad(`ok command ${i + 1} is empty or longer than ${CMD_MAX} characters`)
       for (const m of c.matchAll(/\{([^{}]*)\}/g))
         if (!(OK_VARS as readonly string[]).includes(m[1])) bad(`ok command ${i + 1} has {${m[1]}}; only {branch} and {base} fill`)
     })
@@ -372,6 +384,14 @@ export function checkPlaybook(key: string, pb: Playbook) {
     const m = s.retry.max
     if (m !== undefined && (!Number.isInteger(m) || m < 1 || m > FIX_LIMIT)) bad(`step ${s.id}: retry.max is 1–${FIX_LIMIT}`)
   })
+}
+/** a stored playbook as it loads: one that fails the check keeps its steps, so its jobs go on, but loses its ok and
+    every retry, so nothing unchecked approves or loops; err = why */
+export function checkedPlaybook(key: string, pb: Playbook): { pb: Playbook; err?: string } {
+  try { checkPlaybook(key, pb); return { pb } } catch (e) {
+    const { ok: _, ...rest } = pb
+    return { pb: { ...rest, ph: pb.ph.map((p) => ({ ...p, s: p.s.map(({ retry: __, ...s }) => s) })) }, err: (e as Error).message }
+  }
 }
 /** the person's Accept of the playbook's ok step approves its commands for the job, filled from its work dir */
 function grant(x: Ctx, j: Job, sid: string) {
@@ -791,6 +811,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       if (reopenGoesBack(x, j, sid)) { returnTo(x, j, sid, line(typeof cmd.why === 'string' ? cmd.why : '', 300) || `reopened “${S.t}”`); nx = sid; break }
       F.s = 'cur'; F.nw = 1; settle(F); nx = sid
       jr(x, j, `Reopened “${S.t}”.`, 'step back in progress.', `finish “${S.t}” again.`, by(x), 'cur'); syncStatus(x, j)
+      lapse(x, j, sid, 'you reopened')
       break
     case 'stepWait': {
       const m = (cmd.m || '').trim() || 'waiting on others'
@@ -850,7 +871,8 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       const mine = dr.cm?.length ? `; you ran its ${cmdsN(dr.cm.length)} yourself` : ''
       jr(x, j, `Accepted the LLM draft for “${S.t}”${how}${dr.o ? ' as done' : ''}${although}${mine}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')
       stayOpen()
-      if (!cmd.auto && !cmd.said && by(x) === 'you') grant(x, j, sid)
+      // only the person, on the page: never decided from the signer's name, which a session's MCP client chooses
+      if (!cmd.auto && !cmd.said && x.page) grant(x, j, sid)
       break
     }
     case 'rejectDraft': {

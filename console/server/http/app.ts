@@ -4,6 +4,7 @@ import { extname, join, resolve, sep } from 'node:path'
 import { adapt } from '../../src/live/adapt.ts'
 import { ctxOf } from '../../src/model/context.ts'
 import type * as T from '../../src/model/transitions.ts'
+import { checkPlaybook } from '../../src/model/transitions.ts'
 import type { UpdateKind, UpdateView } from '../../src/model/update.ts'
 import type { Cmd, Job, Playbook, RunIntent, RunRec, Tpl } from '../../src/model/types.ts'
 import { chatsOfPack, resolveAct } from '../bridge/actions.ts'
@@ -620,6 +621,8 @@ export function createApp(d: Deps) {
     ['PUT', /^\/playbooks\/([^/]+)$/, async (r, s) => {
       const b = await r.body(), id = r.p[0], pb = pbOf(b.pb), tpl = pb ? tplOf(pb, b.tpl) : undefined
       if (pb && pb.ws != null && pb.ws !== s.id) throw new HttpError(400, 'bad_args', `the playbook names workspace ${pb.ws}, not ${s.id}`)
+      // its one-time approval and retry, as a built-in playbook's are checked when its workspace installs
+      if (pb) try { checkPlaybook(id, pb) } catch (e) { throw new HttpError(400, 'bad_args', (e as Error).message) }
       // a built-in playbook belongs to the workspace that brings it; another one saving it would shadow it there
       const owner = d.spaces.list.find((o) => o !== s && o.ctx().PB[id]?.ws === o.id)
       if (owner) throw new HttpError(409, 'playbook_taken', `${id} belongs to workspace ${owner.id}`)

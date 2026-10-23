@@ -203,7 +203,13 @@ function assemble(w: WorkspaceServer, o: SpaceOpts, fake: FakeGateway | null): S
   /** the stored playbooks over the built-in ones, their planned messages likewise */
   const loadPbs = async () => {
     const [pb, tpl] = await Promise.all([store.playbooks(), store.templates()])
-    PB = pb; TPL = { ...builtinTpl, ...tpl }
+    // a stored playbook was never checked as a built-in one is: one that fails loses its ok and retry, its steps kept
+    PB = Object.fromEntries(Object.entries(pb).map(([k, p]) => {
+      const c = T.checkedPlaybook(k, p)
+      if (c.err) console.error(`${id}: ${c.err}; it loads without its one-time approval and retry`)
+      return [k, c.pb]
+    }))
+    TPL = { ...builtinTpl, ...tpl }
   }
   const gate = () => source.available()
   // the page re-reads knowledge on these, and Web Push announces a new proposal; the fake never touches a real folder

@@ -478,8 +478,10 @@ function ship(delay = 0) {
   const get = async (id: string) => (await jobs.get(id))!
   /** the newest session names its session, hands in a draft and ends */
   const hand = async (t: string, rep?: DraftReport) => {
-    const s = sessions.at(-1)!
-    s.push({ k: 'session', id: `S${sessions.length}` })
+    const s = sessions.at(-1)!, sid = `S${sessions.length}`
+    s.push({ k: 'session', id: sid })
+    // a real session names itself before any tool call; the fake's event is read asynchronously, so wait for it
+    await until(async () => (await runner.all()).some((r) => r.session === sid))
     await s.tools.submitDraft(t, rep); s.end()
   }
   /** a started ship job whose Analysis the person accepted on the page */

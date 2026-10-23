@@ -23,7 +23,8 @@ Guidance for an agent working in this repo.
   commands its `ok.cmds` list (filled with the job's `{branch}` and `{base}`) are approved for that job; the console
   (never a session) then approves a run's draft whose commands are all on that list, word for word, and the commands run
   in the draft's own session (`server/llm/autoAsk.ts`, `runner.reply` with `via: 'console'`). Any other command waits for
-  the person. The person withdraws it in Approvals, and it lapses when the job goes back to that step or before it.
+  the person. The person withdraws it in Approvals, and it lapses when the job goes back to that step or before it, or the step is reopened. Only a page command grants
+  it (`Ctx.page`), never a signer's name; saved and stored playbooks are checked as built-in ones are.
 - **The core names no workplace.** Code under `console/` and `schemas/` must not mention a real
   company, product, person or host. A workplace lives in its workspace, `console/workspaces/<id>/`
   (pack, playbooks, board rule, demo data), and in a bridge pack under `packs/<name>/`. The demo

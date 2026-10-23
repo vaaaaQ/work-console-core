@@ -80,7 +80,8 @@ export class Jobs {
       const links = c.op === 'ppSet' ? c.cmds : c.op === 'ppAccept' ? cur.pp?.cmds ?? [] : [c]
       const others = links.some((l) => l?.op === 'waitAdd') ? new Map((await this.all()).map((j) => [j.id, j])) : null
       let r: { job: Job; nx: string | null; same?: true }
-      try { r = T.apply({ ...this.ctx(), by: name || BY[as ?? who], ...(others ? { jobOf: (i: string) => others.get(i) } : {}) }, cur, c) } catch (e) {
+      // page = the person's own command: who, never the signer's name, says so
+      try { r = T.apply({ ...this.ctx(), by: name || BY[as ?? who], ...(who === 'page' ? { page: true } : {}), ...(others ? { jobOf: (i: string) => others.get(i) } : {}) }, cur, c) } catch (e) {
         if (e instanceof T.CmdError) throw new HttpError(400, e.code, e.message)
         throw e
       }
