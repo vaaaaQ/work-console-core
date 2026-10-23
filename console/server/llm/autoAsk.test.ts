@@ -381,6 +381,32 @@ test('holdOf names what keeps a draft from being accepted by itself', () => {
   // commands wait for the person's approval, and what approved commands printed is the person's to read
   assert.equal(holdOf(f({ dr: { t: 'd', at: '', cm: ['git push', 'npm run deploy'] } })), 'the draft waits for approval of 2 commands')
   assert.equal(holdOf(f({ dr: { t: 'd', at: '', ap: 1 } })), 'the draft reports approved commands')
+  assert.equal(holdOf(f({ dr: { t: 'd', at: '', ua: 1 } })), 'a question was answered while the run worked, so the draft has not seen the answer')
+})
+
+test('an auto step whose question is answered while its run still works: the draft is held back for the person, not accepted', async () => {
+  const s = modes(false), j = await s.job('auto')
+  await s.jobs.cmd(j.id, { op: 'start' }, (await s.get(j.id)).v)
+  await until(() => s.sessions.length === 1)
+  await s.sessions[0].tools.askQuestion!('Which mailbox?')
+  const i = (await s.get(j.id)).flow.tr.b.findIndex((b) => b.k === 'q')
+  await s.jobs.cmd(j.id, { op: 'noteAnswer', step: 'tr', i, r: 'the shared one' })
+  await s.sessions[0].tools.submitDraft('written before the answer'); s.sessions[0].end()
+  await until(async () => (await s.get(j.id)).jr[0].o.startsWith('Held back'))
+  const a = await s.get(j.id)
+  assert.equal(a.jr[0].o, 'Held back the automatic accept of “Understand the request”: a question was answered while the run worked, so the draft has not seen the answer.')
+  assert.equal(a.flow.tr.s, 'wait')
+  await tick(60)
+  assert.equal(s.sessions.length, 1, 'no wake either: the person accepts or replies')
+  s.off()
+})
+
+test('answeredText and the wake keep the latest 20 questions, each clipped', () => {
+  const qs = Array.from({ length: 25 }, (_, i) => ({ k: 'q' as const, t: `q${i} ${'x'.repeat(600)}`, r: `a${i} ${'y'.repeat(600)}`, o: 0 as const }))
+  const t = answeredText({ b: qs } as unknown as Flow)
+  assert.doesNotMatch(t, /- q4 /); assert.match(t, /- q5 /); assert.match(t, /- q24 /)
+  assert.match(t, /the latest 20 of 25/)
+  for (const l of t.split('\n').filter((l) => l.startsWith('- '))) assert.ok(l.length < 1100, l.length.toString())
 })
 
 test('an auto step\'s draft that reports failed or not done is held back for the person, never closed by itself', async () => {

@@ -66,6 +66,18 @@ test('the step\'s questions and notes, each open or with its answer, go in after
   assert.doesNotMatch(buildPrompt(x, j, 'tr', 'go', {}), /## Questions on this step/, 'none on the step: no section')
 })
 
+test('## Questions on this step keeps the latest 20 notes, each text and answer clipped to one line', () => {
+  const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
+  j.flow.dr.b = Array.from({ length: 25 }, (_, i) => ({ k: 'q' as const, t: `q${i}\n${'x'.repeat(900)}`, r: i % 2 ? `a${i} ${'y'.repeat(900)}` : '', o: (i % 2 ? 0 : 1) as 0 | 1 }))
+  const p = buildPrompt(x, j, 'dr', 'go', {})
+  const sec = p.slice(p.indexOf('## Questions on this step'), p.indexOf('## Journal'))
+  assert.match(sec, /^## Questions on this step \(the latest 20 of 25\)\n/)
+  assert.doesNotMatch(sec, /: q4 /); assert.match(sec, /: q5 /); assert.match(sec, /: q24 /)
+  const rows = sec.trim().split('\n').slice(1)
+  assert.equal(rows.length, 20)
+  for (const l of rows) assert.ok(l.length < 1100, String(l.length))
+})
+
 test('a run is told to ask what only the person can decide with ask_question; a hand-made session is not', () => {
   const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
   const line = '- If something only Valery can decide holds part of the step, ask it with ask_question, one question per call, rather than only in the draft\'s text; then finish the draft as far as it goes.'

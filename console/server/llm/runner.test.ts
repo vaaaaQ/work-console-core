@@ -967,6 +967,40 @@ test('ask_question: an open question on the run\'s step, signed LLM; the same op
   s.sessions[0].end()
 })
 
+test('ask_question in parallel: 12 at once add 10 and refuse 2; the same text at once adds 1', async () => {
+  const s = setup(), [a, b] = await targets(s.jobs, 2)
+  await s.runner.ask(a.job, a.step, 'q'); await s.runner.ask(b.job, b.step, 'q')
+  await until(() => s.sessions.length === 2)
+  const qs = async (x: { job: string; step: string }) => (await s.jobs.get(x.job))!.flow[x.step].b.filter((n) => n.k === 'q').length
+  const before = await qs(a)
+  const got = await Promise.allSettled(Array.from({ length: 12 }, (_, i) => s.sessions[0].tools.askQuestion!(`question ${i}?`)))
+  assert.equal(got.filter((r) => r.status === 'fulfilled').length, 10)
+  assert.ok(got.filter((r) => r.status === 'rejected').every((r) => /already asked 10 questions/.test(String((r as PromiseRejectedResult).reason))))
+  assert.equal(await qs(a), before + 10)
+  const beforeB = await qs(b)
+  const same = await Promise.all(Array.from({ length: 5 }, () => s.sessions[1].tools.askQuestion!('Which mailbox?')))
+  assert.equal(new Set(same).size, 1)
+  assert.equal(await qs(b), beforeB + 1)
+  // a failed add gives its place back
+  const cmd = s.jobs.cmd.bind(s.jobs)
+  s.jobs.cmd = (id, c, ...rest) => (c.op === 'noteAdd' ? Promise.reject(new Error('lost')) : cmd(id, c, ...rest))
+  await assert.rejects(s.sessions[1].tools.askQuestion!('lost?'), /lost/)
+  s.jobs.cmd = cmd
+  for (let i = 0; i < 9; i++) await s.sessions[1].tools.askQuestion!(`more ${i}?`)
+  await assert.rejects(s.sessions[1].tools.askQuestion!('one too many?'), /already asked 10 questions/)
+  s.sessions[0].end(); s.sessions[1].end()
+})
+
+test('ask_question clips a long question to 1000 characters on one line', async () => {
+  const s = setup(), [t] = await targets(s.jobs, 1)
+  await s.runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  await s.sessions[0].tools.askQuestion!(`Which\n\nmailbox ${'x'.repeat(3000)}`)
+  const b = (await s.jobs.get(t.job))!.flow[t.step].b.at(-1)!
+  assert.equal(b.t.length, 1000); assert.match(b.t, /^Which mailbox x+…$/)
+  s.sessions[0].end()
+})
+
 test("a reply waits until the draft's session has wound down", async () => {
   const s = setup(), d = await withDraft(s)
   const r = await s.runner.reply(d.job, d.step, 'shorter', 'revise')

@@ -441,6 +441,48 @@ test('an open question refuses an accept by reply or by the console; the page ac
   assert.equal(qsM(1), '1 open question'); assert.equal(qsM(3), '3 open questions')
 })
 
+test('an accept over open questions by the page or a session journals that they stay open; a clean accept says nothing of them', () => {
+  const { j: j0, at } = drafted()
+  let j = apply(X, j0, { op: 'noteAdd', step: at, k: 'q', t: 'which mailbox?' }).job
+  j = apply(X, j, { op: 'noteAdd', step: at, k: 'q', t: 'who signs?' }).job
+  const t = stepOf(X, j, at)!.t
+  const s = apply({ ...X, by: 'Claude Code' }, j, { op: 'acceptDraft', step: at }).job
+  assert.deepEqual([s.jr[0].o, s.jr[0].c, s.jr[0].a], [`2 open questions on “${t}” stay open.`, 'accepted without their answers.', 'Claude Code'])
+  assert.match(s.jr[1].o, /^Accepted the LLM draft/)
+  const clean = apply(X, j0, { op: 'acceptDraft', step: at }).job
+  assert.match(clean.jr[0].o, /^Accepted the LLM draft/)
+})
+
+test('a draft that reports failed or not done is not accepted by reply or by the console over an open question; the page\'s choices still work', () => {
+  for (const rep of [{ o: 'failed' as const, rt: steps(X, open().pb)[0].id, why: 'red' }, { o: 'not_done' as const }]) {
+    const r0 = reported(rep), at = r0.at
+    const j = apply(X, r0.j, { op: 'noteAdd', step: at, k: 'q', t: 'which mailbox?' }).job
+    for (const extra of [{ said: true }, { auto: true as const }, { said: true, asDone: true as const }])
+      assert.throws(() => apply(X, j, { op: 'acceptDraft', step: at, ...extra }), /has 1 open question; answer it first/, `${rep.o} ${JSON.stringify(extra)}`)
+    for (const extra of [{}, { stay: true as const }, { asDone: true as const }]) {
+      const k = apply(X, j, { op: 'acceptDraft', step: at, ...extra }).job
+      assert.ok(k.jr.some((l) => l.o === `1 open question on “${stepOf(X, j, at)!.t}” stays open.`), `${rep.o} ${JSON.stringify(extra)}`)
+    }
+  }
+})
+
+test('a question answered while a run works marks its draft unseen-answer; one answered before the run or after the draft does not', () => {
+  const j0 = open(), at = atOf(X, j0)!
+  let j = apply(X, j0, { op: 'noteAdd', step: at, k: 'q', t: 'which mailbox?' }).job
+  j = apply(X, j, { op: 'noteAdd', step: at, k: 'q', t: 'who signs?' }).job
+  j = apply(X, j, { op: 'noteAnswer', step: at, i: 0, r: 'the shared one' }).job
+  j = apply(X, j, { op: 'runStart', step: at, q: 'go', id: 'r1' }).job
+  const mid = apply(X, j, { op: 'noteAnswer', step: at, i: 1, r: 'Imre' }).job
+  const late = apply(X, mid, { op: 'runDraft', step: at, t: 'v1' }).job
+  assert.equal(late.flow[at].dr!.ua, 1)
+  assert.ok(late.flow[at].b.every((b) => !b.ur), 'the mark moves onto the draft')
+  assert.equal(apply(X, j, { op: 'runDraft', step: at, t: 'v1' }).job.flow[at].dr!.ua, undefined, 'answered before the run started')
+  const ended = apply(X, mid, { op: 'runEnd', step: at, why: 'cancelled' }).job
+  assert.ok(ended.flow[at].b.every((b) => !b.ur), 'a run with no draft leaves no mark')
+  const after = apply(X, apply(X, j, { op: 'runDraft', step: at, t: 'v1' }).job, { op: 'noteAnswer', step: at, i: 1, r: 'Imre' }).job
+  assert.equal(after.flow[at].dr!.ua, undefined); assert.ok(after.flow[at].b.every((b) => !b.ur))
+})
+
 /* ===== a draft that reports it did not finish ===== */
 
 /** a job at a step past its first, with a run on it that drafts with a report */
