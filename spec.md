@@ -157,3 +157,12 @@ the page. The core version is `core.lock.json`'s `core` field.
 5. **The kind list is fixed in the core.** Can a workspace add its own kinds? I suggest no: the six kinds cover this
    job, and a free-form kind is just `Flow.out` again.
 6. **Language.** This spec is in English, like AD-0013. AD-0026's spec was in Russian. Tell me if you prefer that.
+
+## Valery's answers (2026-10-23)
+
+1. No refresh in v1: a `pr` fact stays the snapshot taken at submit.
+2. Refuse a done draft that lacks a declared kind; an honest empty result reports `{kind, none: why}` (e.g. `{kind: 'deploy', none: 'docs only'}`).
+3. Review gets **Accept / Send back** buttons with a note field; the note becomes the `review` fact's `note`, and Send back goes back like a return.
+4. No facts in message templates (`{var}`) in v1.
+5. The six kinds stay fixed in the core; no workspace kinds.
+6. Specs stay in English.
