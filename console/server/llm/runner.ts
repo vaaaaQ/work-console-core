@@ -33,6 +33,8 @@ const FEED_MAX = 200
 const FILE_MAX = 20 << 20
 /** the most jobs one run may create */
 const JOBS_MAX = 5, ACTS_MAX = 10
+/** the most questions one run puts on its step */
+const QUESTIONS_MAX = 10
 /** the most source files one run saves */
 const FILES_MAX = 100
 const sizeText = (n: number) => (n < 1 << 20 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / (1 << 20)).toFixed(1)} MB`)
@@ -145,12 +147,15 @@ export class Runner {
     try { await this.jobs.cmd(r.job, c, undefined, 'runner', as); return true } catch (e) { console.error(`run ${r.id}: ${c.op} on ${r.job} failed`, (e as Error).message); return false }
   }
 
-  /** an accept reply whose accept an open blocker refused says why in the journal */
+  /** an accept reply whose accept an open question or blocker refused says why in the journal */
   private async notAccepted(rec: RunRec) {
     const j = await this.jobs.get(rec.job), f = j?.flow[rec.step]
-    if (!j || !f || !openOf(f).length) return
+    const qs = f ? T.openQs(f).length : 0, bl = f ? openOf(f).length : 0
+    if (!j || !f || (!qs && !bl)) return
     const t = T.stepOf(this.ctx(), j, rec.step)?.t ?? rec.step
-    await this.jobCmd(rec, { op: 'journal', o: `Did not accept the revised draft for “${t}”.`, c: `“${t}” ${waitsM(f)}.`, n: 'accept it when they close, or go on anyway.', a: 'console' })
+    const why = [...(qs ? [`has ${T.qsM(qs)}`] : []), ...(bl ? [waitsM(f)] : [])].join(' and ')
+    await this.jobCmd(rec, { op: 'journal', o: `Did not accept the revised draft for “${t}”.`, c: `“${t}” ${why}.`,
+      n: qs ? `answer ${qs > 1 ? 'them' : 'it'}, or accept the draft anyway.` : 'accept it when they close, or go on anyway.', a: 'console' })
   }
 
   private async hasRun(job: string, step: string): Promise<Job> {
@@ -435,7 +440,7 @@ export class Runner {
     }
     const shot = this.screenshot, jt = this.jobTools, kn = this.notes, ra = this.acts, acc = this.access, sf = this.files
     const input = (j: Job) => this.input(j, cwd)
-    let made = 0, acted = 0, asked = 0, saved = 0
+    let made = 0, acted = 0, asked = 0, saved = 0, questions = 0
     // a send that did not go out shows on the step with its text, so the user can send it by hand
     const notSent = async (action: string, args: Record<string, unknown>, why: string): Promise<never> => {
       const text = typeof args.text === 'string' ? `\n\n${args.text}` : ''
@@ -462,6 +467,19 @@ export class Runner {
         await keep(safeName(n || basename(real)), (f) => copyFile(real, f))
       },
       journal: async (o: string, c: string, n: string) => { await this.jobs.cmd(rec.job, { op: 'journal', o, c, n, a: 'LLM' }, undefined, 'runner') },
+      askQuestion: async (q: string) => {
+        const t = q.trim()
+        if (!t) throw new Error('a question needs text')
+        const at = (j: Job) => `question ${j.flow[rec.step].b.findIndex((b) => b.o && b.k === 'q' && b.t === t) + 1} is open on “${T.stepOf(this.ctx(), j, rec.step)?.t ?? rec.step}”`
+        const now = await this.jobs.get(rec.job)
+        if (!now?.flow[rec.step]) throw new Error('the job or its step is gone')
+        // the same question, still open, is the one already asked
+        if (now.flow[rec.step].b.some((b) => b.o && b.k === 'q' && b.t === t)) return at(now)
+        if (questions >= QUESTIONS_MAX) throw new Error(`this run already asked ${QUESTIONS_MAX} questions`)
+        const r = await this.jobs.cmd(rec.job, { op: 'noteAdd', step: rec.step, k: 'q', t }, undefined, 'runner', 'run')
+        questions++
+        return at(r.job)
+      },
       context: async () => {
         const j = (await this.jobs.get(rec.job)) ?? job, x = await input(j)
         return { text: contextText(this.ctx(), j, rec.step, rec.q, x.o), images: x.images }

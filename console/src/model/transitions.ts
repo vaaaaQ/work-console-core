@@ -37,6 +37,9 @@ export const roundPhases = (x: Ctx, j: Job, r: Round): Phase[] => r.ph ?? x.PB[j
 export const isClosed = (j: Job) => j.st === 'done' || j.st === 'cancelled'
 export const isLive = (f: Flow) => f.s !== 'done' && f.s !== 'skip'
 export const flows = (j: Job) => Object.values(j.flow)
+/** a step's questions still waiting for an answer */
+export const openQs = (f: Flow) => f.b.filter((b) => b.o && b.k === 'q')
+export const qsM = (n: number) => `${n} open question${n === 1 ? '' : 's'}`
 export const atOf = (x: Ctx, j: Job) => { const s = stepsOf(x, j).find((s) => j.flow[s.id] && isLive(j.flow[s.id])); return s ? s.id : null }
 /** a step not reached yet: its draft, if any, waits until the flow comes back to it */
 export const ahead = (f: Flow) => f.s === 'fut' || f.s === 'tpl'
@@ -683,6 +686,9 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
         }
         break
       }
+      // an open question holds the step for the person: only the page accepts over it, and the questions stay open
+      const qs = openQs(F).length
+      if (qs && (cmd.said || cmd.auto)) throw new CmdError('bad_state', `“${S.t}” has ${qsM(qs)}; ${qs > 1 ? 'answer them' : 'answer it'} first`)
       noBlockers(cmd.force)
       F.out = edited ? cmd.text! : dr.t; F.m = edited ? 'accepted with your edits' : 'draft accepted'
       nx = advance(x, j, sid, 'done')

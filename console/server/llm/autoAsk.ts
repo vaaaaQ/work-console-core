@@ -6,7 +6,8 @@ import { blockersText } from './prompt.ts'
 import type { Runner } from './runner.ts'
 
 /* Auto-ask: an llm step that starts by itself runs when a change moves the job onto it, and a drafted one whose
-   last blocker closed revises its draft with the outcome; an auto step's clean draft is accepted by the console.
+   last blocker closed revises its draft with the outcome, or whose last open question got its answer, with the answers,
+   once nothing else holds it; an auto step's clean draft is accepted by the console.
    The run waits longer than the page's Undo toast, so an undone change finds the step no longer current. */
 
 /** how an llm step starts; a step without its own start follows the workspace's autoAsk; null = not an llm step */
@@ -41,17 +42,22 @@ export function madeCurrent(cmd: Cmd, prev: Job, job: Job): string[] {
   return Object.keys(job.flow).filter((sid) => job.flow[sid].s === 'cur' && (was(sid) || back.includes(sid)))
 }
 
-/** a step that waits only for its draft's review: no open blocker, no run */
-const freed = (f: Flow | undefined) => !!f && f.s === 'wait' && !!f.dr && !f.run && !openOf(f).length
-/** the step whose draft this blockerClosed freed, if it did */
+/** a step that waits only for its draft's review: no open blocker or question, no run */
+const freed = (f: Flow | undefined) => !!f && f.s === 'wait' && !!f.dr && !f.run && !openOf(f).length && !T.openQs(f).length
+/** the step whose draft this blockerClosed, or this answer to its last open question, freed, if it did */
 export function freedDraft(cmd: Cmd, prev: Job, job: Job): string | null {
-  if (cmd.op !== 'blockerClosed') return null
+  if (cmd.op !== 'blockerClosed' && cmd.op !== 'noteAnswer') return null
   const was = prev.flow[cmd.step]
-  return was && openOf(was).some((l) => l.j === cmd.j) && freed(job.flow[cmd.step]) ? cmd.step : null
+  if (!was || !freed(job.flow[cmd.step])) return null
+  const by = cmd.op === 'blockerClosed' ? openOf(was).some((l) => l.j === cmd.j) : was.b[cmd.i]?.k === 'q' && !!was.b[cmd.i].o
+  return by ? cmd.step : null
 }
 /** what the draft's session is told when its last blocker closed */
 export const wokeText = (f: Flow) =>
   `Every blocker this step waited for has closed:\n\n${blockersText(f)}\n\nGo on with the step from your draft, as each outcome and plan say.`
+/** what the draft's session is told when its last question got its answer */
+export const answeredText = (f: Flow) =>
+  `Every question this step asked has an answer:\n\n${f.b.filter((b) => b.k === 'q' && !b.o).map((b) => `- ${b.t} → ${b.r}`).join('\n')}\n\nGo on with the step from your draft, as the answers say.`
 
 /** asks each llm step a change made current, and revises each llm draft a blocker freed, unless an LLM run made
     the change; returns the off */
@@ -74,10 +80,10 @@ export function autoAsk(o: { jobs: Jobs; runner: Runner; ctx: () => T.Ctx; on: b
     if (!a || a.f.s !== 'cur' || a.f.run || a.f.dr) return
     await o.runner.ask(id, sid, T.askText(a.s), { auto: true })
   }
-  const revise = async (id: string, sid: string) => {
+  const revise = (say: (f: Flow) => string) => async (id: string, sid: string) => {
     const a = await llm(id, sid)
     if (!a || !freed(a.f)) return
-    await o.runner.reply(id, sid, wokeText(a.f), 'revise', { via: 'console' })
+    await o.runner.reply(id, sid, say(a.f), 'revise', { via: 'console' })
   }
   const later = (id: string, sid: string, go: (id: string, sid: string) => Promise<void>) => {
     const t = setTimeout(() => {
@@ -92,7 +98,7 @@ export function autoAsk(o: { jobs: Jobs; runner: Runner; ctx: () => T.Ctx; on: b
     if (who === 'runner' && cmd.op === 'runDraft' && start(cmd.step) === 'auto') later(job.id, cmd.step, accept)
     for (const sid of madeCurrent(cmd, prev, job)) if (self(sid)) later(job.id, sid, ask)
     const d = freedDraft(cmd, prev, job)
-    if (d && self(d)) later(job.id, d, revise)
+    if (d && self(d)) later(job.id, d, revise(cmd.op === 'noteAnswer' ? answeredText : wokeText))
   })
   return () => { off(); timers.forEach(clearTimeout); timers.clear() }
 }

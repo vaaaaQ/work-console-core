@@ -30,6 +30,8 @@ export interface RunTools {
   /** a file already under the run's dir (a screenshot, a build output), path relative to it */
   addArtifactFile(path: string, name?: string): Promise<void>
   journal(o: string, c: string, n: string): Promise<void>
+  /** puts a question only the person can answer on the run's step, open: which one it is, in a line; throws why not */
+  askQuestion?(t: string): Promise<string>
   /** the prompt's sections but how to work, and its pictures, read anew */
   context?(): Promise<{ text: string; images: PromptImage[] }>
   /** a png of a page as an artifact; only where the workspace allows it */
@@ -78,7 +80,7 @@ export interface Sdk {
 }
 
 const BRIDGE = ['mcp__bridge__bridge_snapshot', 'mcp__bridge__bridge_get', 'mcp__bridge__bridge_status']
-export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__context', 'mcp__run__screenshot', 'mcp__run__create_job', 'mcp__run__start_job',
+export const ALLOW = ['mcp__run__submit_draft', 'mcp__run__add_artifact', 'mcp__run__add_artifact_file', 'mcp__run__journal', 'mcp__run__ask_question', 'mcp__run__context', 'mcp__run__screenshot', 'mcp__run__create_job', 'mcp__run__start_job',
   'mcp__run__knowledge_search', 'mcp__run__knowledge_read', 'mcp__run__knowledge_propose', 'mcp__run__open_blocker', 'mcp__run__signin_needed', 'mcp__run__request_access', 'mcp__run__act', 'mcp__run__save_source_file', ...BRIDGE]
 export const DENY = [
   'mcp__bridge__bridge_act', 'mcp__work-console',
@@ -219,6 +221,10 @@ export function runToolDefs(tools: RunTools) {
       (a) => wrap(() => tools.addArtifactFile(a.path, a.name), 'artifact saved')()),
     tool('journal', 'Add a line to the job journal: what you observed, what changed, what comes next.', { observed: z.string(), changed: z.string(), next: z.string() },
       (a) => wrap(() => tools.journal(a.observed, a.changed, a.next), 'journal updated')()),
+    ...(tools.askQuestion ? [tool('ask_question', 'Ask the user a question only they can answer, one per call, at most 10 a run. It goes on this step as an open question, '
+      + 'and the step waits for the answer: it is not accepted by itself or by a reply while a question is open. Then finish the draft as far as it goes. The answers come back to you.',
+      { text: z.string().min(1).max(1000) },
+      (a) => answer(() => tools.askQuestion!(a.text))())] : []),
     ...(tools.context ? [tool('context', "This run's prompt again, read anew: the pictures its context names, then the job and its step, its context items, its knowledge notes, earlier outputs, the journal, the description and the instruction. One call gives all of it.", {},
       async () => { try { const c = await tools.context!(); return { content: [...picBlocks(c.images), { type: 'text' as const, text: c.text }] } } catch (e) { return failed(e) } })] : []),
     ...(tools.screenshot ? [tool('screenshot', 'Take a png of a page (http, https, or a file under your working dir) and save it as an artifact of this step: the proof of a UI change.',

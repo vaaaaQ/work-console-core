@@ -1,3 +1,4 @@
+import { BK } from '../../src/data/core.ts'
 import { contextSection, ctxLabel, renderNote } from '../../src/model/context.ts'
 import type { Resolved } from '../../src/model/context.ts'
 import * as T from '../../src/model/transitions.ts'
@@ -53,12 +54,14 @@ function parts(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn) {
     ...(o.workDir ? [`Work dir: ${o.workDir}${o.branch ? ` (a git worktree on branch ${o.branch}, yours alone; commit there)` : ''}`] : []),
   ].join('\n')
   const bl = blockersText(j.flow[step]), rs = resent(x, j, step)
+  const qs = (j.flow[step]?.b ?? []).map((b) => `- ${BK[b.k].l}${b.o ? ` (open): ${b.t}` : `: ${b.t}${b.r ? ` → ${b.r}` : ''}`}`)
   const data = [
     job,
     contextSection(j.ws, ctx.filter((r) => r.k !== 'note')).trimEnd(),
     o.sources ?? '',
     notes.length ? `## Knowledge\n${notes.join('\n\n')}` : '',
     bl ? `## Blockers\n${bl}` : '',
+    block('## Questions on this step', qs),
     outs.length ? `## Earlier outputs\n${outs.join('\n\n')}` : '',
     rs.section,
     block(`## Journal (oldest first${j.jr.length > JR_MAX ? `; the latest ${JR_MAX} of ${j.jr.length}` : ''})`, jr),
@@ -111,6 +114,7 @@ export function buildPrompt(x: T.Ctx, j: Job, step: string, q: string, o: Prompt
       ...(o.knowledge ? [`- When you learn something a later run would need, propose a knowledge note or a change with knowledge_propose; ${w} decides. Notes not given above are found with knowledge_search and knowledge_read.`] : []),
       `- You never send anything to a source (no chat posts, mails, votes, comments or state changes): ${w} sends after review.`,
       `- Write progress with the run tool journal(observed, changed, next) at meaningful points.`,
+      `- If something only ${w} can decide holds part of the step, ask it with ask_question, one question per call, rather than only in the draft's text; then finish the draft as far as it goes.`,
       `- Save files the step expects with add_artifact(name, content), or with add_artifact_file(path) for a file already under your working dir; images show on the page.`,
       ...(o.files ? [`- A source message lists the files it carries in files; save one with save_source_file(concept, id, file) when its content matters to the step, then read the copy under .source-files/<job id>/.`] : []),
       LINKS_LINE,
