@@ -477,8 +477,13 @@ test('a question answered while a run works marks its draft unseen-answer; one a
   assert.equal(late.flow[at].dr!.ua, 1)
   assert.ok(late.flow[at].b.every((b) => !b.ur), 'the mark moves onto the draft')
   assert.equal(apply(X, j, { op: 'runDraft', step: at, t: 'v1' }).job.flow[at].dr!.ua, undefined, 'answered before the run started')
-  const ended = apply(X, mid, { op: 'runEnd', step: at, why: 'cancelled' }).job
-  assert.ok(ended.flow[at].b.every((b) => !b.ur), 'a run with no draft leaves no mark')
+  // a run that ends without a draft keeps the mark for the session that goes on; a fresh run reads the answer and clears it
+  const ended = apply(X, mid, { op: 'runEnd', step: at, why: 'interrupted' }).job
+  assert.ok(ended.flow[at].b.some((b) => b.ur))
+  assert.equal(apply(X, apply(X, ended, { op: 'runStart', step: at, q: 'go', id: 'r2', resumed: true }).job, { op: 'runDraft', step: at, t: 'v1' }).job.flow[at].dr!.ua, 1, 'a resumed session did not read it')
+  const fresh = apply(X, ended, { op: 'runStart', step: at, q: 'go', id: 'r2' }).job
+  assert.ok(fresh.flow[at].b.every((b) => !b.ur))
+  assert.equal(apply(X, fresh, { op: 'runDraft', step: at, t: 'v1' }).job.flow[at].dr!.ua, undefined)
   const after = apply(X, apply(X, j, { op: 'runDraft', step: at, t: 'v1' }).job, { op: 'noteAnswer', step: at, i: 1, r: 'Imre' }).job
   assert.equal(after.flow[at].dr!.ua, undefined); assert.ok(after.flow[at].b.every((b) => !b.ur))
 })

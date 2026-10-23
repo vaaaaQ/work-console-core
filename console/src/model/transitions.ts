@@ -37,6 +37,12 @@ export const roundPhases = (x: Ctx, j: Job, r: Round): Phase[] => r.ph ?? x.PB[j
 export const isClosed = (j: Job) => j.st === 'done' || j.st === 'cancelled'
 export const isLive = (f: Flow) => f.s !== 'done' && f.s !== 'skip'
 export const flows = (j: Job) => Object.values(j.flow)
+/** whether a question on the step was answered while a run worked on it; clears the marks */
+const unseen = (f: Flow) => {
+  const any = f.b.some((b) => b.ur)
+  for (const b of f.b) delete b.ur
+  return any
+}
 /** a step's questions still waiting for an answer */
 export const openQs = (f: Flow) => f.b.filter((b) => b.o && b.k === 'q')
 export const qsM = (n: number) => `${n} open question${n === 1 ? '' : 's'}`
@@ -81,7 +87,8 @@ export const sentence = (t: string) => t.replace(/(?<![.!?…])$/, '.')
 /** the instruction an ask starts from: the step in its own words */
 export const askText = (s: Step) => `Do: ${sentence(s.t)}\nDone when: ${sentence(s.x)}${s.a ? `\nProduce: ${s.a.join(', ')}.` : ''}`
 /** free text on one journal line */
-const line = (t: string, n = 160) => { const s = t.replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s }
+/** a text on one line, at most n characters */
+export const line = (t: string, n = 160) => { const s = t.replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s }
 export const nextTxt = (x: Ctx, j: Job, nx: string | null) => {
   const s = nx ? stepOf(x, j, nx) : undefined
   return s ? `${s.m === 'llm' ? 'ask the LLM for' : 'work on'} “${s.t}”.` : j.st === 'recurring' ? 'wait for the next period.' : 'close the job.'
@@ -674,6 +681,11 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       const how = `${edited ? ' with edits' : ''}${cmd.said ? ' as said in the reply' : ''}${cmd.auto ? ' automatically' : ''}`
       // a draft that reports it did not finish never closes its step, unless the person says so on the page
       const anyway = !!cmd.asDone && !cmd.said && !cmd.auto
+      // an open question holds the step for the person, whatever the draft reports: only the page or a session accepts over it,
+      // and the questions stay open
+      const qs = openQs(F).length
+      if (qs && (cmd.said || cmd.auto)) throw new CmdError('bad_state', `“${S.t}” has ${qsM(qs)}; ${qs > 1 ? 'answer them' : 'answer it'} first`)
+      const stayOpen = () => { if (qs) jr(x, j, `${qsM(qs)} on “${S.t}” ${qs > 1 ? 'stay' : 'stays'} open.`, 'accepted without their answers.', `answer ${qs > 1 ? 'them' : 'it'} when you can.`, by(x), 'wait') }
       if (dr.o && !anyway) {
         const rep = dr.o === 'failed' ? 'reported failed' : 'reported not done'
         F.out = edited ? cmd.text! : dr.t; F.m = rep; F.dr = null; F.s = 'cur'; settle(F)
@@ -684,16 +696,15 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
           jr(x, j, `Accepted the LLM draft for “${S.t}”${how}; it ${rep}.`, 'the step stays open with the draft as its output.', `finish “${S.t}”, or ask again.`, by(x), 'bad')
           syncStatus(x, j)
         }
+        stayOpen()
         break
       }
-      // an open question holds the step for the person: only the page accepts over it, and the questions stay open
-      const qs = openQs(F).length
-      if (qs && (cmd.said || cmd.auto)) throw new CmdError('bad_state', `“${S.t}” has ${qsM(qs)}; ${qs > 1 ? 'answer them' : 'answer it'} first`)
       noBlockers(cmd.force)
       F.out = edited ? cmd.text! : dr.t; F.m = edited ? 'accepted with your edits' : 'draft accepted'
       nx = advance(x, j, sid, 'done')
       const although = dr.o ? `, although it reported ${dr.o === 'failed' ? 'failed' : 'not done'}` : ''
       jr(x, j, `Accepted the LLM draft for “${S.t}”${how}${dr.o ? ' as done' : ''}${although}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')
+      stayOpen()
       break
     }
     case 'rejectDraft': {
@@ -716,6 +727,8 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       const b = badge(cmd.i), r = (cmd.r || '').trim()
       if (!r) throw new CmdError('bad_args', 'an answer needs text')
       b.r = r; b.o = 0
+      // the run working now read the step before this answer
+      if (F.run && b.k === 'q') b.ur = 1
       jr(x, j, `${BK[b.k].l} resolved on “${S.t}”: ${r}`, 'marked resolved.', 'carry on with the step.', by(x), 'ok')
       break
     }
@@ -757,6 +770,8 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     case 'runStart': {
       if (F.run) throw new CmdError('bad_state', `“${S.t}” already has an LLM run`)
       F.run = { q: cmd.q, at: nowOf(x).getTime(), id: cmd.id }; F.dr = null; F.s = 'cur'; F.nw = 1
+      // a fresh run reads every answer in its prompt; a resumed one goes on from what it read before
+      if (!cmd.resumed) unseen(F)
       if (j.st === 'draft' || j.st === 'ready') j.st = 'active'
       const a = cmd.auto ? 'console' : by(x), self = cmd.auto ? ' by itself' : ''
       if (cmd.resumed) jr(x, j, `Resumed the LLM run for “${S.t}”.`, `LLM run continues its session${self}.`, 'review the draft when it is ready.', a, 'cur')
@@ -781,7 +796,8 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       if (!F.run) throw new CmdError('bad_state', `“${S.t}” has no LLM run`)
       const re = !!F.run.reply, ap = F.run.ap ? { ap: 1 as const } : {}
       const rep = report(x, j, sid, cmd)
-      F.run = null; F.dr = { t: cmd.t, at: nowOf(x).toISOString(), nw: 1, ...rep, ...ap }; F.s = 'wait'; F.m = re ? 'LLM draft revised' : 'LLM draft ready'; F.nw = 1
+      const ua = unseen(F) ? { ua: 1 as const } : {}
+      F.run = null; F.dr = { t: cmd.t, at: nowOf(x).toISOString(), nw: 1, ...rep, ...ap, ...ua }; F.s = 'wait'; F.m = re ? 'LLM draft revised' : 'LLM draft ready'; F.nw = 1
       jr(x, j, `${re ? `Draft for “${S.t}” revised` : `Draft for “${S.t}” is ready`}${reportTxt(x, j, rep)}.`, 'waiting for your review.', 'accept, edit or reject it.', 'LLM', 'wait'); syncStatus(x, j)
       break
     }

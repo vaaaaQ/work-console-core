@@ -13,6 +13,8 @@ import type { Note } from '../knowledge/notes.ts'
 
 /** the journal entries a prompt carries: the latest */
 const JR_MAX = 20
+/** the notes on a step a prompt carries, the latest, and the most of each one's text and of its answer */
+export const NOTES_MAX = 20, NOTE_MAX = 500
 
 /** ctx = the job's context items as read now; notes among them go under Knowledge with the playbook's (pbNotes).
     me = what the prompt calls the person the console works for; unset or empty: "the user".
@@ -54,14 +56,15 @@ function parts(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn) {
     ...(o.workDir ? [`Work dir: ${o.workDir}${o.branch ? ` (a git worktree on branch ${o.branch}, yours alone; commit there)` : ''}`] : []),
   ].join('\n')
   const bl = blockersText(j.flow[step]), rs = resent(x, j, step)
-  const qs = (j.flow[step]?.b ?? []).map((b) => `- ${BK[b.k].l}${b.o ? ` (open): ${b.t}` : `: ${b.t}${b.r ? ` → ${b.r}` : ''}`}`)
+  const all = j.flow[step]?.b ?? [], kept = all.slice(-NOTES_MAX)
+  const qs = kept.map((b) => `- ${BK[b.k].l}${b.o ? ` (open): ${T.line(b.t, NOTE_MAX)}` : `: ${T.line(b.t, NOTE_MAX)}${b.r ? ` → ${T.line(b.r, NOTE_MAX)}` : ''}`}`)
   const data = [
     job,
     contextSection(j.ws, ctx.filter((r) => r.k !== 'note')).trimEnd(),
     o.sources ?? '',
     notes.length ? `## Knowledge\n${notes.join('\n\n')}` : '',
     bl ? `## Blockers\n${bl}` : '',
-    block('## Questions on this step', qs),
+    block(`## Questions on this step${all.length > kept.length ? ` (the latest ${kept.length} of ${all.length})` : ''}`, qs),
     outs.length ? `## Earlier outputs\n${outs.join('\n\n')}` : '',
     rs.section,
     block(`## Journal (oldest first${j.jr.length > JR_MAX ? `; the latest ${JR_MAX} of ${j.jr.length}` : ''})`, jr),

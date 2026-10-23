@@ -33,8 +33,8 @@ const FEED_MAX = 200
 const FILE_MAX = 20 << 20
 /** the most jobs one run may create */
 const JOBS_MAX = 5, ACTS_MAX = 10
-/** the most questions one run puts on its step */
-const QUESTIONS_MAX = 10
+/** the most questions one run puts on its step, and the most characters of one */
+const QUESTIONS_MAX = 10, QUESTION_MAX = 1000
 /** the most source files one run saves */
 const FILES_MAX = 100
 const sizeText = (n: number) => (n < 1 << 20 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / (1 << 20)).toFixed(1)} MB`)
@@ -441,6 +441,9 @@ export class Runner {
     const shot = this.screenshot, jt = this.jobTools, kn = this.notes, ra = this.acts, acc = this.access, sf = this.files
     const input = (j: Job) => this.input(j, cwd)
     let made = 0, acted = 0, asked = 0, saved = 0, questions = 0
+    /** the questions being added now, by their text */
+    const asking = new Map<string, Promise<string>>()
+    let adding: Promise<unknown> = Promise.resolve()
     // a send that did not go out shows on the step with its text, so the user can send it by hand
     const notSent = async (action: string, args: Record<string, unknown>, why: string): Promise<never> => {
       const text = typeof args.text === 'string' ? `\n\n${args.text}` : ''
@@ -467,18 +470,35 @@ export class Runner {
         await keep(safeName(n || basename(real)), (f) => copyFile(real, f))
       },
       journal: async (o: string, c: string, n: string) => { await this.jobs.cmd(rec.job, { op: 'journal', o, c, n, a: 'LLM' }, undefined, 'runner') },
-      askQuestion: async (q: string) => {
-        const t = q.trim()
-        if (!t) throw new Error('a question needs text')
-        const at = (j: Job) => `question ${j.flow[rec.step].b.findIndex((b) => b.o && b.k === 'q' && b.t === t) + 1} is open on “${T.stepOf(this.ctx(), j, rec.step)?.t ?? rec.step}”`
-        const now = await this.jobs.get(rec.job)
-        if (!now?.flow[rec.step]) throw new Error('the job or its step is gone')
-        // the same question, still open, is the one already asked
-        if (now.flow[rec.step].b.some((b) => b.o && b.k === 'q' && b.t === t)) return at(now)
-        if (questions >= QUESTIONS_MAX) throw new Error(`this run already asked ${QUESTIONS_MAX} questions`)
-        const r = await this.jobs.cmd(rec.job, { op: 'noteAdd', step: rec.step, k: 'q', t }, undefined, 'runner', 'run')
+      askQuestion: (q: string) => {
+        const t = T.line(String(q), QUESTION_MAX)
+        if (!t) return Promise.reject(new Error('a question needs text'))
+        // the same text asked at once waits for the first ask
+        const going = asking.get(t)
+        if (going) return going
+        // the place is taken before anything is awaited, so parallel asks cannot pass the limit together
+        if (questions >= QUESTIONS_MAX) return Promise.reject(new Error(`this run already asked ${QUESTIONS_MAX} questions`))
         questions++
-        return at(r.job)
+        const at = (j: Job) => `question ${j.flow[rec.step].b.findIndex((b) => b.o && b.k === 'q' && b.t === t) + 1} is open on “${T.stepOf(this.ctx(), j, rec.step)?.t ?? rec.step}”`
+        // one write at a time: parallel adds to one job would run out of conflict retries
+        const p = adding.then(async () => {
+          let added = false
+          try {
+            const now = await this.jobs.get(rec.job)
+            if (!now?.flow[rec.step]) throw new Error('the job or its step is gone')
+            // the same question, still open, is the one already asked
+            if (now.flow[rec.step].b.some((b) => b.o && b.k === 'q' && b.t === t)) return at(now)
+            const r = await this.jobs.cmd(rec.job, { op: 'noteAdd', step: rec.step, k: 'q', t }, undefined, 'runner', 'run')
+            added = true
+            return at(r.job)
+          } finally {
+            if (!added) questions--
+            asking.delete(t)
+          }
+        })
+        adding = p.catch(() => {})
+        asking.set(t, p)
+        return p
       },
       context: async () => {
         const j = (await this.jobs.get(rec.job)) ?? job, x = await input(j)

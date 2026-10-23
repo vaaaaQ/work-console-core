@@ -50,7 +50,8 @@ export interface MsgHead { cc?: string; subject?: string }
 /** link = where the artifact lives, when an LLM run wrote it to disk */
 export interface Art extends New { n: string; ok: boolean; link?: string }
 /** o = open */
-export interface Badge extends New { k: BadgeKind; t: string; r?: string; o?: 1 | 0 }
+/** ur = answered while a run worked on the step: the run's draft did not see the answer */
+export interface Badge extends New { k: BadgeKind; t: string; r?: string; o?: 1 | 0; ur?: 1 }
 export interface Vote extends New { n: string; v: number }
 export interface Review { v: Vote[]; need: number }
 /** what a draft reports about its step: done (the default, not stored), not finished, or a check that failed */
@@ -63,8 +64,9 @@ export interface DraftReport { o?: Outcome; rt?: string; why?: string; cm?: stri
 export const CMDS_MAX = 10, CMD_MAX = 2000
 /** o, rt, why: the draft's report, set only when it did not finish; cm = the commands it waits to have approved;
     ap = it reports approved commands, so it is the person's to read and never accepted by itself;
-    hd = handed in by hand, so no LLM session wrote it and none approves its commands */
-export interface Draft extends New { t: string; at: string; q?: string; o?: Exclude<Outcome, 'done'>; rt?: string; why?: string; cm?: string[]; ap?: 1; hd?: 1 }
+    hd = handed in by hand, so no LLM session wrote it and none approves its commands;
+    ua = a question on the step was answered while its run worked, so the draft has not seen the answer */
+export interface Draft extends New { t: string; at: string; q?: string; o?: Exclude<Outcome, 'done'>; rt?: string; why?: string; cm?: string[]; ap?: 1; hd?: 1; ua?: 1 }
 /** id = the backend's run record; absent in the demo; reply = it continues the draft's session, so the draft stays;
     ap = the reply approves the draft's commands */
 export interface Run { q: string; at: number; id?: string; reply?: 1; ap?: 1 }

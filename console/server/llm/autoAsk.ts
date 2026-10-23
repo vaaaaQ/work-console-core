@@ -2,7 +2,7 @@ import { openOf } from '../../src/model/blockers.ts'
 import * as T from '../../src/model/transitions.ts'
 import type { Cmd, Flow, Job, Start, Step } from '../../src/model/types.ts'
 import type { Jobs } from '../jobs/jobs.ts'
-import { blockersText } from './prompt.ts'
+import { NOTES_MAX, NOTE_MAX, blockersText } from './prompt.ts'
 import type { Runner } from './runner.ts'
 
 /* Auto-ask: an llm step that starts by itself runs when a change moves the job onto it, and a drafted one whose
@@ -21,6 +21,8 @@ export function holdOf(f: Flow): string | null {
   if (f.dr?.cm?.length) return `the draft waits for approval of ${T.cmdsN(f.dr.cm.length)}`
   if (f.dr?.ap) return 'the draft reports approved commands'
   if (f.b.some((b) => b.o && b.k === 'q')) return 'an open question'
+  // the person accepts or replies; a wake would not fire, since the draft came after the answer
+  if (f.dr?.ua) return 'a question was answered while the run worked, so the draft has not seen the answer'
   if (f.b.some((b) => b.o && b.k === 'p')) return 'a problem note'
   if (f.bb) return 'a blocker asked for'
   return openOf(f).length ? 'open blockers' : null
@@ -56,8 +58,11 @@ export function freedDraft(cmd: Cmd, prev: Job, job: Job): string | null {
 export const wokeText = (f: Flow) =>
   `Every blocker this step waited for has closed:\n\n${blockersText(f)}\n\nGo on with the step from your draft, as each outcome and plan say.`
 /** what the draft's session is told when its last question got its answer */
-export const answeredText = (f: Flow) =>
-  `Every question this step asked has an answer:\n\n${f.b.filter((b) => b.k === 'q' && !b.o).map((b) => `- ${b.t} → ${b.r}`).join('\n')}\n\nGo on with the step from your draft, as the answers say.`
+export function answeredText(f: Flow) {
+  const qs = f.b.filter((b) => b.k === 'q' && !b.o), kept = qs.slice(-NOTES_MAX)
+  const of = qs.length > kept.length ? ` (the latest ${kept.length} of ${qs.length})` : ''
+  return `Every question this step asked has an answer${of}:\n\n${kept.map((b) => `- ${T.line(b.t, NOTE_MAX)} → ${T.line(b.r ?? '', NOTE_MAX)}`).join('\n')}\n\nGo on with the step from your draft, as the answers say.`
+}
 
 /** asks each llm step a change made current, and revises each llm draft a blocker freed, unless an LLM run made
     the change; returns the off */
