@@ -166,3 +166,19 @@ the page. The core version is `core.lock.json`'s `core` field.
 4. No facts in message templates (`{var}`) in v1.
 5. The six kinds stay fixed in the core; no workspace kinds.
 6. Specs stay in English.
+
+## What the implementation settled (TDD step)
+
+- `src/model/facts.ts` holds the kinds, their checks (`factsIn`), the one-line text (`factLine`), the newest of each kind
+  (`latestFacts`), lamps and the header strip's parts. A run may report every kind but `round`, which only the console writes.
+- `submit_draft`'s `facts` is a list of `{kind, ...}` in both the run tool (zod) and the console MCP (JSON schema); the
+  fields of each kind are in the tool's description (`FACTS_HELP`). The core checks every field as the draft goes in, so a
+  bad fact comes back as the tool's error with the field named (`facts: fact 1 (branch): sha is a commit hash …`). This
+  stands in for the zod discriminated union the spec named: one checker, one message, for both tools.
+- Accept/Send back is a new command, `review {step, verdict, note?, to?}` (a page and session op, listed on `job_command`).
+  Send back needs a note and goes back to `to`, by default the step that made the latest `branch`, else the step before.
+  `stepDone` on such a step still writes an accepted review; a plain `returnTo` from it writes a sent_back one.
+- A `round` fact's `n` is the round that went back; it sits on the step gone back to, `step` = the step it was sent from.
+  Its `failed` lists the failed checks of the draft that sent it back (none for Send back or a reopen by hand).
+- Accepted facts are added after the step's own (a round fact stays), so "latest of each kind" reads the step's history.
+- `get_job` shows each step's declared kinds (`reports`), its `facts` and its draft's (`draftFacts`), in words.
