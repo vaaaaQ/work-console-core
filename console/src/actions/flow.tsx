@@ -12,7 +12,7 @@ import {
 } from '../model/world.ts'
 import { openOf } from '../model/blockers.ts'
 import { ctxOf } from '../model/context.ts'
-import { askText } from '../model/transitions.ts'
+import { askText, openQs, qsM } from '../model/transitions.ts'
 import type { BadgeKind, Cmd, Job, JobStatus, RunRec } from '../model/types.ts'
 import { commit } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
@@ -220,13 +220,27 @@ export async function llmResume(runId: string) {
   try { const { run } = await api.resumeRun(runId); commit(() => { LIVE.runs[run.id] = run }) } catch (e) { toast(failText(e)) }
 }
 
-export function acceptDraft(id: string, sid: string, text?: string, force = false) {
+export function acceptDraft(id: string, sid: string, text?: string, force = false, anyway = false) {
   const j = byId(id), f = j?.flow[sid]
   if (!j || !f || !f.dr) return
   // a draft that reports it did not finish asks how: go back, keep the step open, or mark it done anyway
   if (f.dr.o) { acceptReported(id, sid, text); return }
-  if (!force && openOf(f).length) { confirmForce(j, sid, () => acceptDraft(id, sid, text, true)); return }
+  // open questions stay open after the accept; the person says they go on without the answers
+  if (!anyway && openQs(f).length) { confirmQuestions(j, sid, () => acceptDraft(id, sid, text, force, true)); return }
+  if (!force && openOf(f).length) { confirmForce(j, sid, () => acceptDraft(id, sid, text, true, anyway)); return }
   void doCmd(id, { op: 'acceptDraft', step: sid, ...(text != null ? { text } : {}), ...(force ? { force } : {}) }, `Accepted · ${stepOf(j, sid)!.t}`, { moveSel: true })
+}
+
+/** a draft accepted over the step's open questions: they stay open on the step */
+function confirmQuestions(j: Job, sid: string, go: () => void) {
+  const qs = openQs(j.flow[sid])
+  modal({
+    title: 'Questions still open',
+    body: <><p>{qsM(qs.length)} on “{stepOf(j, sid)?.t}” {qs.length === 1 ? 'stays' : 'stay'} open. Accept anyway?</p>
+      <ul>{qs.map((b, i) => <li key={i}>{b.t}</li>)}</ul></>,
+    foot: <><button type="button" className="btn" onClick={closeModal}>Cancel</button>
+      <button type="button" className="btn pri" onClick={() => { closeModal(); go() }}>Accept anyway</button></>,
+  })
 }
 
 /** the dialog on a draft that reports not done or failed: Mark done anyway is the only way it closes the step */

@@ -40,6 +40,7 @@ function LlmSec({ j, s, f }: P) {
     <section className="sec"><div className="eyebrow">LLM draft</div><div className="llmr pending">
       <div className="hd"><Ic n="bot" sm /><b>Waiting for your review</b><span>· {tfmt(f.dr.at)}</span><OutSeg /></div>{draftReport(j, f.dr) && <div className="why rep">{draftReport(j, f.dr)}</div>}<OutText t={f.dr.t} />
       <CmdList job={j} step={s.id} />
+      <OpenQs j={j} f={f} />
       <div className="row"><ApproveBtn job={j} step={s.id} /><button className={'btn sm' + (approveHead(j, s.id) ? '' : ' pri')} disabled={!!f.run} onClick={() => acceptDraft(j.id, s.id)}><Ic n="check" sm />Accept</button>
         <button className="btn sm" disabled={!!f.run} onClick={() => editDraft(j.id, s.id)}><Ic n="pen" sm />Edit…</button>
         <button className="btn sm" disabled={!!f.run} onClick={() => rejectDraft(j.id, s.id)}><Ic n="x" sm />Reject…</button></div>
@@ -47,6 +48,19 @@ function LlmSec({ j, s, f }: P) {
   )
   if (f.out) return <section className="sec"><div className="row"><div className="eyebrow">Accepted output</div><span className="fsp" /><OutSeg /></div><OutText t={f.out} /></section>
   return null
+}
+
+/** the step's open questions where the draft is reviewed: the draft waits for their answers */
+function OpenQs({ j, f }: { j: Job; f: Flow }) {
+  const qs = f.b.flatMap((b, i) => (b.o && b.k === 'q' ? [{ b, i }] : []))
+  if (!qs.length) return null
+  return (
+    <div className="oq"><div className="eyebrow">Open questions ({qs.length})</div>
+      <div className="bl">{qs.map(({ b, i }) => (
+        <div key={i} className="bi"><span className="bdg q"><Ic n={BK.q.i} /></span><div><p>{b.t}</p></div>
+          {isClosed(j) ? null : <div className="acts"><button className="btn sm" onClick={() => bAnswer(i)}>Answer…</button></div>}
+        </div>))}</div></div>
+  )
 }
 
 const vcls = (j: Job, v: number) => v > 0 ? 'vp' : v === 0 ? 'v0' : v <= PACKS[j.ws].veto ? 'vx' : 'vn'

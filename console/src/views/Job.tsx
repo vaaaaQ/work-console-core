@@ -4,6 +4,7 @@ import { G } from '../data/ui.ts'
 import { ago, artIc, dm, tfmt } from '../lib/util.ts'
 import { openOf, holdsOf } from '../model/blockers.ts'
 import type { Mark } from '../model/preview.ts'
+import { openQs, qsM } from '../model/transitions.ts'
 import { JOBS, PB, S, byId, isClosed, isLive, jsteps, phState, phases, pview } from '../model/world.ts'
 import type { Job, JournalEntry, NodeState, Phase, Step } from '../model/types.ts'
 import { LIVE } from '../live/api.ts'
@@ -39,7 +40,7 @@ function Node({ j, s, prior, mark }: { j: Job; s: Step; prior: boolean; mark?: M
     <div ref={ref} className={`node n-${st}${S.sel === s.id ? ' on' : ''}${f.nw ? ' new' : ''}${prior ? ' prior' : ''}${mark ? ' pv-' + mark : ''}`}>
       <button className="hit" id={'h-' + s.id} aria-label={`${s.t}: ${NODE[st][1]}${mark ? `, ${MARK[mark]}` : ''}`} disabled={mark === 'add'} onClick={() => selStep(s.id)} />
       <span className="g">{g ? <Ic n={g} /> : null}</span><span className="n-t">{mark === 'add' ? '+ ' : mark === 'edit' ? '~ ' : ''}{s.t}</span>
-      <span className="n-m"><Ic n={MODES[s.m].i} sm />{isLive(f) && f.s !== 'bad' && openOf(f).length ? `⏳ ${openOf(f).map((l) => l.j).join(' ')}` : f.m || MODES[s.m].l}{s.msg ? <> <span className="msgs"><Ic n="message" sm />{s.msg}</span></> : null}
+      <span className="n-m"><Ic n={MODES[s.m].i} sm />{isLive(f) && f.s !== 'bad' && openOf(f).length ? `⏳ ${openOf(f).map((l) => l.j).join(' ')}` : isLive(f) && openQs(f).length ? `❓ ${qsM(openQs(f).length)}` : f.m || MODES[s.m].l}{s.msg ? <> <span className="msgs"><Ic n="message" sm />{s.msg}</span></> : null}
         {s.add && mark !== 'add' ? <> <span className="n-add" title={s.add.why}>+ {dm(s.add.at)}</span></> : null}</span>
       {mark === 'reopen' ? <span className="n-tag pv">reopens</span> : null}
       {f.run ? <span key="run" className="n-tag run"><span className="spin" />LLM working</span>
