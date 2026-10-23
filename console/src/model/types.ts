@@ -23,7 +23,13 @@ type New = { nw?: 0 | 1 }
 export interface Step {
   id: string; fid?: string; t: string; m: Mode; x: string; a?: string[]; msg?: number; rv?: 1; out?: string; act?: string
   start?: Start; add?: { at: string; by: string; why: string }; ask?: 1; fx?: FactKind[]
+  /** a failed draft goes back to step `to` (an earlier one), and an auto step's console accepts that by itself, at most max
+      fix rounds a job (default FIX_MAX) after the last round a person opened */
+  retry?: Retry
 }
+export interface Retry { to: string; max?: number }
+/** the fix rounds a job has by default, and the most a step may give it */
+export const FIX_MAX = 3, FIX_LIMIT = 10
 /** how an llm step begins when it becomes current: by hand, by itself, or by itself with its draft accepted */
 export type Start = 'hand' | 'self' | 'auto'
 /** a step a job adds to its own steps */
@@ -32,7 +38,9 @@ export interface Phase { c: string; n: string; s: Step[] }
 /** ws = owning pack; none = core, offered in every workspace; needs = in plain words, the context its jobs need;
  *  once = one job's own steps, which no playbook list, catalog or list_playbooks shows;
  *  links = web pages every job of it needs (such as a login page), put in each new job's context */
-export interface Playbook { ws?: Ws; ks?: SrcKey; n: string; d?: string; ph: Phase[]; custom?: 1; needs?: string; once?: 1; links?: PbLink[] }
+export interface Playbook { ws?: Ws; ks?: SrcKey; n: string; d?: string; ph: Phase[]; custom?: 1; needs?: string; once?: 1; links?: PbLink[]
+  /** the one-time approval: the person's Accept of step `at` approves cmds for the job; {branch} and {base} fill from its work dir */
+  ok?: { at: string; cmds: string[] } }
 /** a web page a playbook's jobs start with: its http(s) address and the name it shows by */
 export interface PbLink { url: string; name?: string }
 
@@ -65,12 +73,15 @@ export interface DraftReport { o?: Outcome; rt?: string; why?: string; cm?: stri
 export const CMDS_MAX = 10, CMD_MAX = 2000
 /** o, rt, why: the draft's report, set only when it did not finish; cm = the commands it waits to have approved;
     ap = it reports approved commands, so it is the person's to read and never accepted by itself;
+    ap: 1 = the person approved them, 'ok' = the console did, under the job's one-time approval;
     hd = handed in by hand, so no LLM session wrote it and none approves its commands;
     ua = a question on the step was answered while its run worked, so the draft has not seen the answer; fx = the facts it would leave on its step */
-export interface Draft extends New { t: string; at: string; q?: string; o?: Exclude<Outcome, 'done'>; rt?: string; why?: string; cm?: string[]; ap?: 1; hd?: 1; ua?: 1; fx?: Fact[] }
+export interface Draft extends New { t: string; at: string; q?: string; o?: Exclude<Outcome, 'done'>; rt?: string; why?: string; cm?: string[]; ap?: Ap; hd?: 1; ua?: 1; fx?: Fact[] }
+/** who approved a draft's commands: the person (1) or the console under the job's one-time approval ('ok') */
+export type Ap = 1 | 'ok'
 /** id = the backend's run record; absent in the demo; reply = it continues the draft's session, so the draft stays;
     ap = the reply approves the draft's commands */
-export interface Run { q: string; at: number; id?: string; reply?: 1; ap?: 1 }
+export interface Run { q: string; at: number; id?: string; reply?: 1; ap?: Ap }
 export interface Sent { at: string; t: string }
 /** a step's blocker: j = the job it waits for, t = its title when linked, st = its state as last seen,
     plan = what to do with its outcome, out = its outcome, copied in when it closed, at = when it closed */
@@ -106,16 +117,21 @@ export interface JobSeed {
 }
 /** a finished pass through the flow, kept read-only: n = its number (1 = the first pass), from = the step it began at,
  *  at = when it ended, by + why = who returned the job and why, st = the job's status then, flow = its steps from `from` on,
- *  ph = the job's own steps then, when it had them */
-export interface Round { n: number; from: string; at: string; by: string; why: string; st: JobStatus; flow: Record<string, Flow>; ph?: Phase[] }
+ *  ph = the job's own steps then, when it had them; fx = a fix round the console opened: the nth of max, after step failed */
+export interface Round { n: number; from: string; at: string; by: string; why: string; st: JobStatus; flow: Record<string, Flow>; ph?: Phase[]; fx?: FixRound }
+export interface FixRound { n: number; max: number; step: string }
 /** v = the store's version; a write names the version it replaces; rounds = past passes, oldest first;
  *  rf = the step the current pass began at (absent = the first step);
  *  ph + tpl = the job's own steps and their planned messages, copied from its playbook on the first change to them;
- *  ns = the highest number an added step n<k> took, so a removed step's id never comes back; pp = the open proposal */
+ *  ns = the highest number an added step n<k> took, so a removed step's id never comes back; pp = the open proposal;
+ *  wd = the branch its work dir is on and the base it came from, as the runner last named them;
+ *  ok = the one-time approval: commands the console may approve for it, granted by the person's Accept of step at */
 export interface Job extends JobSeed {
   flow: Record<string, Flow>; ts: number; jr: JournalEntry[]; v?: number; rounds?: Round[]; rf?: string
-  ph?: Phase[]; tpl?: Record<string, Tpl[]>; ns?: number; pp?: Proposal
+  ph?: Phase[]; tpl?: Record<string, Tpl[]>; ns?: number; pp?: Proposal; wd?: WdVars; ok?: OkGrant
 }
+export interface WdVars { branch: string; base: string }
+export interface OkGrant { at: string; by: string; cmds: string[] }
 /** changes an agent proposes for a job, applied only when accepted: by = its conversation, say = what it says in plain words,
  *  v = the job's version it was checked on, err = why the last accept failed */
 export interface Proposal { at: string; by: string; say: string; cmds: Cmd[]; v?: number; err?: string }
@@ -136,8 +152,11 @@ export type Cmd =
   | { op: 'stepWait'; step: string; m: string }
   /** said = accepted on the replier's word, by an accept reply; force as for stepDone; auto = by the console, on an auto step;
       asDone = the person marks a draft that reports not done or failed done anyway (the page only; said and auto never);
-      stay = such a draft keeps its step open even when it names a step to go back to */
-  | { op: 'acceptDraft'; step: string; text?: string; said?: boolean; force?: boolean; auto?: true; asDone?: true; stay?: true }
+      stay = such a draft keeps its step open even when it names a step to go back to;
+      ran = the person ran the draft's commands outside the console (the page only) */
+  | { op: 'acceptDraft'; step: string; text?: string; said?: boolean; force?: boolean; auto?: true; asDone?: true; stay?: true; ran?: true }
+  /** the person withdraws the job's one-time approval */
+  | { op: 'okDrop' }
   | { op: 'noteAdd'; step: string; k: BadgeKind; t: string }
   | { op: 'noteAnswer'; step: string; i: number; r: string } | { op: 'noteReopen'; step: string; i: number }
   /** ch = the chat or the mail replied to, rto = a new mail's addresses: where an ask step's reply comes from */
@@ -145,10 +164,11 @@ export type Cmd =
   /** the console, when a reply to an ask step came */
   | { op: 'replyIn'; step: string; id: string; at: string; from: string; t: string; link?: string }
   | { op: 'vote'; step: string; n: string; v: number } | { op: 'nudged'; to: string } | { op: 'replied'; subj: string }
-  /** auto = the console started it by itself */
-  | { op: 'runStart'; step: string; q: string; id: string; resumed?: boolean; auto?: boolean }
-  /** a reply to the draft in its own session; the draft stays until it is revised */
-  | { op: 'runReply'; step: string; q: string; id: string; intent: RunIntent; resumed?: boolean }
+  /** auto = the console started it by itself; wd = the job's work dir as the runner names it */
+  | { op: 'runStart'; step: string; q: string; id: string; resumed?: boolean; auto?: boolean; wd?: WdVars }
+  /** a reply to the draft in its own session; the draft stays until it is revised; ok = an approval by the console,
+      under the job's one-time approval */
+  | { op: 'runReply'; step: string; q: string; id: string; intent: RunIntent; resumed?: boolean; ok?: true }
   | ({ op: 'runDraft'; step: string; t: string } & DraftReport)
   /** a draft a session made by hand hands in through the console's MCP; it waits for review as a run's does */
   | ({ op: 'draftIn'; step: string; t: string } & DraftReport)
@@ -181,9 +201,9 @@ export type Cmd =
 /** ops the page may send; the rest belong to the LLM runner */
 export const PAGE_OPS = ['start', 'close', 'reopen', 'stepDone', 'review', 'stepSkip', 'stepResume', 'stepReopen', 'rejectDraft', 'stepWait',
   'acceptDraft', 'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'nudged', 'replied', 'schedule', 'ctxAdd', 'ctxSet', 'ctxDel', 'describe',
-  'waitAdd', 'waitDel', 'blockerDrop', 'ppEdit', 'ppAccept', 'ppReject'] as const
-/** ops a Claude Code session may send through the console's MCP: the page's but proposals, plus returning to a passed step */
-export const SESSION_OPS = [...PAGE_OPS.filter((o) => !o.startsWith('pp')), 'returnTo'] as const
+  'waitAdd', 'waitDel', 'blockerDrop', 'ppEdit', 'ppAccept', 'ppReject', 'okDrop'] as const
+/** ops a Claude Code session may send through the console's MCP: the page's but proposals and the approval, plus returning to a passed step */
+export const SESSION_OPS = [...PAGE_OPS.filter((o) => !o.startsWith('pp') && o !== 'okDrop'), 'returnTo'] as const
 /** ops a proposal may hold */
 export const PP_OPS = ['stepAdd', 'stepDel', 'stepEdit', 'stepMove', 'returnTo', 'waitAdd', 'waitDel', 'stepDone',
   'describe', 'ctxAdd', 'ctxDel', 'noteAdd'] as const

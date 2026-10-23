@@ -35,7 +35,20 @@ export const playbooks: Record<string, Playbook> ={
   {c:'TM',n:'Time',s:[
    {id:'ts1',t:'Fill the month',m:'you',x:'Every day you worked has hours',act:'time'}]},
   {c:'SN',n:'Send',s:[
-   {id:'ts2',t:'Send the timesheet',m:'you',x:'The timesheet is sent'}]}]}
+   {id:'ts2',t:'Send the timesheet',m:'you',x:'The timesheet is sent'}]}]},
+ // the one-time approval and fix rounds: accepting Analysis approves these commands for the job, and a failed live
+ // check goes back to Build by itself, at most 3 times in a row
+ 'auto-ship':{ws:'acme',n:'Auto ship',d:'Analysis by hand, then build, ship and check by themselves',
+  ok:{at:'as1',cmds:['git status','git log --oneline -1 {branch}','echo ship {branch} onto {base}']},ph:[
+  {c:'AN',n:'Analysis',s:[
+   {id:'as1',t:'Analysis',m:'llm',x:'The change is clear',a:['spec.md']}]},
+  {c:'BD',n:'Build',s:[
+   {id:'as2',t:'Build',m:'llm',x:'Tests green, committed on the branch',start:'auto'}]},
+  {c:'SH',n:'Ship',s:[
+   {id:'as3',t:'Ship',m:'llm',x:'The commands ran',start:'auto'},
+   {id:'as4',t:'Live check',m:'llm',x:'https://status.acme.example answers ok',start:'auto',retry:{to:'as2'}}]},
+  {c:'CL',n:'Close',s:[
+   {id:'as5',t:'Look at it live',m:'you',x:'It works'}]}]}
 };
 
 /* message templates: [source, channel, text]; {var} fills from the job, the pack or an earlier step */

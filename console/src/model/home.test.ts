@@ -77,3 +77,11 @@ test('act names are unique across the core and every workspace', () => {
   assert.doesNotThrow(() => setup({ page: page(acme, ['acme.go']), ui: ui(['acme.go']) }, { page: page(acme2, ['acme2.go']), ui: ui(['acme2.go']) }))
   assert.equal(actOf('acme.go')?.label, 'acme.go'); assert.equal(actOf('acme2.go')?.label, 'acme2.go')
 })
+
+test('a playbook whose one-time approval or retry is bad is refused as its workspace installs', () => {
+  const pb = acme.playbooks['auto-ship']
+  assert.ok(pb?.ok, 'the demo has a playbook with a one-time approval')
+  const bad = { ...acme, playbooks: { ...acme.playbooks, 'auto-ship': { ...pb, ok: { at: pb.ok!.at, cmds: ['gh pr merge {pr}'] } } } }
+  assert.throws(() => install([{ page: bad }]), /^Error: playbook auto-ship: ok command 1 has \{pr\}; only \{branch\} and \{base\} fill$/)
+  assert.doesNotThrow(() => setup({ page: acme }, { page: acme2 }))
+})

@@ -7,9 +7,9 @@ import { KINDS, ctxDefaults, ctxLabel, ctxOf, ctxUnit, httpUrl, parseWorkId } fr
 import type { Kind } from './context.ts'
 import { FactError, NOTE_MAX, factsIn, failedChecks, isNone, kindsIn, latestFacts, missingKinds } from './facts.ts'
 import type { BranchFact, Fact, FactIn } from './facts.ts'
-import { CMD_MAX, CMDS_MAX, OUTCOMES, PP_OPS } from './types.ts'
+import { CMD_MAX, CMDS_MAX, FIX_LIMIT, FIX_MAX, OUTCOMES, PP_OPS } from './types.ts'
 import type {
-  BadgeKind, Cmd, Draft, DraftReport, CtxItem, CtxKind, Flow, Job, JobStatus, JournalEntry, Lamp, NewStep, NodeState, Phase, Playbook, Round, Start, Step, StepOverride, Tpl, Ws,
+  BadgeKind, Cmd, Draft, DraftReport, CtxItem, CtxKind, Flow, Job, JobStatus, JournalEntry, Lamp, NewStep, NodeState, Phase, Playbook, Round, Start, Step, StepOverride, Tpl, WdVars, Ws,
 } from './types.ts'
 
 /* The one place for job transitions: the page (demo and live) and the backend run the same code.
@@ -311,6 +311,76 @@ function returnTo(x: Ctx, j: Job, sid: string, why: string, failed?: string[]) {
   syncStatus(x, j)
   jr(x, j, `Returned to “${all[ti].t}”: ${why}`, `round ${kept.n + 1} starts here; ${back.length} step${back.length > 1 ? 's' : ''} from “${all[ti].t}” on start again, round ${kept.n} is kept.`,
     `work on “${all[ti].t}”.`, by(x), 'cur')
+  // going back to the step that granted the approval, or before it, means the shape is approved again
+  const oi = j.ok ? all.findIndex((s) => s.id === j.ok!.at) : -1
+  if (j.ok && (oi < 0 || ti <= oi)) {
+    jr(x, j, `The one-time approval of ${cmdsN(j.ok.cmds.length)} lapsed.`, `the job went back to “${all[ti].t}”; accepting “${stepOf(x, j, j.ok.at)?.t ?? j.ok.at}” again approves them again.`, `work on “${all[ti].t}”.`, by(x), 'off')
+    delete j.ok
+  }
+}
+
+/* ===== the one-time approval and fix rounds ===== */
+/** the placeholders a playbook's approved commands may hold; the console fills them from the job's work dir */
+const OK_VARS = ['branch', 'base'] as const
+/** the templates filled from the job's work dir; null without one */
+export function fillOk(cmds: string[], wd: WdVars | undefined): string[] | null {
+  if (!wd) return null
+  return cmds.map((c) => c.replace(/\{(branch|base)\}/g, (_, k: 'branch' | 'base') => wd[k]))
+}
+/** what the person's Accept of sid approves for the job: the filled commands, or why none; null = sid grants nothing */
+export function okPreview(x: Ctx, j: Job, sid: string): { cmds: string[] } | { why: string } | null {
+  const ok = x.PB[j.pb]?.ok
+  if (!ok || ok.at !== sid) return null
+  const cmds = fillOk(ok.cmds, j.wd)
+  return cmds ? { cmds } : { why: 'the job has no work dir yet, so {branch} and {base} do not fill' }
+}
+/** the fix rounds the console opened since the last round a person opened */
+export function fixRounds(j: Job) {
+  const r = j.rounds ?? []
+  let n = 0
+  while (n < r.length && r[r.length - 1 - n].fx) n++
+  return n
+}
+export const fixMax = (s: Step) => s.retry?.max ?? FIX_MAX
+export const fixLimitText = (max: number) => `the job has had its ${max} fix round${max === 1 ? '' : 's'}`
+/** a failed draft the console may send back by itself: the step's retry names where, and the draft goes there */
+export const isFix = (s: Step, dr: Draft) => dr.o === 'failed' && !!s.retry && dr.rt === s.retry.to
+/** what a fix round tells its first run and keeps as its artifact: the round, the limit, what failed, where it went back, why, and the failed draft */
+export function fixRoundText(x: Ctx, j: Job, r: Round): string {
+  const fx = r.fx!, rounds = j.rounds ?? [], i = rounds.indexOf(r), to = rounds[i + 1]?.from ?? j.rf
+  const t = (sid: string | undefined) => (sid && (stepOf(x, j, sid)?.t ?? roundPhases(x, j, r).flatMap((p) => p.s).find((s) => s.id === sid)?.t)) || sid
+  return `## Fix round ${fx.n} of ${fx.max}\n“${t(fx.step)}” failed; the job went back to “${t(to)}”.\nWhy: ${r.why}\n\nThe failed draft:\n${r.flow[fx.step]?.out ?? ''}`
+}
+/** a playbook's ok and retry, checked as it loads; throws naming what is wrong */
+export function checkPlaybook(key: string, pb: Playbook) {
+  const all = (pb.ph ?? []).flatMap((p) => p.s), bad = (m: string): never => { throw new Error(`playbook ${key}: ${m}`) }
+  if (pb.ok) {
+    if (!all.some((s) => s.id === pb.ok!.at)) bad(`ok.at ${pb.ok.at} is not one of its steps`)
+    const cm = pb.ok.cmds
+    if (!Array.isArray(cm) || !cm.length || cm.length > CMDS_MAX) bad(`ok.cmds are a list of 1 to ${CMDS_MAX}`)
+    cm.forEach((c, i) => {
+      if (typeof c !== 'string' || !c.trim() || c.length > CMD_MAX) bad(`ok command ${i + 1} is empty or longer than ${CMD_MAX} characters`)
+      for (const m of c.matchAll(/\{([^{}]*)\}/g))
+        if (!(OK_VARS as readonly string[]).includes(m[1])) bad(`ok command ${i + 1} has {${m[1]}}; only {branch} and {base} fill`)
+    })
+  }
+  all.forEach((s, i) => {
+    if (!s.retry) return
+    if (s.m !== 'llm') bad(`step ${s.id}: only an llm step has retry`)
+    const ti = all.findIndex((t) => t.id === s.retry!.to)
+    if (ti < 0 || ti >= i) bad(`step ${s.id}: retry.to ${s.retry.to} is not an earlier step`)
+    const m = s.retry.max
+    if (m !== undefined && (!Number.isInteger(m) || m < 1 || m > FIX_LIMIT)) bad(`step ${s.id}: retry.max is 1–${FIX_LIMIT}`)
+  })
+}
+/** the person's Accept of the playbook's ok step approves its commands for the job, filled from its work dir */
+function grant(x: Ctx, j: Job, sid: string) {
+  const p = okPreview(x, j, sid)
+  if (!p) return
+  if ('why' in p) { jr(x, j, `Approved nothing for this job: ${p.why}.`, 'every command waits for your approval.', nextTxt(x, j, atOf(x, j)), by(x), 'off'); return }
+  j.ok = { at: sid, by: by(x), cmds: p.cmds }
+  jr(x, j, `Approved for this job: ${cmdsN(p.cmds.length)}: ${line(p.cmds.join('; '), 1200)}`, 'the console approves a draft that asks for exactly these; any other command waits for you.',
+    nextTxt(x, j, atOf(x, j)), by(x), 'ok')
 }
 
 /** reopening sid starts a new round: it is passed and a later step was already reached */
@@ -350,8 +420,12 @@ function report(x: Ctx, j: Job, sid: string, r: DraftReport): Pick<Draft, 'o' | 
     if (miss.length) throw new CmdError('bad_args', `“${S.t}” reports ${miss.join(', ')}: a done draft of it carries a fact of each kind in facts, or {kind, none: why} when there is honestly nothing to report`)
     return cm
   }
+  const all = stepsOf(x, j), S = all.find((s) => s.id === sid), si = all.findIndex((s) => s.id === sid)
+  // a failed draft on a step with retry goes back where the step says, unless it names a step itself
+  const ri = S?.retry ? all.findIndex((s) => s.id === S.retry!.to) : -1
+  if (!r.rt && r.o === 'failed' && ri >= 0 && ri < si) return { o: r.o, rt: all[ri].id, ...(why ? { why } : {}), ...cm }
   if (!r.rt) return { o: r.o, ...(why ? { why } : {}), ...cm }
-  const all = stepsOf(x, j), want = r.rt.trim().toLowerCase()
+  const want = r.rt.trim().toLowerCase()
   let ti = all.findIndex((s) => s.id === r.rt)
   if (ti < 0) ti = all.findIndex((s) => s.t.toLowerCase() === want)
   if (ti < 0) throw new CmdError('bad_step', `return_to: ${j.id} has no step ${r.rt}`)
@@ -742,12 +816,22 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       const qs = openQs(F).length
       if (qs && (cmd.said || cmd.auto)) throw new CmdError('bad_state', `“${S.t}” has ${qsM(qs)}; ${qs > 1 ? 'answer them' : 'answer it'} first`)
       const stayOpen = () => { if (qs) jr(x, j, `${qsM(qs)} on “${S.t}” ${qs > 1 ? 'stay' : 'stays'} open.`, 'accepted without their answers.', `answer ${qs > 1 ? 'them' : 'it'} when you can.`, by(x), 'wait') }
+      // the console sends back by itself only a failed draft its step's retry covers, and at most max times in a row
+      const fix = !!cmd.auto && isFix(S, dr)
+      if (cmd.auto && dr.o && !fix) throw new CmdError('bad_state', `the console does not accept a draft that reports ${dr.o === 'failed' ? 'failed' : 'not done'} on “${S.t}” unless the step's retry sends it back`)
+      if (fix && fixRounds(j) >= fixMax(S)) throw new CmdError('bad_state', `${fixLimitText(fixMax(S))}; “${S.t}” waits for you`)
       if (dr.o && !anyway) {
         const rep = dr.o === 'failed' ? 'reported failed' : 'reported not done'
         F.out = edited ? cmd.text! : dr.t; F.m = rep; F.dr = null; F.s = 'cur'; keepFacts(F, dr); settle(F)
         if (dr.rt && !cmd.stay) {
           jr(x, j, `Accepted the LLM draft for “${S.t}”${how}; it ${rep}.`, 'the step is not done; the job goes back.', `work on “${stepOf(x, j, dr.rt)!.t}”.`, by(x), 'bad')
-          returnTo(x, j, dr.rt, dr.why || line(F.out.split('\n')[0], 300), failedChecks(dr.fx)); nx = dr.rt
+          const why = dr.why || line(F.out.split('\n')[0], 300), fx = { n: fixRounds(j) + 1, max: fixMax(S), step: sid }
+          returnTo(x, j, dr.rt, why, failedChecks(dr.fx)); nx = dr.rt
+          if (fix) {
+            j.rounds!.at(-1)!.fx = fx
+            jr(x, j, `Fix round ${fx.n} of ${fx.max}: “${S.t}” failed, back to “${stepOf(x, j, dr.rt)!.t}”: ${why}`, `the console sent the job back by itself; ${fx.max - fx.n} more fix round${fx.max - fx.n === 1 ? '' : 's'} before it waits for you.`,
+              `work on “${stepOf(x, j, dr.rt)!.t}”.`, by(x), 'bad')
+          }
         } else {
           jr(x, j, `Accepted the LLM draft for “${S.t}”${how}; it ${rep}.`, 'the step stays open with the draft as its output.', `finish “${S.t}”, or ask again.`, by(x), 'bad')
           syncStatus(x, j)
@@ -755,13 +839,18 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
         stayOpen()
         break
       }
+      // commands that never ran do not close a step: they are approved, or the person ran them outside the console
+      const ran = !!cmd.ran && !cmd.said && !cmd.auto
+      if (dr.cm?.length && !ran) throw new CmdError('bad_state', `the draft for “${S.t}” waits for ${cmdsN(dr.cm.length)} to run: approve its commands, or say you ran them`)
       noBlockers(cmd.force)
       F.out = edited ? cmd.text! : dr.t; F.m = edited ? 'accepted with your edits' : 'draft accepted'; keepFacts(F, dr)
       if (S.fx?.includes('review')) reviewFact(x, j, sid, 'accepted')
       nx = advance(x, j, sid, 'done')
       const although = dr.o ? `, although it reported ${dr.o === 'failed' ? 'failed' : 'not done'}` : ''
-      jr(x, j, `Accepted the LLM draft for “${S.t}”${how}${dr.o ? ' as done' : ''}${although}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')
+      const mine = dr.cm?.length ? `; you ran its ${cmdsN(dr.cm.length)} yourself` : ''
+      jr(x, j, `Accepted the LLM draft for “${S.t}”${how}${dr.o ? ' as done' : ''}${although}${mine}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')
       stayOpen()
+      if (!cmd.auto && !cmd.said && by(x) === 'you') grant(x, j, sid)
       break
     }
     case 'rejectDraft': {
@@ -829,6 +918,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       F.run = { q: cmd.q, at: nowOf(x).getTime(), id: cmd.id }; F.dr = null; F.s = 'cur'; F.nw = 1
       // a fresh run reads every answer in its prompt; a resumed one goes on from what it read before
       if (!cmd.resumed) unseen(F)
+      if (cmd.wd && typeof cmd.wd.branch === 'string' && typeof cmd.wd.base === 'string') j.wd = { branch: cmd.wd.branch, base: cmd.wd.base }
       if (j.st === 'draft' || j.st === 'ready') j.st = 'active'
       const a = cmd.auto ? 'console' : by(x), self = cmd.auto ? ' by itself' : ''
       if (cmd.resumed) jr(x, j, `Resumed the LLM run for “${S.t}”.`, `LLM run continues its session${self}.`, 'review the draft when it is ready.', a, 'cur')
@@ -839,11 +929,17 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     case 'runReply': {
       if (F.run) throw new CmdError('bad_state', `“${S.t}” already has an LLM run`)
       needDraft()
-      const ap = cmd.intent === 'approve'
-      if (ap && !F.dr!.cm?.length) throw new CmdError('bad_state', `the draft for “${S.t}” waits for no commands`)
-      F.run = { q: cmd.q, at: nowOf(x).getTime(), id: cmd.id, reply: 1, ...(ap ? { ap: 1 as const } : {}) }; F.s = 'cur'; F.nw = 1
+      const ap = cmd.intent === 'approve', cm = F.dr!.cm ?? []
+      if (ap && !cm.length) throw new CmdError('bad_state', `the draft for “${S.t}” waits for no commands`)
+      // the console approves only what the person approved for the job, word for word
+      const ok = ap && !!cmd.ok
+      if (ok && !j.ok) throw new CmdError('bad_state', `${j.id} has no one-time approval`)
+      const off = ok ? cm.find((c) => !j.ok!.cmds.includes(c)) : undefined
+      if (off !== undefined) throw new CmdError('bad_state', `“${line(off, 200)}” is not in ${j.id}'s one-time approval`)
+      F.run = { q: cmd.q, at: nowOf(x).getTime(), id: cmd.id, reply: 1, ...(ap ? { ap: ok ? 'ok' as const : 1 as const } : {}) }; F.s = 'cur'; F.nw = 1
       const what = ap ? 'runs them' : cmd.intent === 'ask' ? 'answers' : cmd.intent === 'accept' ? 'revises the draft, then it is accepted' : 'revises the draft'
-      if (ap && !cmd.resumed) jr(x, j, `Approved ${cmdsN(F.dr!.cm!.length)} for “${S.t}”: ${line(F.dr!.cm!.join('; '), 300)}`, `LLM ${what}.`, 'wait for it.', by(x), 'cur')
+      if (ok && !cmd.resumed) jr(x, j, `Approved ${cmdsN(cm.length)} under this job's one-time approval: ${line(cm.join('; '), 300)}`, `LLM ${what}.`, 'wait for it.', by(x), 'cur')
+      else if (ap && !cmd.resumed) jr(x, j, `Approved ${cmdsN(cm.length)} for “${S.t}”: ${line(cm.join('; '), 300)}`, `LLM ${what}.`, 'wait for it.', by(x), 'cur')
       else if (cmd.resumed) jr(x, j, `Resumed the reply to the LLM draft for “${S.t}”.`, `LLM ${what}.`, 'wait for it.', by(x), 'cur')
       else jr(x, j, `Replied to the LLM draft for “${S.t}”: ${line(cmd.q)}`, `LLM ${what}.`, 'wait for it.', by(x), 'cur')
       syncStatus(x, j)
@@ -851,7 +947,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     }
     case 'runDraft': {
       if (!F.run) throw new CmdError('bad_state', `“${S.t}” has no LLM run`)
-      const re = !!F.run.reply, ap = F.run.ap ? { ap: 1 as const } : {}
+      const re = !!F.run.reply, ap = F.run.ap ? { ap: F.run.ap } : {}
       const rep = report(x, j, sid, cmd)
       const ua = unseen(F) ? { ua: 1 as const } : {}
       F.run = null; F.dr = { t: cmd.t, at: nowOf(x).toISOString(), nw: 1, ...rep, ...ap, ...ua }; F.s = 'wait'; F.m = re ? 'LLM draft revised' : 'LLM draft ready'; F.nw = 1
@@ -992,6 +1088,13 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     }
     case 'ppAccept':
       return ppAccept(x, j)
+    case 'okDrop': {
+      if (!j.ok) throw new CmdError('bad_state', `${j.id} has no one-time approval`)
+      const n = j.ok.cmds.length
+      delete j.ok
+      jr(x, j, `Withdrew the one-time approval of ${cmdsN(n)}.`, 'every command waits for your approval again.', nextTxt(x, j, atOf(x, j)), by(x), 'off')
+      break
+    }
     case 'replyIn': {
       if (!isLive(F) || !F.rw) throw new CmdError('bad_state', `“${S.t}” does not wait for a reply`)
       if (F.rp?.some((r) => r.id === cmd.id)) return { job, nx: null, same: true }

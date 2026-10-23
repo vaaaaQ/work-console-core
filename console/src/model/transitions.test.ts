@@ -520,7 +520,9 @@ test('a draft carries its outcome, the step to go back to and why; return_to is 
 
 test('accepting a draft that reports failed with return_to goes back there, keeps the draft as the step’s output, and never closes the step', () => {
   const { j, at, all } = reported({ o: 'failed', rt: steps(X, open().pb)[0].id, why: 'the smoke test failed' })
-  for (const extra of [{}, { auto: true as const }, { said: true }, { auto: true as const, asDone: true as const }, { said: true, asDone: true as const }]) {
+  // the console's own accept is refused: it sends a job back by itself only under a step's retry (okRetry.test.ts)
+  code(() => apply(X, j, { op: 'acceptDraft', step: at, auto: true }), 'bad_state')
+  for (const extra of [{}, { said: true }, { said: true, asDone: true as const }]) {
     const r = apply(X, j, { op: 'acceptDraft', step: at, ...extra })
     const k = r.job
     assert.equal(r.nx, all[0].id, JSON.stringify(extra))
@@ -537,7 +539,8 @@ test('accepting a draft that reports failed with return_to goes back there, keep
 
 test('accepting a draft that reports not_done without return_to keeps the step open with the draft as its output', () => {
   const { j, at } = reported({ o: 'not_done' })
-  for (const extra of [{}, { auto: true as const }, { said: true }]) {
+  code(() => apply(X, j, { op: 'acceptDraft', step: at, auto: true }), 'bad_state')
+  for (const extra of [{}, { said: true }]) {
     const r = apply(X, j, { op: 'acceptDraft', step: at, ...extra })
     const k = r.job
     assert.equal(atOf(X, k), at, JSON.stringify(extra))

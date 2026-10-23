@@ -68,6 +68,8 @@ export class Jobs {
     }
     // marking a draft that reports a failure done anyway is the person's, on the page, behind a confirm
     if (c?.op === 'acceptDraft' && c.asDone && who !== 'page') throw new HttpError(400, 'bad_args', `the ${who} cannot accept a draft as done anyway; only the page can`)
+    // so is saying the draft's commands were run outside the console
+    if (c?.op === 'acceptDraft' && c.ran && who !== 'page') throw new HttpError(400, 'bad_args', `the ${who} cannot say a draft's commands ran; only the page can`)
     for (let n = 0; ; n++) {
       const cur = await this.get(id)
       if (!cur) throw new HttpError(404, 'not_found', `no job ${id}`)

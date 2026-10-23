@@ -150,9 +150,14 @@ export class Runner {
   /** an accept reply whose accept an open question or blocker refused says why in the journal */
   private async notAccepted(rec: RunRec) {
     const j = await this.jobs.get(rec.job), f = j?.flow[rec.step]
+    const t = (j && T.stepOf(this.ctx(), j, rec.step)?.t) ?? rec.step
+    // a draft that waits for commands is not done until they ran
+    if (j && f?.dr?.cm?.length) {
+      await this.jobCmd(rec, { op: 'journal', o: `Did not accept the revised draft for “${t}”.`, c: `it waits for ${T.cmdsN(f.dr.cm.length)} to run.`, n: 'approve them, or say you ran them.', a: 'console' })
+      return
+    }
     const qs = f ? T.openQs(f).length : 0, bl = f ? openOf(f).length : 0
     if (!j || !f || (!qs && !bl)) return
-    const t = T.stepOf(this.ctx(), j, rec.step)?.t ?? rec.step
     const why = [...(qs ? [`has ${T.qsM(qs)}`] : []), ...(bl ? [waitsM(f)] : [])].join(' and ')
     await this.jobCmd(rec, { op: 'journal', o: `Did not accept the revised draft for “${t}”.`, c: `“${t}” ${why}.`,
       n: qs ? `answer ${qs > 1 ? 'them' : 'it'}, or accept the draft anyway.` : 'accept it when they close, or go on anyway.', a: 'console' })
@@ -166,13 +171,20 @@ export class Runner {
     return j
   }
 
+  /** the branch the job's work dir is on and the base it came from, which a playbook's approved commands fill from; none without a repo */
+  private wdOf(j: Job) {
+    const w = this.workDir
+    if (!w?.branch || !w.base) return {}
+    try { return { wd: { branch: w.branch(j), base: w.base(j) } } } catch { return {} }
+  }
+
   /** auto = the console asks by itself, and the journal says so; via = who asked when not the user, name = its signer */
   async ask(job: string, step: string, q: string, o: { auto?: boolean; via?: 'session'; name?: string } = {}): Promise<RunRec> {
     if (!this.gate()) throw downError(this.via, 'no run was started')
     if (!q || !q.trim()) throw new HttpError(400, 'bad_args', 'the instruction is empty')
-    await this.hasRun(job, step)
+    const j = await this.hasRun(job, step)
     const r: RunRec = { id: `r-${randomBytes(6).toString('hex')}`, job, step, q: q.trim(), state: 'queued', at: new Date().toISOString(), provider: this.pick.auto(), ...(o.via ? { via: o.via } : {}) }
-    await this.jobs.cmd(job, { op: 'runStart', step, q: r.q, id: r.id, ...(o.auto ? { auto: true } : {}) }, undefined, 'runner', o.via, o.name)
+    await this.jobs.cmd(job, { op: 'runStart', step, q: r.q, id: r.id, ...(o.auto ? { auto: true } : {}), ...this.wdOf(j) }, undefined, 'runner', o.via, o.name)
     await this.save(r)
     this.queue.push({ id: r.id })
     this.pump()
@@ -186,12 +198,13 @@ export class Runner {
   }
 
   /** a reply to the step's draft in its own session; via = who replied when not the user: a session, or the console itself.
-      approve runs the draft's commands: only the user approves, the text is built from the stored commands, and
+      approve runs the draft's commands: the user approves, or the console when every one is in the job's one-time approval
+      (job.ok, which only the person's Accept grants); a session never. The text is built from the stored commands, and
       at = the draft's time as the page drew it, so a draft revised since is never approved blind */
   async reply(job: string, step: string, t: string, intent: RunIntent, o: { via?: 'session' | 'console'; name?: string; at?: string } = {}): Promise<RunRec> {
     if (!this.gate()) throw downError(this.via, 'the reply was not sent')
     const ap = intent === 'approve'
-    if (ap && o.via) throw new HttpError(403, 'not_yours', 'only the user approves commands, from the page')
+    if (ap && o.via && o.via !== 'console') throw new HttpError(403, 'not_yours', 'only the user approves commands, from the page')
     if (!ap && (!t || !t.trim())) throw new HttpError(400, 'bad_args', 'the reply is empty')
     if (!ap && !INTENTS.includes(intent)) throw new HttpError(400, 'bad_args', `intent is one of ${INTENTS.join(', ')}, or approve from the page`)
     const j = await this.jobs.get(job)
@@ -204,13 +217,16 @@ export class Runner {
     if (ap && !f.dr.cm?.length) throw new HttpError(409, 'no_commands', 'this draft waits for no commands')
     if (ap && f.dr.hd) throw new HttpError(409, 'no_session', 'this draft was handed in by hand; no LLM session wrote it to run its commands')
     if (ap && o.at !== f.dr.at) throw new HttpError(409, 'stale', 'the draft changed since the page showed it; look at its commands again')
+    const byOk = ap && o.via === 'console'
+    if (byOk && !(j.ok && f.dr.cm!.every((c) => j.ok!.cmds.includes(c))))
+      throw new HttpError(403, 'not_yours', "the console approves only commands in the job's one-time approval; the user approves the rest, from the page")
     if (ap) t = approveText(f.dr.cm!)
     const c = await this.chain(job, step)
     if (!c.head || !c.session) throw new HttpError(409, 'no_session', 'this draft has no LLM session to continue; ask again instead')
     // a run that has submitted its draft can still be winding its session down
     if (this.live.has(c.head.id)) throw new HttpError(409, 'busy', 'the LLM is still finishing its last turn; send it again in a moment')
     const r: RunRec = { id: `r-${randomBytes(6).toString('hex')}`, job, step, q: t.trim(), state: 'queued', at: new Date().toISOString(), parent: c.head.id, intent, provider: c.provider, ...(o.via ? { via: o.via } : {}) }
-    await this.jobs.cmd(job, { op: 'runReply', step, q: r.q, id: r.id, intent }, undefined, 'runner', o.via, o.name)
+    await this.jobs.cmd(job, { op: 'runReply', step, q: r.q, id: r.id, intent, ...(byOk ? { ok: true as const } : {}) }, undefined, 'runner', o.via, o.name)
     await this.save(r)
     this.queue.push({ id: r.id, resume: c.session, reply: true })
     this.pump()
@@ -289,13 +305,13 @@ export class Runner {
       a reply that never reached its session goes again in the session it replies to */
   private async requeue(r: RunRec, auto: boolean): Promise<RunRec> {
     if (!this.gate()) throw downError(this.via, 'the run was not resumed')
-    await this.hasRun(r.job, r.step)
+    const j = await this.hasRun(r.job, r.step)
     const fresh = !!r.parent && !r.session, resume = fresh ? (await this.chain(r.job, r.step)).session : r.session
     if (r.parent && !resume) throw new HttpError(409, 'no_session', 'the draft this replies to has no session any more')
     const as = auto ? 'console' : r.via
     await this.jobs.cmd(r.job, r.parent
       ? { op: 'runReply', step: r.step, q: r.q, id: r.id, intent: r.intent ?? 'revise', ...(fresh ? {} : { resumed: true }) }
-      : { op: 'runStart', step: r.step, q: r.q, id: r.id, ...(r.session ? { resumed: true } : {}), ...(auto ? { auto: true } : {}) }, undefined, 'runner', as)
+      : { op: 'runStart', step: r.step, q: r.q, id: r.id, ...(r.session ? { resumed: true } : {}), ...(auto ? { auto: true } : {}), ...this.wdOf(j) }, undefined, 'runner', as)
     const next: RunRec = { ...r, state: 'queued', reason: undefined, ended: undefined }
     await this.save(next)
     this.queue.push({ id: r.id, ...(resume ? { resume } : {}), ...(fresh ? { reply: true } : {}) })

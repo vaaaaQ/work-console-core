@@ -13,6 +13,8 @@ export interface WorkDir {
   dir(j: Job): Promise<string>
   /** the branch the dir is on, for the prompt */
   branch?(j: Job): string
+  /** the branch it came from, which a playbook's approved commands name as {base}; throws when the job has no repo */
+  base?(j: Job): string
   /** the job closed: remove what dir made; one line for the journal, or null when there was nothing to do */
   closed?(j: Job): Promise<string | null>
 }
@@ -46,6 +48,7 @@ export function gitWorktrees(o: { repos: Record<string, RepoSpec>; root: string;
 
   return {
     branch,
+    base: (j) => repo(j).base,
     async dir(j) {
       const r = repo(j), d = at(j), b = branch(j)
       if (!(await exists(d))) {

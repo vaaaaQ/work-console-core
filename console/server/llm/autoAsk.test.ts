@@ -607,7 +607,7 @@ test('a failed Live check goes back to Build by itself 3 times, each journaled w
   await tick(60)
   assert.equal(s.sessions.length, n)
   // the person sends it back: that round is theirs, so the next failure goes back by itself again as round 1
-  await s.jobs.cmd(id, { op: 'returnTo', step: 'a2', why: 'look at the config' }, j.v)
+  await s.jobs.cmd(id, { op: 'stepReopen', step: 'a2', why: 'look at the config' }, j.v)
   assert.equal(T.fixRounds(await s.get(id)), 0)
   await until(() => s.sessions.length === n + 1)
   await s.hand('fixed the config')

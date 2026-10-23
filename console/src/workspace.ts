@@ -10,6 +10,7 @@ import { CORE_PB, CORE_TPL, PB0 } from './data/playbooks.ts'
 import type { TimeItem } from './data/time.ts'
 import { MDR } from './data/ui.ts'
 import { refill } from './lib/util.ts'
+import { checkPlaybook } from './model/transitions.ts'
 import { adapt } from './live/adapt.ts'
 import { resetWorld } from './model/world.ts'
 import type { Chat, Job, JobSeed, JournalEntry, LogEntry, Mail, Pack, Playbook, Pr, StepOverride, Tpl, Ws } from './model/types.ts'
@@ -61,6 +62,7 @@ export function install(list: Registered[]): void {
     if (typeof page.id !== 'string' || !WS_ID.test(page.id)) throw new Error(`workspace id ${page.id} must match ${WS_ID}`)
     if (seen.has(page.id)) throw new Error(`workspace ${page.id} is registered twice`)
     seen.add(page.id)
+    for (const [k, pb] of Object.entries(page.playbooks)) checkPlaybook(k, pb)
     // an act name means one thing in the whole console: the core's, or one workspace's
     for (const n of new Set([...Object.keys(page.acts || {}), ...Object.keys(ui?.acts || {})])) {
       if (core.has(n)) throw new Error(`act ${n} of ${page.id} shadows the core act ${n}`)

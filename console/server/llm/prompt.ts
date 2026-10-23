@@ -91,9 +91,11 @@ function parts(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn) {
     ...(s?.a?.length ? [`Expected artifacts: ${s.a.join(', ')}`] : []),
     ...(o.workDir ? [`Work dir: ${o.workDir}${o.branch ? ` (a git worktree on branch ${o.branch}, yours alone; commit there)` : ''}`] : []),
   ].join('\n')
-  const bl = blockersText(j.flow[step]), rs = resent(x, j, step)
+  const bl = blockersText(j.flow[step]), rs = resent(x, j, step), last = j.rounds?.at(-1)
   const all = j.flow[step]?.b ?? [], kept = all.slice(-NOTES_MAX)
   const qs = kept.map((b) => `- ${BK[b.k].l}${b.o ? ` (open): ${T.line(b.t, NOTE_MAX)}` : `: ${T.line(b.t, NOTE_MAX)}${b.r ? ` → ${T.line(b.r, NOTE_MAX)}` : ''}`}`)
+  // the step a fix round starts at is told why it came back, so the fix starts from the cause
+  const fix = last?.fx && j.rf === step ? T.fixRoundText(x, j, last) : ''
   const data = [
     job,
     contextSection(j.ws, ctx.filter((r) => r.k !== 'note')).trimEnd(),
@@ -103,6 +105,7 @@ function parts(x: T.Ctx, j: Job, step: string, q: string, o: PromptIn) {
     block(`## Questions on this step${all.length > kept.length ? ` (the latest ${kept.length} of ${all.length})` : ''}`, qs),
     factsText(x, j),
     outs.length ? `## Earlier outputs\n${outs.join('\n\n')}` : '',
+    fix,
     rs.section,
     block(`## Journal (oldest first${j.jr.length > JR_MAX ? `; the latest ${JR_MAX} of ${j.jr.length}` : ''})`, jr),
   ]
