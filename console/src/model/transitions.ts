@@ -5,6 +5,8 @@ import { fromWall, midnight, offsetAt } from '../lib/zone.ts'
 import { openOf, reaches, settled, waitsM } from './blockers.ts'
 import { KINDS, ctxDefaults, ctxLabel, ctxOf, ctxUnit, httpUrl, parseWorkId } from './context.ts'
 import type { Kind } from './context.ts'
+import { FactError, factsIn, failedChecks, isNone, kindsIn, latestFacts, missingKinds } from './facts.ts'
+import type { BranchFact, Fact, FactIn } from './facts.ts'
 import { CMD_MAX, CMDS_MAX, OUTCOMES, PP_OPS } from './types.ts'
 import type {
   BadgeKind, Cmd, Draft, DraftReport, CtxItem, CtxKind, Flow, Job, JobStatus, JournalEntry, Lamp, NewStep, NodeState, Phase, Playbook, Round, Start, Step, StepOverride, Tpl, Ws,
@@ -113,7 +115,7 @@ export function seedFlow(x: Ctx, j: Job, ovr: Record<string, StepOverride> = {},
     if (st === 'fut' && s.msg) st = 'tpl'
     j.flow[s.id] = {
       s: st, m: o.m || '', arts: o.arts ? clone(o.arts) : (s.a || []).map((n) => ({ n, ok: st === 'done' })), b: clone(o.b || []),
-      rv: o.rv ? clone(o.rv) : null, dr: o.dr ? clone(o.dr) : null, out: o.out || null, run: null, sent: {},
+      rv: o.rv ? clone(o.rv) : null, dr: o.dr ? clone(o.dr) : null, out: o.out || null, run: null, sent: {}, ...(o.fx ? { fx: clone(o.fx) } : {}),
     }
   })
   j.ts = nowOf(x).getTime() - (j.upd || 0) * 60000
@@ -237,6 +239,8 @@ function settle(f: Flow): boolean {
   return was !== 'cur' && g === 'cur'
 }
 const WAITS_REPLY = 'waits for a reply'
+/** an accepted draft's facts stay on its step, after the ones it had */
+function keepFacts(F: Flow, dr: Draft) { if (dr.fx?.length) F.fx = [...(F.fx ?? []), ...dr.fx] }
 /** a step the flow moves onto: current, unless its blockers say otherwise */
 function onto(g: Flow) { g.s = 'cur'; g.nw = 1; settle(g) }
 
@@ -248,7 +252,7 @@ function advance(x: Ctx, j: Job, sid: string, state: NodeState) {
   const nx = atOf(x, j)
   if (nx) { const g = j.flow[nx]; if (g.s === 'fut' || g.s === 'tpl') onto(g) }
   else if (j.st === 'recurring') {
-    stepsOf(x, j).forEach((s) => { const g = j.flow[s.id]; g.s = s.msg ? 'tpl' : 'fut'; g.out = null; g.sent = {}; g.m = ''; delete g.w; delete g.bb; g.arts.forEach((a) => { a.ok = false; delete a.link }) })
+    stepsOf(x, j).forEach((s) => { const g = j.flow[s.id]; g.s = s.msg ? 'tpl' : 'fut'; g.out = null; g.sent = {}; g.m = ''; delete g.w; delete g.bb; delete g.fx; g.arts.forEach((a) => { a.ok = false; delete a.link }) })
     const first = stepsOf(x, j)[0]; j.flow[first.id].s = 'cur'
     if (j.due && j.every === 'month') j.due = nextMonth(j.due)
     jr(x, j, 'Period complete.', `all steps done; the flow starts again${j.due && j.every ? `, due ${tfmt(j.due)}` : ''}.`, `next period: “${first.t}”.`, by(x), 'ok')
@@ -280,11 +284,15 @@ const noNew = (f: Flow): Flow => ({ ...f, nw: 0, run: null, arts: f.arts.map((a)
 
 /** keeps the current pass as a round and starts a new one at sid: the steps from sid on start blank,
     open notes carry over, a closed job is active again */
-function returnTo(x: Ctx, j: Job, sid: string, why: string) {
+function returnTo(x: Ctx, j: Job, sid: string, why: string, failed?: string[]) {
   const all = stepsOf(x, j), ti = all.findIndex((s) => s.id === sid), at = atOf(x, j)
   if (j.st === 'draft' || j.st === 'ready') throw new CmdError('bad_state', `${j.id} has not started`)
+  if (ti < 0) throw new CmdError('bad_step', `${j.id} has no step ${sid}`)
   if (!isClosed(j) && at && ti >= all.findIndex((s) => s.id === at)) throw new CmdError('bad_step', `“${all[ti].t}” has not been passed yet`)
   if (flows(j).some((f) => f.run)) throw new CmdError('bad_state', `${j.id} has an LLM run in flight; cancel it first`)
+  // a review step the job goes back from sent it back
+  const atS = at ? stepOf(x, j, at) : undefined, atF = at ? j.flow[at] : undefined
+  if (atS && atF && atS.fx?.includes('review') && !atF.fx?.some((f) => f.kind === 'review')) reviewFact(x, j, at!, 'sent_back', why)
   const rounds = j.rounds || []
   const kept: Round = {
     n: rounds.length + 1, from: j.rf || all[0].id, at: nowOf(x).toISOString(), by: by(x), why, st: j.st,
@@ -296,6 +304,7 @@ function returnTo(x: Ctx, j: Job, sid: string, why: string) {
     const old = j.flow[s.id], open = old.b.filter((b) => b.o), w = (old.w || []).filter((l) => l.st !== 'cancelled')
     j.flow[s.id] = { ...blank(s), b: open, ...(w.length ? { w } : {}), nw: 1 }
   })
+  j.flow[sid].fx = [{ kind: 'round', n: kept.n, back_to: sid, why, failed: failed ?? failedChecks(atF?.fx), at: nowOf(x).toISOString(), step: at ?? sid }]
   onto(j.flow[sid])
   if (isClosed(j)) j.st = 'active'
   syncStatus(x, j)
@@ -328,12 +337,15 @@ export function sentBefore(j: Job, sid: string): SentBefore[] {
 
 /** a draft's report, checked as it is handed in so a bad one is refused while the run can still fix it:
     an outcome it knows, and return_to (by id or exact title) a step before the drafting one, which returnTo would accept */
-function report(x: Ctx, j: Job, sid: string, r: DraftReport): Pick<Draft, 'o' | 'rt' | 'why' | 'cm'> {
-  const cm = r.cm === undefined ? {} : { cm: commandsOf(r.cm) }
+function report(x: Ctx, j: Job, sid: string, r: DraftReport): Pick<Draft, 'o' | 'rt' | 'why' | 'cm' | 'fx'> {
+  const fx = factsOf(x, sid, r.fx), S = stepOf(x, j, sid)!
+  const cm = { ...(r.cm === undefined ? {} : { cm: commandsOf(r.cm) }), ...(fx.length ? { fx } : {}) }
   if (r.o !== undefined && !OUTCOMES.includes(r.o)) throw new CmdError('bad_args', `outcome is one of ${OUTCOMES.join(', ')}`)
   const why = typeof r.why === 'string' ? line(r.why, 300) : ''
   if (!r.o || r.o === 'done') {
     if (r.rt) throw new CmdError('bad_args', 'return_to goes with outcome not_done or failed')
+    const miss = missingKinds(S.fx, fx)
+    if (miss.length) throw new CmdError('bad_args', `“${S.t}” reports ${miss.join(', ')}: a done draft of it carries a fact of each kind in facts, or {kind, none: why} when there is honestly nothing to report`)
     return cm
   }
   if (!r.rt) return { o: r.o, ...(why ? { why } : {}), ...cm }
@@ -343,6 +355,22 @@ function report(x: Ctx, j: Job, sid: string, r: DraftReport): Pick<Draft, 'o' | 
   if (ti < 0) throw new CmdError('bad_step', `return_to: ${j.id} has no step ${r.rt}`)
   if (ti >= all.findIndex((s) => s.id === sid)) throw new CmdError('bad_step', `return_to: “${all[ti].t}” has not been passed yet; name a step before this one`)
   return { o: r.o, rt: all[ti].id, ...(why ? { why } : {}), ...cm }
+}
+/** the facts a draft reports, checked and stamped with when and the step that made them */
+function factsOf(x: Ctx, sid: string, v: unknown): Fact[] {
+  let fx: FactIn[]
+  try { fx = factsIn(v) } catch (e) { if (e instanceof FactError) throw new CmdError('bad_args', `facts: ${e.message}`); throw e }
+  const at = nowOf(x).toISOString()
+  return fx.map((f) => ({ ...f, at, step: sid }))
+}
+/** every fact the job's steps hold in this pass, in step order */
+export const factsNow = (x: Ctx, j: Job): Fact[] => stepsOf(x, j).flatMap((s) => j.flow[s.id]?.fx ?? [])
+/** the latest branch the job's steps report */
+export const latestBranch = (x: Ctx, j: Job) => latestFacts(factsNow(x, j)).find((f): f is Fact & BranchFact => f.kind === 'branch' && !isNone(f))
+/** a person's review of a step that declares one, on the step */
+function reviewFact(x: Ctx, j: Job, sid: string, verdict: 'accepted' | 'sent_back', note?: string) {
+  const F = j.flow[sid], of = latestBranch(x, j)?.sha, n = line(note ?? '', 1000)
+  F.fx = [...(F.fx ?? []), { kind: 'review', by: by(x), verdict, ...(of ? { of } : {}), ...(n ? { note: n } : {}), at: nowOf(x).toISOString(), step: sid }]
 }
 /** the commands a draft waits to have approved, each trimmed: 1 to CMDS_MAX, none empty or over CMD_MAX characters */
 function commandsOf(cm: unknown): string[] {
@@ -361,8 +389,9 @@ export function reportText(x: Ctx, j: Job, dr: Draft): string | null {
   const where = dr.rt ? `returns to “${stepOf(x, j, dr.rt)?.t ?? dr.rt}” on accept` : 'the step stays open on accept'
   return `reports ${dr.o === 'failed' ? 'failed' : 'not done'} → ${where}${dr.why ? `: ${dr.why}` : ''}`
 }
-const reportTxt = (x: Ctx, j: Job, r: Pick<Draft, 'o' | 'rt' | 'cm'>) =>
-  (r.cm ? `; waits for approval of ${cmdsN(r.cm.length)}` : '')
+const reportTxt = (x: Ctx, j: Job, r: Pick<Draft, 'o' | 'rt' | 'cm' | 'fx'>) =>
+  (r.fx ? `; it reports ${r.fx.length} fact${r.fx.length === 1 ? '' : 's'} (${[...new Set(r.fx.map((f) => f.kind))].join(', ')})` : '')
+  + (r.cm ? `; waits for approval of ${cmdsN(r.cm.length)}` : '')
   + (r.o ? `; it reports ${r.o === 'failed' ? 'failed' : 'not done'}${r.rt ? ` and goes back to “${stepOf(x, j, r.rt)!.t}” on accept` : ''}` : '')
 
 /* ===== the job's own steps ===== */
@@ -421,10 +450,12 @@ function checkStep(n: Partial<NewStep>, tpl: Tpl[]): Omit<Step, 'id'> {
   if (n.ask && !['chat', 'mail'].includes(tpl[0]?.[0])) throw new CmdError('bad_args', 'an ask step needs a planned chat or mail message')
   if (n.a !== undefined && (!Array.isArray(n.a) || n.a.some((a) => typeof a !== 'string' || !a.trim()))) throw new CmdError('bad_args', 'artifacts are a list of names')
   if (n.out !== undefined && (typeof n.out !== 'string' || !/^\w+$/.test(n.out))) throw new CmdError('bad_args', 'out is a variable name')
+  let fx: Step['fx']
+  try { fx = n.fx === undefined ? undefined : kindsIn(n.fx) } catch (e) { throw new CmdError('bad_args', (e as Error).message) }
   const x = n.x === undefined ? t : text(n.x, 1000, 'the exit criterion')
   return {
     t, m: n.m, x, ...(n.a?.length ? { a: n.a.map((a) => a.trim()) } : {}), ...(tpl.length ? { msg: tpl.length } : {}),
-    ...(n.out ? { out: n.out } : {}), ...(n.start ? { start: n.start } : {}), ...(n.ask ? { ask: 1 as const } : {}),
+    ...(n.out ? { out: n.out } : {}), ...(n.start ? { start: n.start } : {}), ...(n.ask ? { ask: 1 as const } : {}), ...(fx?.length ? { fx } : {}),
   }
 }
 /** where a step goes: the anchor's phase and the index there, and its index among all the job's steps */
@@ -478,21 +509,21 @@ function stepDel(x: Ctx, j: Job, S: Step, F: Flow) {
   delete j.flow[S.id]; delete j.tpl![S.id]
   jr(x, j, `Removed step “${S.t}”.`, 'removed from this job only.', nextTxt(x, j, atOf(x, j)), by(x), 'off')
 }
-const EDITS = { t: 'title', x: 'exit criterion', m: 'mode', start: 'start', ask: 'ask', msg: 'planned messages' } as const
+const EDITS = { t: 'title', x: 'exit criterion', m: 'mode', start: 'start', ask: 'ask', msg: 'planned messages', fx: 'facts' } as const
 function stepEdit(x: Ctx, j: Job, S: Step, F: Flow, c: Extract<Cmd, { op: 'stepEdit' }>) {
   if (!isLive(F)) throw new CmdError('bad_step', `“${S.t}” is ${F.s === 'done' ? 'done' : 'skipped'}`)
   if (F.run) throw new CmdError('bad_state', `“${S.t}” has an LLM run; wait for it or cancel it`)
   own(x, j)
   const tpl = c.tpl === undefined ? tplOf(x, j, S.id) : checkTpl(c.tpl), m = c.m ?? S.m
   const start = c.start === null ? undefined : c.start ?? (m === 'you' ? undefined : S.start)
-  const ask = c.ask === null ? undefined : c.ask ?? S.ask
-  const body = checkStep({ t: c.t ?? S.t, x: c.x ?? S.x, m, a: S.a, out: S.out, start, ask }, tpl)
-  const was = { t: S.t, x: S.x, m: S.m, start: S.start, ask: S.ask, msg: JSON.stringify(tplOf(x, j, S.id)) }
-  const now = { t: body.t, x: body.x, m: body.m, start: body.start, ask: body.ask, msg: JSON.stringify(tpl) }
+  const ask = c.ask === null ? undefined : c.ask ?? S.ask, fx = c.fx === null ? undefined : c.fx ?? S.fx
+  const body = checkStep({ t: c.t ?? S.t, x: c.x ?? S.x, m, a: S.a, out: S.out, start, ask, fx }, tpl)
+  const was = { t: S.t, x: S.x, m: S.m, start: S.start, ask: S.ask, msg: JSON.stringify(tplOf(x, j, S.id)), fx: JSON.stringify(S.fx ?? []) }
+  const now = { t: body.t, x: body.x, m: body.m, start: body.start, ask: body.ask, msg: JSON.stringify(tpl), fx: JSON.stringify(body.fx ?? []) }
   const changed = (Object.keys(EDITS) as (keyof typeof EDITS)[]).filter((k) => was[k] !== now[k])
   if (!changed.length) throw new CmdError('bad_args', `nothing changes on “${S.t}”`)
   const s = stepOf(x, j, S.id)!
-  delete s.msg; delete s.start; delete s.ask
+  delete s.msg; delete s.start; delete s.ask; delete s.fx
   Object.assign(s, body)
   if (tpl.length) j.tpl![s.id] = tpl; else delete j.tpl![s.id]
   if (ahead(F)) F.s = s.msg ? 'tpl' : 'fut'
@@ -540,7 +571,7 @@ function ppAccept(x: Ctx, j: Job): { job: Job; nx: string | null } {
   return { job: out, nx: r.nx }
 }
 
-const STEP_OPS = new Set(['returnTo', 'stepDone', 'stepSkip', 'stepWait', 'stepResume', 'stepReopen', 'acceptDraft', 'rejectDraft',
+const STEP_OPS = new Set(['returnTo', 'stepDone', 'review', 'stepSkip', 'stepWait', 'stepResume', 'stepReopen', 'acceptDraft', 'rejectDraft',
   'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'runStart', 'runReply', 'runDraft', 'draftIn', 'runAnswer', 'runEnd', 'artifact',
   'waitAdd', 'waitDel', 'blockerClosed', 'runBlocker', 'blockerDrop', 'stepDel', 'stepEdit', 'stepMove', 'replyIn'])
 
@@ -648,8 +679,31 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
     case 'stepDone': {
       noBlockers(cmd.force)
       const had = !!F.dr
+      if (S.fx?.includes('review')) reviewFact(x, j, sid, 'accepted')
       nx = advance(x, j, sid, 'done')
       jr(x, j, `Marked “${S.t}” done${had ? ' (LLM draft discarded)' : ''}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')
+      break
+    }
+    case 'review': {
+      if (!S.fx?.includes('review')) throw new CmdError('bad_step', `“${S.t}” declares no review`)
+      if (atOf(x, j) !== sid || !isLive(F)) throw new CmdError('bad_state', `“${S.t}” is not the current step`)
+      noRun()
+      const note = line(typeof cmd.note === 'string' ? cmd.note : '', 1000)
+      if (cmd.verdict === 'accepted') {
+        noBlockers()
+        reviewFact(x, j, sid, 'accepted', note)
+        nx = advance(x, j, sid, 'done')
+        jr(x, j, `Accepted the review “${S.t}”${note ? `: ${note}` : ''}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')
+        break
+      }
+      if (cmd.verdict !== 'sent_back') throw new CmdError('bad_args', 'verdict is accepted or sent_back')
+      if (!note) throw new CmdError('bad_args', 'say why it goes back in note')
+      const all = stepsOf(x, j), here = all.findIndex((t) => t.id === sid)
+      const to = cmd.to ?? latestBranch(x, j)?.step ?? all[here - 1]?.id
+      if (!to || !stepOf(x, j, to)) throw new CmdError('bad_step', `${j.id} has no step ${to ?? 'before this one'} to go back to`)
+      reviewFact(x, j, sid, 'sent_back', note)
+      jr(x, j, `Sent “${S.t}” back: ${note}`, `the job goes back to “${stepOf(x, j, to)!.t}”.`, `work on “${stepOf(x, j, to)!.t}”.`, by(x), 'bad')
+      returnTo(x, j, to, note, []); nx = to
       break
     }
     case 'stepSkip':
@@ -688,10 +742,10 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       const stayOpen = () => { if (qs) jr(x, j, `${qsM(qs)} on “${S.t}” ${qs > 1 ? 'stay' : 'stays'} open.`, 'accepted without their answers.', `answer ${qs > 1 ? 'them' : 'it'} when you can.`, by(x), 'wait') }
       if (dr.o && !anyway) {
         const rep = dr.o === 'failed' ? 'reported failed' : 'reported not done'
-        F.out = edited ? cmd.text! : dr.t; F.m = rep; F.dr = null; F.s = 'cur'; settle(F)
+        F.out = edited ? cmd.text! : dr.t; F.m = rep; F.dr = null; F.s = 'cur'; keepFacts(F, dr); settle(F)
         if (dr.rt && !cmd.stay) {
           jr(x, j, `Accepted the LLM draft for “${S.t}”${how}; it ${rep}.`, 'the step is not done; the job goes back.', `work on “${stepOf(x, j, dr.rt)!.t}”.`, by(x), 'bad')
-          returnTo(x, j, dr.rt, dr.why || line(F.out.split('\n')[0], 300)); nx = dr.rt
+          returnTo(x, j, dr.rt, dr.why || line(F.out.split('\n')[0], 300), failedChecks(dr.fx)); nx = dr.rt
         } else {
           jr(x, j, `Accepted the LLM draft for “${S.t}”${how}; it ${rep}.`, 'the step stays open with the draft as its output.', `finish “${S.t}”, or ask again.`, by(x), 'bad')
           syncStatus(x, j)
@@ -700,7 +754,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
         break
       }
       noBlockers(cmd.force)
-      F.out = edited ? cmd.text! : dr.t; F.m = edited ? 'accepted with your edits' : 'draft accepted'
+      F.out = edited ? cmd.text! : dr.t; F.m = edited ? 'accepted with your edits' : 'draft accepted'; keepFacts(F, dr)
       nx = advance(x, j, sid, 'done')
       const although = dr.o ? `, although it reported ${dr.o === 'failed' ? 'failed' : 'not done'}` : ''
       jr(x, j, `Accepted the LLM draft for “${S.t}”${how}${dr.o ? ' as done' : ''}${although}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')

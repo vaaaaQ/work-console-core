@@ -1204,3 +1204,106 @@ test('a job with its own steps does not take its playbook\'s new ones', () => {
   assert.equal(j.flow.g1, undefined)
   assert.equal(j.flow.g2, undefined)
 })
+
+/* ===== typed step outputs (facts) ===== */
+
+/** a dev flow whose steps declare the facts they leave */
+const DEV: Ctx = {
+  ...X, PB: { ...PB0, fxdev: { ws: 'acme', n: 'Dev change', ph: [
+    { c: 'B', n: 'Build', s: [{ id: 'fxb', t: 'Build it', m: 'llm', x: 'tests green', fx: ['branch'] }, { id: 'fxp', t: 'Prove it', m: 'llm', x: 'proved', fx: ['check'] }] },
+    { c: 'R', n: 'Review', s: [{ id: 'fxr', t: 'Review', m: 'you', x: 'reviewed', fx: ['review'] }] },
+    { c: 'D', n: 'Ship', s: [{ id: 'fxd', t: 'Deploy', m: 'llm', x: 'deployed', fx: ['deploy'] }, { id: 'fxs', t: 'Smoke test', m: 'llm', x: 'live', fx: ['check'] }] },
+  ] } },
+}
+const BR = { kind: 'branch' as const, repo: 'core', name: 'job/x', sha: '3f2c9e1' }
+const devJob = () => apply(DEV, freshJob(DEV, 'J-7000', { t: 'Dev', key: 'NEW', pb: 'fxdev', prj: 'platform', ws: 'acme' }), { op: 'start' }).job
+/** a run on step drafts with rep; the step must be current */
+const draftOn = (j: Job, step: string, rep: Record<string, unknown> = {}) =>
+  apply(DEV, apply(DEV, j, { op: 'runStart', step, q: 'go', id: `r-${step}` }).job, { op: 'runDraft', step, t: 'the draft', ...rep } as Cmd).job
+const acceptOn = (j: Job, step: string, rep: Record<string, unknown> = {}) => apply(DEV, draftOn(j, step, rep), { op: 'acceptDraft', step }).job
+
+test('facts: a done draft without a declared kind is refused while the run is live; a not_done one is not', () => {
+  const j = devJob(), run = apply(DEV, j, { op: 'runStart', step: 'fxb', q: 'go', id: 'r1' }).job
+  assert.throws(() => apply(DEV, run, { op: 'runDraft', step: 'fxb', t: 'done' }), (e: unknown) => e instanceof CmdError && e.code === 'bad_args' && /“Build it” reports branch/.test(e.message))
+  assert.throws(() => apply(DEV, j, { op: 'draftIn', step: 'fxb', t: 'done' }), (e: unknown) => e instanceof CmdError && /reports branch/.test(e.message))
+  assert.equal(apply(DEV, run, { op: 'runDraft', step: 'fxb', t: 'not yet', o: 'not_done' }).job.flow.fxb.dr!.o, 'not_done')
+  // a bad fact is the run's to fix
+  code(() => apply(DEV, run, { op: 'runDraft', step: 'fxb', t: 'x', fx: [{ ...BR, sha: 'nope' }] } as Cmd), 'bad_args')
+  // the draft keeps them stamped with when and which step; an honest none counts
+  const d = apply(DEV, run, { op: 'runDraft', step: 'fxb', t: 'done', fx: [BR] } as Cmd).job
+  assert.deepEqual(d.flow.fxb.dr!.fx, [{ ...BR, at: T0.toISOString(), step: 'fxb' }])
+  assert.match(d.jr[0].o, /1 fact/)
+  assert.ok(apply(DEV, run, { op: 'runDraft', step: 'fxb', t: 'done', fx: [{ kind: 'branch', none: 'nothing changed' }] } as Cmd).job.flow.fxb.dr)
+  // a step that declares nothing may still report any
+  const o = open(), at = atOf(X, o)!
+  const t = apply(X, apply(X, o, { op: 'runStart', step: at, q: 'q', id: 'r9' }).job, { op: 'runDraft', step: at, t: 'x', fx: [BR] } as Cmd).job
+  assert.equal(t.flow[at].dr!.fx!.length, 1)
+})
+
+test('facts: accept copies them onto the step, an edited accept keeps them, a not_done accept leaves them on the open step', () => {
+  const a = acceptOn(devJob(), 'fxb', { fx: [BR] })
+  assert.equal(a.flow.fxb.s, 'done'); assert.deepEqual(a.flow.fxb.fx, [{ ...BR, at: T0.toISOString(), step: 'fxb' }])
+  const e = apply(DEV, draftOn(devJob(), 'fxb', { fx: [BR] }), { op: 'acceptDraft', step: 'fxb', text: 'edited' }).job
+  assert.equal(e.flow.fxb.out, 'edited'); assert.equal(e.flow.fxb.fx!.length, 1)
+  const n = acceptOn(devJob(), 'fxb', { o: 'not_done', fx: [{ kind: 'check', name: 'unit', ok: false }] })
+  assert.equal(n.flow.fxb.s, 'cur'); assert.equal(n.flow.fxb.fx![0].kind, 'check')
+})
+
+test('facts: closing a review step writes review with the latest branch sha; Accept keeps its note', () => {
+  let j = acceptOn(devJob(), 'fxb', { fx: [BR] })
+  j = acceptOn(j, 'fxp', { fx: [{ kind: 'check', name: 'live', ok: true }] })
+  const done = apply({ ...DEV, by: 'Valery' }, j, { op: 'stepDone', step: 'fxr' }).job
+  assert.deepEqual(done.flow.fxr.fx, [{ kind: 'review', by: 'Valery', verdict: 'accepted', of: '3f2c9e1', at: T0.toISOString(), step: 'fxr' }])
+  const acc = apply({ ...DEV, by: 'Valery' }, j, { op: 'review', step: 'fxr', verdict: 'accepted', note: ' looks right ' }).job
+  assert.equal(acc.flow.fxr.s, 'done'); assert.equal(atOf(DEV, acc), 'fxd')
+  assert.deepEqual(acc.flow.fxr.fx![0], { kind: 'review', by: 'Valery', verdict: 'accepted', of: '3f2c9e1', note: 'looks right', at: T0.toISOString(), step: 'fxr' })
+  assert.match(acc.jr[0].o, /Accepted the review “Review”: looks right/)
+  // a step that declares no review gets none
+  const o = open(), at = atOf(X, o)!
+  assert.equal(apply(X, o, { op: 'stepDone', step: at }).job.flow[at].fx, undefined)
+  code(() => apply(DEV, j, { op: 'review', step: 'fxb', verdict: 'accepted' }), 'bad_step')
+})
+
+test('facts: Send back goes back like a return; the kept round keeps the review, the step gone back to gets a round fact', () => {
+  let j = acceptOn(devJob(), 'fxb', { fx: [BR] })
+  j = acceptOn(j, 'fxp', { fx: [{ kind: 'check', name: 'live', ok: true }] })
+  code(() => apply(DEV, j, { op: 'review', step: 'fxr', verdict: 'sent_back' }), 'bad_args')
+  const r = apply({ ...DEV, by: 'Valery' }, j, { op: 'review', step: 'fxr', verdict: 'sent_back', note: 'rename it' })
+  // it goes back to the step that made the branch, unless told where
+  assert.equal(r.nx, 'fxb'); assert.equal(r.job.rf, 'fxb')
+  const kept = r.job.rounds!.at(-1)!
+  assert.deepEqual(kept.flow.fxr.fx, [{ kind: 'review', by: 'Valery', verdict: 'sent_back', of: '3f2c9e1', note: 'rename it', at: T0.toISOString(), step: 'fxr' }])
+  assert.equal(kept.flow.fxb.fx![0].kind, 'branch')
+  assert.deepEqual(r.job.flow.fxb.fx, [{ kind: 'round', n: 1, back_to: 'fxb', why: 'rename it', failed: [], at: T0.toISOString(), step: 'fxr' }])
+  assert.equal(r.job.flow.fxp.fx, undefined)
+  assert.equal(apply(DEV, j, { op: 'review', step: 'fxr', verdict: 'sent_back', note: 'prove again', to: 'fxp' }).nx, 'fxp')
+})
+
+test('facts: a failed smoke test that goes back writes a round fact naming the failed checks', () => {
+  let j = acceptOn(devJob(), 'fxb', { fx: [BR] })
+  j = acceptOn(j, 'fxp', { fx: [{ kind: 'check', name: 'live', ok: true }] })
+  j = apply(DEV, j, { op: 'stepDone', step: 'fxr' }).job
+  j = acceptOn(j, 'fxd', { fx: [{ kind: 'deploy', what: 'console', where: 'this PC', version: '3f2c9e1', ok: true }] })
+  j = acceptOn(j, 'fxs', { o: 'failed', rt: 'fxb', why: 'the rounds view is blank', fx: [{ kind: 'check', name: 'rounds view', ok: false, against: '3f2c9e1' }, { kind: 'check', name: 'drawer', ok: true }] })
+  assert.equal(atOf(DEV, j), 'fxb')
+  assert.deepEqual(j.flow.fxb.fx, [{ kind: 'round', n: 1, back_to: 'fxb', why: 'the rounds view is blank', failed: ['rounds view'], at: T0.toISOString(), step: 'fxs' }])
+  const kept = j.rounds!.at(-1)!
+  assert.equal(kept.flow.fxs.fx!.length, 2); assert.equal(kept.flow.fxd.fx![0].kind, 'deploy')
+  // the steps after start blank: none of the old facts come back
+  for (const s of ['fxp', 'fxr', 'fxd', 'fxs']) assert.equal(j.flow[s].fx, undefined, s)
+  // a round started by hand has no failed checks
+  const re = apply(DEV, acceptOn(acceptOn(devJob(), 'fxb', { fx: [BR] }), 'fxp', { fx: [{ kind: 'check', name: 'live', ok: false }] }), { op: 'stepReopen', step: 'fxb', why: 'again' })
+  assert.deepEqual(re.job.flow.fxb.fx!.map((f) => [f.kind, (f as { failed?: string[] }).failed]), [['round', []]])
+})
+
+test('facts: a step declares them through stepAdd and stepEdit; an added step brings none', () => {
+  const j = devJob()
+  const a = apply(DEV, j, { op: 'stepAdd', after: 'fxb', step: { t: 'Merge', m: 'llm', fx: ['branch', 'pr'] } })
+  const s = a.job.ph!.flatMap((p) => p.s).find((s) => s.t === 'Merge')!
+  assert.deepEqual(s.fx, ['branch', 'pr']); assert.equal(a.job.flow[s.id].fx, undefined)
+  code(() => apply(DEV, j, { op: 'stepAdd', after: 'fxb', step: { t: 'Merge', m: 'llm', fx: ['tag' as 'pr'] } }), 'bad_args')
+  code(() => apply(DEV, j, { op: 'stepAdd', after: 'fxb', step: { t: 'Merge', m: 'llm', fx: ['round'] } }), 'bad_args')
+  const e = apply(DEV, j, { op: 'stepEdit', step: 'fxd', fx: ['deploy', 'check'] }).job
+  assert.deepEqual(stepOf(DEV, e, 'fxd')!.fx, ['deploy', 'check']); assert.match(e.jr[0].o, /facts/)
+  assert.equal(stepOf(DEV, apply(DEV, e, { op: 'stepEdit', step: 'fxd', fx: null }).job, 'fxd')!.fx, undefined)
+})

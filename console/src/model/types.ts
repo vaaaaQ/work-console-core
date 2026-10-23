@@ -1,3 +1,4 @@
+import type { Fact, FactIn, FactKind } from './facts.ts'
 /** a workspace id: the key of a pack in PACKS */
 export type Ws = string
 export type Mode = 'you' | 'llm'
@@ -18,15 +19,15 @@ type New = { nw?: 0 | 1 }
  *  rv = review, out = variable its accepted draft fills; fid = id inside an added playbook's file;
  *  act = the console action its inspector offers: 'time' opens the Time view, a workspace adds its own;
  *  start = how an llm step begins (absent = the workspace's default); add = a step the job added: when, by whom, why;
- *  ask = it waits for a reply once its first message is sent */
+ *  ask = it waits for a reply once its first message is sent; fx = the kinds of fact a done draft of it must report */
 export interface Step {
   id: string; fid?: string; t: string; m: Mode; x: string; a?: string[]; msg?: number; rv?: 1; out?: string; act?: string
-  start?: Start; add?: { at: string; by: string; why: string }; ask?: 1
+  start?: Start; add?: { at: string; by: string; why: string }; ask?: 1; fx?: FactKind[]
 }
 /** how an llm step begins when it becomes current: by hand, by itself, or by itself with its draft accepted */
 export type Start = 'hand' | 'self' | 'auto'
 /** a step a job adds to its own steps */
-export interface NewStep { t: string; x?: string; m: Mode; a?: string[]; start?: Start; ask?: 1; out?: string }
+export interface NewStep { t: string; x?: string; m: Mode; a?: string[]; start?: Start; ask?: 1; out?: string; fx?: FactKind[] }
 export interface Phase { c: string; n: string; s: Step[] }
 /** ws = owning pack; none = core, offered in every workspace; needs = in plain words, the context its jobs need;
  *  once = one job's own steps, which no playbook list, catalog or list_playbooks shows;
@@ -58,15 +59,15 @@ export interface Review { v: Vote[]; need: number }
 export type Outcome = 'done' | 'not_done' | 'failed'
 export const OUTCOMES: readonly Outcome[] = ['done', 'not_done', 'failed']
 /** a draft's report: o = not finished or failed, rt = the step (already passed) the job goes back to on accept, why = the reason,
-    cm = the exact commands, in order, the draft waits to have approved */
-export interface DraftReport { o?: Outcome; rt?: string; why?: string; cm?: string[] }
+    cm = the exact commands, in order, the draft waits to have approved, fx = the facts it reports, checked as it goes in */
+export interface DraftReport { o?: Outcome; rt?: string; why?: string; cm?: string[]; fx?: FactIn[] }
 /** the most commands one draft may wait for, and the most characters of one */
 export const CMDS_MAX = 10, CMD_MAX = 2000
 /** o, rt, why: the draft's report, set only when it did not finish; cm = the commands it waits to have approved;
     ap = it reports approved commands, so it is the person's to read and never accepted by itself;
     hd = handed in by hand, so no LLM session wrote it and none approves its commands;
-    ua = a question on the step was answered while its run worked, so the draft has not seen the answer */
-export interface Draft extends New { t: string; at: string; q?: string; o?: Exclude<Outcome, 'done'>; rt?: string; why?: string; cm?: string[]; ap?: 1; hd?: 1; ua?: 1 }
+    ua = a question on the step was answered while its run worked, so the draft has not seen the answer; fx = the facts it would leave on its step */
+export interface Draft extends New { t: string; at: string; q?: string; o?: Exclude<Outcome, 'done'>; rt?: string; why?: string; cm?: string[]; ap?: 1; hd?: 1; ua?: 1; fx?: Fact[] }
 /** id = the backend's run record; absent in the demo; reply = it continues the draft's session, so the draft stays;
     ap = the reply approves the draft's commands */
 export interface Run { q: string; at: number; id?: string; reply?: 1; ap?: 1 }
@@ -78,13 +79,13 @@ export interface WaitLink { j: string; t?: string; st: 'open' | 'done' | 'cancel
 export interface ReplyWatch { src: string; ch: string; to?: string; at: string }
 export interface Reply { id: string; at: string; from: string; t: string; link?: string }
 /** w = the jobs this step waits for; bb = a blocker the user asked for in a reply, waiting for the builder;
-    rw = the reply its sent ask waits for; rp = the replies that came, newest last */
+    rw = the reply its sent ask waits for; rp = the replies that came, newest last; fx = the facts this pass left on it, oldest first */
 export interface Flow extends New {
   s: NodeState; m: string; arts: Art[]; b: Badge[]; rv: Review | null; dr: Draft | null
   out: string | null; run: Run | null; sent: Record<number, Sent>
-  w?: WaitLink[]; bb?: { say: string; at: string }; rw?: ReplyWatch; rp?: Reply[]
+  w?: WaitLink[]; bb?: { say: string; at: string }; rw?: ReplyWatch; rp?: Reply[]; fx?: Fact[]
 }
-export type StepOverride = Partial<Pick<Flow, 's' | 'm' | 'arts' | 'b' | 'rv' | 'dr' | 'out'>>
+export type StepOverride = Partial<Pick<Flow, 's' | 'm' | 'arts' | 'b' | 'rv' | 'dr' | 'out' | 'fx'>>
 
 /** l = outcome colour for the Today feed */
 export interface JournalEntry extends New { ts: string; a: string; o: string; c: string; n: string; l?: Lamp }
@@ -124,6 +125,9 @@ export type Cmd =
   | { op: 'start' } | { op: 'close'; st: 'done' | 'cancelled'; note?: string } | { op: 'reopen' }
   /** force = done although blockers are open; they are removed */
   | { op: 'stepDone'; step: string; force?: boolean }
+  /** a step that declares review closed by a person: accepted closes it as stepDone does; sent_back goes back to `to`
+      (default: the step that made the latest branch, else the one before) like returnTo, the note as why */
+  | { op: 'review'; step: string; verdict: 'accepted' | 'sent_back'; note?: string; to?: string }
   | { op: 'stepSkip' | 'stepResume'; step: string }
   /** a passed step with steps reached after it goes back like returnTo: why = the round's reason, optional */
   | { op: 'stepReopen'; step: string; why?: string }
@@ -169,13 +173,13 @@ export type Cmd =
   | { op: 'stepAdd'; before?: string; after?: string; step: NewStep; tpl?: Tpl[]; why?: string }
   | { op: 'stepDel'; step: string }
   /** null clears start or ask */
-  | { op: 'stepEdit'; step: string; t?: string; x?: string; m?: Mode; start?: Start | null; tpl?: Tpl[]; ask?: 1 | null }
+  | { op: 'stepEdit'; step: string; t?: string; x?: string; m?: Mode; start?: Start | null; tpl?: Tpl[]; ask?: 1 | null; fx?: FactKind[] | null }
   | { op: 'stepMove'; step: string; before?: string; after?: string }
   /** a proposal: set by the console after a dry run; edit = the start of the llm step its cmd i adds; accept applies all or nothing */
   | { op: 'ppSet'; say: string; cmds: Cmd[]; by: string }
   | { op: 'ppEdit'; i: number; start: Start } | { op: 'ppAccept' } | { op: 'ppReject'; why?: string }
 /** ops the page may send; the rest belong to the LLM runner */
-export const PAGE_OPS = ['start', 'close', 'reopen', 'stepDone', 'stepSkip', 'stepResume', 'stepReopen', 'rejectDraft', 'stepWait',
+export const PAGE_OPS = ['start', 'close', 'reopen', 'stepDone', 'review', 'stepSkip', 'stepResume', 'stepReopen', 'rejectDraft', 'stepWait',
   'acceptDraft', 'noteAdd', 'noteAnswer', 'noteReopen', 'sent', 'vote', 'nudged', 'replied', 'schedule', 'ctxAdd', 'ctxSet', 'ctxDel', 'describe',
   'waitAdd', 'waitDel', 'blockerDrop', 'ppEdit', 'ppAccept', 'ppReject'] as const
 /** ops a Claude Code session may send through the console's MCP: the page's but proposals, plus returning to a passed step */
