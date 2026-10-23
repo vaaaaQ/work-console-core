@@ -5,7 +5,7 @@ import { fromWall, midnight, offsetAt } from '../lib/zone.ts'
 import { openOf, reaches, settled, waitsM } from './blockers.ts'
 import { KINDS, ctxDefaults, ctxLabel, ctxOf, ctxUnit, httpUrl, parseWorkId } from './context.ts'
 import type { Kind } from './context.ts'
-import { FactError, factsIn, failedChecks, isNone, kindsIn, latestFacts, missingKinds } from './facts.ts'
+import { FactError, NOTE_MAX, factsIn, failedChecks, isNone, kindsIn, latestFacts, missingKinds } from './facts.ts'
 import type { BranchFact, Fact, FactIn } from './facts.ts'
 import { CMD_MAX, CMDS_MAX, OUTCOMES, PP_OPS } from './types.ts'
 import type {
@@ -304,7 +304,8 @@ function returnTo(x: Ctx, j: Job, sid: string, why: string, failed?: string[]) {
     const old = j.flow[s.id], open = old.b.filter((b) => b.o), w = (old.w || []).filter((l) => l.st !== 'cancelled')
     j.flow[s.id] = { ...blank(s), b: open, ...(w.length ? { w } : {}), nw: 1 }
   })
-  j.flow[sid].fx = [{ kind: 'round', n: kept.n, back_to: sid, why, failed: failed ?? failedChecks(atF?.fx), at: nowOf(x).toISOString(), step: at ?? sid }]
+  // the why is the person's or a run's words: one line and capped, as every fact's text
+  j.flow[sid].fx = [{ kind: 'round', n: kept.n, back_to: sid, why: line(why, NOTE_MAX), failed: failed ?? failedChecks(atF?.fx), at: nowOf(x).toISOString(), step: at ?? sid }]
   onto(j.flow[sid])
   if (isClosed(j)) j.st = 'active'
   syncStatus(x, j)
@@ -344,7 +345,8 @@ function report(x: Ctx, j: Job, sid: string, r: DraftReport): Pick<Draft, 'o' | 
   const why = typeof r.why === 'string' ? line(r.why, 300) : ''
   if (!r.o || r.o === 'done') {
     if (r.rt) throw new CmdError('bad_args', 'return_to goes with outcome not_done or failed')
-    const miss = missingKinds(S.fx, fx)
+    // a declared review is the console's to write when the person accepts; a draft never carries one
+    const miss = missingKinds(S.fx?.filter((k) => k !== 'review'), fx)
     if (miss.length) throw new CmdError('bad_args', `“${S.t}” reports ${miss.join(', ')}: a done draft of it carries a fact of each kind in facts, or {kind, none: why} when there is honestly nothing to report`)
     return cm
   }
@@ -690,7 +692,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       noRun()
       const note = line(typeof cmd.note === 'string' ? cmd.note : '', 1000)
       if (cmd.verdict === 'accepted') {
-        noBlockers()
+        noBlockers(cmd.force)
         reviewFact(x, j, sid, 'accepted', note)
         nx = advance(x, j, sid, 'done')
         jr(x, j, `Accepted the review “${S.t}”${note ? `: ${note}` : ''}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')
@@ -755,6 +757,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       }
       noBlockers(cmd.force)
       F.out = edited ? cmd.text! : dr.t; F.m = edited ? 'accepted with your edits' : 'draft accepted'; keepFacts(F, dr)
+      if (S.fx?.includes('review')) reviewFact(x, j, sid, 'accepted')
       nx = advance(x, j, sid, 'done')
       const although = dr.o ? `, although it reported ${dr.o === 'failed' ? 'failed' : 'not done'}` : ''
       jr(x, j, `Accepted the LLM draft for “${S.t}”${how}${dr.o ? ' as done' : ''}${although}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')

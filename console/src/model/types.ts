@@ -127,7 +127,7 @@ export type Cmd =
   | { op: 'stepDone'; step: string; force?: boolean }
   /** a step that declares review closed by a person: accepted closes it as stepDone does; sent_back goes back to `to`
       (default: the step that made the latest branch, else the one before) like returnTo, the note as why */
-  | { op: 'review'; step: string; verdict: 'accepted' | 'sent_back'; note?: string; to?: string }
+  | { op: 'review'; step: string; verdict: 'accepted' | 'sent_back'; note?: string; to?: string; force?: boolean }
   | { op: 'stepSkip' | 'stepResume'; step: string }
   /** a passed step with steps reached after it goes back like returnTo: why = the round's reason, optional */
   | { op: 'stepReopen'; step: string; why?: string }

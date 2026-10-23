@@ -138,6 +138,12 @@ test('submit_draft takes the facts the draft reports and hands them on as fx; it
   const d = runToolDefs(base).find((x) => x.name === 'submit_draft')!
   assert.ok('facts' in (d.inputSchema as Record<string, unknown>))
   assert.match(d.description, /facts: what this step leaves.*branch \{repo, name, sha.*pr \{url.*deploy \{what, where, version, ok.*check \{name, ok.*\{kind, none: why\}/)
+  // review and round are the console's own: a run is not offered them
+  assert.doesNotMatch(d.description, /review \{|round \{/)
+  const facts = (d.inputSchema as { facts: { safeParse(v: unknown): { success: boolean } } }).facts
+  assert.equal(facts.safeParse([{ kind: 'review', none: 'x' }]).success, false)
+  assert.equal(facts.safeParse([{ kind: 'round', n: 1 }]).success, false)
+  assert.equal(facts.safeParse([{ kind: 'check', name: 'x', ok: true }]).success, true)
   const call = d.handler as (a: unknown, x: unknown) => Promise<{ isError?: boolean }>
   const fx = [{ kind: 'branch', repo: 'core', name: 'job/x', sha: 'abcdef1' }]
   await call({ text: 'built', facts: fx }, {})

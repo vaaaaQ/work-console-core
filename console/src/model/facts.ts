@@ -31,17 +31,22 @@ export type Fact = FactIn & { at: string; step: string }
 export const FACTS_MAX = 20, CHECKS_MAX = 50, STR_MAX = 300, NOTE_MAX = 1000
 export class FactError extends Error {}
 
+/** the kinds a run or a session reports; review and round are the console's own, written as a person reviews or the job goes back */
+export const RUN_KINDS = ['branch', 'pr', 'deploy', 'check'] as const satisfies readonly FactKind[]
+export type RunKind = typeof RUN_KINDS[number]
 /** the fields of each kind a run may report, for the run tools' help */
-export const FACT_FIELDS: Record<Exclude<FactKind, 'round'>, string> = {
+export const FACT_FIELDS: Record<RunKind, string> = {
   branch: 'repo, name, sha (the commit), base?',
   pr: 'url, n?, title?, state (open, merged or closed), checks: [{name, state (pass, fail or pending), url?}]',
-  review: 'by, verdict (accepted or sent_back), of? (the sha reviewed), note?',
   deploy: 'what, where, version, ok (true or false), url?',
   check: 'name, ok (true or false), against? (the version it ran against), url? or art? (an artifact of this step) as evidence, note?',
 }
 export const FACTS_HELP = 'facts: what this step leaves besides its text, each {kind, ...fields}: '
   + (Object.entries(FACT_FIELDS) as [string, string][]).map(([k, f]) => `${k} {${f}}`).join('; ')
-  + '. A kind the step must report but has nothing for goes as {kind, none: why}. URLs are http(s).'
+  + '. A kind the step must report but has nothing for goes as {kind, none: why}. URLs are http(s). Each text is one line.'
+
+/** text in one line: every run of whitespace, a newline too, one space; so no fact can open a heading or a line of its own in a prompt */
+export const oneLine = (t: string) => t.replace(/\s+/g, ' ').trim()
 
 type Rec = Record<string, unknown>
 const rec = (v: unknown): Rec | null => (v && typeof v === 'object' && !Array.isArray(v) ? v as Rec : null)
@@ -53,7 +58,7 @@ function reader(o: Rec, at: string) {
     const v = o[k]
     if (v === undefined || v === null || (opt && v === '')) { if (opt) return undefined; return fail(`${k} is missing`) }
     if (typeof v !== 'string' || !v.trim()) return fail(`${k} is text`)
-    const t = v.trim()
+    const t = oneLine(v)
     if (t.length > max) return fail(`${k} is longer than ${max} characters`)
     return t
   }
@@ -84,8 +89,12 @@ function factIn(v: unknown, i: number, console: boolean): FactIn {
   const kind = o.kind as FactKind
   if (!FACT_KINDS.includes(kind)) throw new FactError(`fact ${i + 1}: kind is one of ${FACT_KINDS.join(', ')}`)
   const r = reader(o, `fact ${i + 1} (${kind})`)
+  // the console's own kinds are refused before anything else, a none among them
+  if (!console && !(RUN_KINDS as readonly string[]).includes(kind)) {
+    return r.fail(`the console writes ${kind} facts itself; a run never reports one (report ${RUN_KINDS.join(', ')})`)
+  }
   if (o.none !== undefined) {
-    const none = typeof o.none === 'string' ? o.none.trim() : ''
+    const none = typeof o.none === 'string' ? oneLine(o.none) : ''
     if (!none) return r.fail('none says why there is nothing to report')
     if (none.length > STR_MAX) return r.fail(`none is longer than ${STR_MAX} characters`)
     return { kind, none }
@@ -111,8 +120,7 @@ function factIn(v: unknown, i: number, console: boolean): FactIn {
       ...r.opt('art', r.str('art', STR_MAX, true)), ...r.opt('note', r.str('note', NOTE_MAX, true)),
     }
     case 'round': {
-      if (!console) return r.fail('the console writes round facts itself; a run never reports one')
-      const failed = Array.isArray(o.failed) ? o.failed.filter((x): x is string => typeof x === 'string') : []
+      const failed = Array.isArray(o.failed) ? o.failed.filter((x): x is string => typeof x === 'string').map(oneLine) : []
       return { kind, n: Number(o.n), back_to: r.req('back_to'), why: r.req('why', NOTE_MAX), failed }
     }
   }
@@ -167,9 +175,10 @@ export function factText(f: FactIn, title: (id: string) => string = (id) => id):
   }
 }
 
-/** a fact in one line, as a later prompt carries it: its words, then the step that made it */
+/** a fact in one line, as a later prompt carries it: its words, then the step that made it. One line even for a fact
+    kept before its texts were made one line */
 export const factLine = (f: Fact, title: (id: string) => string = (id) => id) => {
-  const t = factText(f, title)
+  const t = oneLine(factText(f, title))
   return /\)$/.test(t) && f.kind === 'branch' ? t.replace(/\)$/, `; from "${title(f.step)}")`) : `${t} (from "${title(f.step)}")`
 }
 

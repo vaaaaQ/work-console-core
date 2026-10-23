@@ -2,7 +2,7 @@ import { BK } from '../../src/data/core.ts'
 import { contextSection, ctxLabel, renderNote } from '../../src/model/context.ts'
 import type { Resolved } from '../../src/model/context.ts'
 import * as T from '../../src/model/transitions.ts'
-import { factLine, factText, isNone, latestFacts } from '../../src/model/facts.ts'
+import { factLine, factText, isNone, latestFacts, oneLine } from '../../src/model/facts.ts'
 import type { CheckFact, Fact, RoundFact } from '../../src/model/facts.ts'
 import type { Flow, Job, RunIntent, WaitLink } from '../../src/model/types.ts'
 import type { Note } from '../knowledge/notes.ts'
@@ -46,17 +46,23 @@ export function factsText(x: T.Ctx, j: Job): string {
   const title = (id: string) => T.stepOf(x, j, id)?.t ?? id
   const now = latestFacts(T.factsNow(x, j).filter((f) => f.kind !== 'round')).map((f) => `- ${factLine(f, title)}`)
   const rounds = j.rounds ?? [], all: Fact[] = [...rounds.flatMap((r) => Object.values(r.flow)), ...Object.values(j.flow)].flatMap((f) => f.fx ?? [])
-  const past = rounds.map((r) => {
+  // a job that went back many times would fill the prompt: only the latest rounds, the rest counted
+  const shown = rounds.slice(-ROUNDS_SHOWN), left = rounds.length - shown.length
+  const past = shown.map((r) => {
     const rf = all.find((f): f is Fact & RoundFact => f.kind === 'round' && !isNone(f) && (f as RoundFact).n === r.n)
     const fx = Object.values(r.flow).flatMap((f) => f.fx ?? [])
     const bad = fx.filter((f): f is Fact & CheckFact => f.kind === 'check' && !isNone(f) && !(f as CheckFact).ok).map((f) => factText(f))
     const back = fx.filter((f) => f.kind === 'review' && !isNone(f) && (f as { verdict: string }).verdict === 'sent_back').map((f) => factText(f))
     const head = rf ? `round ${r.n} → back to "${title(rf.back_to)}": ${rf.why}` : `round ${r.n}: ${r.why}`
-    return rf || bad.length || back.length ? `- ${[head, ...bad, ...back].join('; ')}` : ''
+    // every part is a person's or a run's words: the line stays one line, whatever a kept round holds
+    return rf || bad.length || back.length ? `- ${oneLine([head, ...bad, ...back].join('; '))}` : ''
   }).filter(Boolean)
   if (!now.length && !past.length) return ''
-  return ['## Facts', ...(now.length ? ['This round:', ...now] : []), ...(past.length ? ['Earlier rounds:', ...past] : [])].join('\n')
+  const pastHead = left ? `Earlier rounds (the latest ${shown.length} of ${rounds.length}; ${left} older left out):` : 'Earlier rounds:'
+  return ['## Facts', ...(now.length ? ['This round:', ...now] : []), ...(past.length ? [pastHead, ...past] : [])].join('\n')
 }
+/** how many earlier rounds ## Facts gives a line each */
+export const ROUNDS_SHOWN = 5
 /** the How to work line of a step that declares facts; how = how its session hands them in */
 const factsRule = (x: T.Ctx, j: Job, step: string, how: string) => {
   const k = T.stepOf(x, j, step)?.fx ?? []

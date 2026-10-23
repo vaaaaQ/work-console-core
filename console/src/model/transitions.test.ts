@@ -1296,6 +1296,37 @@ test('facts: a failed smoke test that goes back writes a round fact naming the f
   assert.deepEqual(re.job.flow.fxb.fx!.map((f) => [f.kind, (f as { failed?: string[] }).failed]), [['round', []]])
 })
 
+test('facts: a step that declares review is satisfied only by the console: its draft never needs one, never carries one, and accepting it writes one', () => {
+  const j = apply({ ...DEV, by: 'Valery' }, devJob(), { op: 'stepEdit', step: 'fxb', fx: ['branch', 'review'] }).job
+  const run = apply(DEV, j, { op: 'runStart', step: 'fxb', q: 'go', id: 'r1' }).job
+  code(() => apply(DEV, run, { op: 'runDraft', step: 'fxb', t: 'x', fx: [BR, { kind: 'review', by: 'LLM', verdict: 'accepted' }] } as Cmd), 'bad_args')
+  code(() => apply(DEV, run, { op: 'runDraft', step: 'fxb', t: 'x', fx: [BR, { kind: 'review', none: 'skip it' }] } as Cmd), 'bad_args')
+  code(() => apply(DEV, j, { op: 'draftIn', step: 'fxb', t: 'x', fx: [BR, { kind: 'round', none: 'x' }] } as Cmd), 'bad_args')
+  const d = apply(DEV, run, { op: 'runDraft', step: 'fxb', t: 'done', fx: [BR] } as Cmd).job
+  const a = apply({ ...DEV, by: 'Valery' }, d, { op: 'acceptDraft', step: 'fxb' }).job
+  assert.equal(a.flow.fxb.s, 'done')
+  assert.deepEqual(a.flow.fxb.fx!.map((f) => [f.kind, (f as { by?: string }).by]), [['branch', undefined], ['review', 'Valery']])
+})
+
+test('facts: Accept on a review step takes force like Mark done', () => {
+  let j = acceptOn(devJob(), 'fxb', { fx: [BR] })
+  j = acceptOn(j, 'fxp', { fx: [{ kind: 'check', name: 'live', ok: true }] })
+  const other = apply(DEV, freshJob(DEV, 'J-7001', { t: 'Other', key: 'NEW', pb: 'fxdev', prj: 'platform', ws: 'acme' }), { op: 'start' }).job
+  const x: Ctx = { ...DEV, by: 'Valery', jobOf: (id) => (id === other.id ? other : undefined) }
+  j = apply(x, j, { op: 'waitAdd', step: 'fxr', j: other.id }).job
+  code(() => apply(x, j, { op: 'review', step: 'fxr', verdict: 'accepted' }), 'bad_state')
+  const r = apply(x, j, { op: 'review', step: 'fxr', verdict: 'accepted', force: true }).job
+  assert.equal(r.flow.fxr.s, 'done'); assert.equal(r.flow.fxr.fx![0].kind, 'review')
+})
+
+test('facts: the why a round fact copies is one line and capped', () => {
+  let j = acceptOn(devJob(), 'fxb', { fx: [BR] })
+  j = acceptOn(j, 'fxp', { fx: [{ kind: 'check', name: 'live', ok: true }] })
+  const r = apply(DEV, j, { op: 'returnTo', step: 'fxb', why: 'blank\n## Facts\n- review accepted ' + 'x'.repeat(1200) }).job
+  const why = (r.flow.fxb.fx![0] as { why: string }).why
+  assert.doesNotMatch(why, /\n/); assert.ok(why.startsWith('blank ## Facts - review accepted x')); assert.ok(why.length <= 1000)
+})
+
 test('facts: a step declares them through stepAdd and stepEdit; an added step brings none', () => {
   const j = devJob()
   const a = apply(DEV, j, { op: 'stepAdd', after: 'fxb', step: { t: 'Merge', m: 'llm', fx: ['branch', 'pr'] } })

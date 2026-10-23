@@ -7,7 +7,7 @@ import { canWrite } from '../agent/limits.ts'
 import type { Limits } from '../agent/limits.ts'
 import type { Hit, Note, ProposalIn } from '../knowledge/notes.ts'
 import type { DraftReport, Outcome } from '../../src/model/types.ts'
-import { FACT_KINDS, FACTS_HELP, FACTS_MAX } from '../../src/model/facts.ts'
+import { FACTS_HELP, FACTS_MAX, RUN_KINDS } from '../../src/model/facts.ts'
 import type { FactIn } from '../../src/model/facts.ts'
 import type { PromptImage } from './context.ts'
 import { BROWSER, BROWSER_TOOLS, WITHHELD } from './runBrowser.ts'
@@ -200,7 +200,8 @@ const REPORT_SCHEMA = {
   why: z.string().optional(),
   commands: z.array(z.string()).optional(),
   // each kind's fields are in FACTS_HELP; the console checks them as the draft goes in, so a bad one comes back as this tool's error
-  facts: z.array(z.looseObject({ kind: z.enum(FACT_KINDS) })).max(FACTS_MAX).optional(),
+  // review and round are the console's own, so a run is offered only the kinds it reports
+  facts: z.array(z.looseObject({ kind: z.enum(RUN_KINDS) })).max(FACTS_MAX).optional(),
 }
 /** the tool's arguments as a draft's report; only what was given. The commands are checked as the draft goes in */
 export function reportOf(a: { outcome?: unknown; return_to?: unknown; why?: unknown; commands?: unknown; facts?: unknown }): DraftReport {

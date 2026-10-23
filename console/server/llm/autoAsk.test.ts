@@ -31,6 +31,12 @@ test('the changes that move a job onto a step make it current: Start, Mark done,
   assert.deepEqual(made(start, { op: 'stepDone', step: 'tr' }, { op: 'stepReopen', step: 'tr' }), ['tr'], 'reopening a passed step with a later one reached is a return')
 })
 
+test('a review moves the job: Accept onto the next step like Mark done, Send back onto the step it returns to', () => {
+  const rv: Cmd[] = [start, { op: 'stepEdit', step: 'dr', fx: ['review'] }, { op: 'stepDone', step: 'tr' }]
+  assert.deepEqual(made(...rv, { op: 'review', step: 'dr', verdict: 'accepted' }), ['sn'])
+  assert.deepEqual(made(...rv, { op: 'review', step: 'dr', verdict: 'sent_back', note: 'redo it', to: 'tr' }), ['tr'])
+})
+
 test('a step that stays or comes back current is not made current: Reject, run end, Reopen step, Resume, job reopen, a new period', () => {
   assert.deepEqual(made(start, ...draft, { op: 'rejectDraft', step: 'tr' }), [])
   assert.deepEqual(made(start, { op: 'runStart', step: 'tr', q: 'q', id: 'r1' }, { op: 'runEnd', step: 'tr', why: 'cancelled' }), [])

@@ -111,8 +111,10 @@ export async function stepDone(j: Job, sid: string, force = false) {
 export const stepDoneHere = () => { const { j, sid } = here(); void stepDone(j, sid) }
 
 /** a review step closed by a person: Accept with an optional note, or Send back with why and where to; the note becomes the review fact's */
-export function reviewStep(verdict: 'accepted' | 'sent_back') {
+export function reviewStep(verdict: 'accepted' | 'sent_back', force = false) {
   const { j, sid, s } = here(), id = j.id, back = verdict === 'sent_back'
+  // Accept over open blockers asks first and drops them, as Mark done does
+  if (!back && !force && openOf(j.flow[sid]).length) { confirmForce(j, sid, () => reviewStep(verdict, true)); return }
   const all = jsteps(j), i = all.findIndex((t) => t.id === sid), passed = all.slice(0, Math.max(i, 0))
   const def = latestBranch(CTX, j)?.step ?? passed.at(-1)?.id
   if (back && !passed.length) { toast('No step before this one to send it back to'); return }
@@ -130,7 +132,7 @@ export function reviewStep(verdict: 'accepted' | 'sent_back') {
       const note = String(fd.get('note') || '').trim(), to = String(fd.get('to') || '')
       if (back && !note) { toast('Say why it goes back'); return }
       closeModal()
-      void doCmd(id, { op: 'review', step: sid, verdict, ...(note ? { note } : {}), ...(back && to ? { to } : {}) }, back ? `Sent back · ${s.t}` : `Accepted · ${s.t}`, { moveSel: true })
+      void doCmd(id, { op: 'review', step: sid, verdict, ...(note ? { note } : {}), ...(back && to ? { to } : {}), ...(force ? { force } : {}) }, back ? `Sent back · ${s.t}` : `Accepted · ${s.t}`, { moveSel: true })
     },
   })
 }

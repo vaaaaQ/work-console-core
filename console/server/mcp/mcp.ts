@@ -13,7 +13,7 @@ import { GatewayError } from '../bridge/wire.ts'
 import { HttpError } from '../events.ts'
 import { safeName } from '../llm/runner.ts'
 import { COMMANDS_HELP, OUTCOME_HELP, reportOf } from '../llm/sdk.ts'
-import { FACT_KINDS, FACTS_HELP, FACTS_MAX, factText } from '../../src/model/facts.ts'
+import { FACTS_HELP, FACTS_MAX, RUN_KINDS, factText } from '../../src/model/facts.ts'
 import type { Space, Spaces } from '../spaces.ts'
 
 /* Job tools for the user's own sessions (Claude Code, Cursor, …): an MCP server (streamable HTTP, JSON replies only)
@@ -126,6 +126,8 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
   const command = async (s: Session, id: unknown, c: Record<string, unknown>) => {
     const { sp, j } = await get(id), x = sp.ctx()
     if ('step' in c) c.step = stepId(x, j, c.step)
+    // the step a review sends back to is named like any other
+    if (c.op === 'review' && 'to' in c) c.to = stepId(x, j, c.to)
     const r = await sp.jobs.cmd(j.id, c as unknown as Cmd, undefined, 'session', undefined, s.client)
     s.undo.push({ id: j.id, v: r.job.v!, prev: r.prev }); s.undo.splice(0, s.undo.length - MAX_UNDO)
     const e = r.job.jr[0], redo = await sp.runner.redoRejected(r.prev, c as unknown as Cmd, 'session', s.client)
@@ -167,7 +169,7 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
         + 'sent {step, i: planned message index, t: the text you sent, to: channel} (record only, send it yourself first); vote {step, n: reviewer, v}; '
         + 'nudged {to}; replied {subj}; returnTo {step, why}; describe {d: the description, Markdown in English, the user\'s part of every LLM run; empty removes it}. '
         + 'waitAdd {step, j: an open job of the same workspace the step waits for, plan?: what the step does with its outcome; another workspace or a cycle is refused bad_args, a closed job bad_state}; waitDel {step, j}; blockerDrop {step}; '
-        + 'stepDone and acceptDraft take force: true to finish a step whose blockers are still open (the open links are dropped). '
+        + 'stepDone, acceptDraft and review accepted take force: true to finish a step whose blockers are still open (the open links are dropped). '
         + 'A step is its id or exact title.',
       inputSchema: {
         type: 'object', required: ['id', 'op'],
@@ -230,7 +232,7 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
           return_to: { type: 'string', description: 'with not_done or failed: the earlier step the job goes back to on accept, id or exact title' },
           why: { type: 'string', description: 'why the step is not done, in one line' },
           commands: { type: 'array', minItems: 1, maxItems: CMDS_MAX, items: { type: 'string' }, description: 'the exact commands, in order, this draft waits to have approved' },
-          facts: { type: 'array', maxItems: FACTS_MAX, items: { type: 'object', required: ['kind'], properties: { kind: { type: 'string', enum: [...FACT_KINDS] } } }, description: 'what this step leaves besides its text; see the description for each kind\'s fields' },
+          facts: { type: 'array', maxItems: FACTS_MAX, items: { type: 'object', required: ['kind'], properties: { kind: { type: 'string', enum: [...RUN_KINDS] } } }, description: 'what this step leaves besides its text; see the description for each kind\'s fields' },
           artifacts: { type: 'array', maxItems: ARTS_MAX, items: { type: 'object', required: ['name', 'content'], properties: { name: { type: 'string' }, content: { type: 'string' } } } },
         },
       },

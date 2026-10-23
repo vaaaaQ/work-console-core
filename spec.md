@@ -170,12 +170,21 @@ the page. The core version is `core.lock.json`'s `core` field.
 ## What the implementation settled (TDD step)
 
 - `src/model/facts.ts` holds the kinds, their checks (`factsIn`), the one-line text (`factLine`), the newest of each kind
-  (`latestFacts`), lamps and the header strip's parts. A run may report every kind but `round`, which only the console writes.
+  (`latestFacts`), lamps and the header strip's parts. A run or a session reports only `branch`, `pr`, `deploy` and
+  `check` (`RUN_KINDS`); `review` and `round` are the console's, refused from a run even as `{kind, none}`, and left out
+  of the run tool's and the MCP's kind enum. A step that declares `review` is satisfied only by the console's review
+  fact: its draft never needs one, and accepting the draft (or Mark done, or Accept) writes it.
+- Every fact's text is one line: the checks fold whitespace and newlines to one space, the console folds the why it copies
+  into a round fact (capped at 1000), and `factLine` and the `## Facts` round lines fold again, so no fact can forge a
+  heading or another fact's line in a later prompt.
+- `## Facts` gives the latest 5 earlier rounds (`ROUNDS_SHOWN`) and counts the older ones left out.
+- Accept on a review step takes `force` like Mark done (the page asks first); Send back and Accept move the job for
+  auto-ask (Send back like a return, Accept like Mark done); the MCP's `review` takes `to` by id or exact title.
 - `submit_draft`'s `facts` is a list of `{kind, ...}` in both the run tool (zod) and the console MCP (JSON schema); the
   fields of each kind are in the tool's description (`FACTS_HELP`). The core checks every field as the draft goes in, so a
   bad fact comes back as the tool's error with the field named (`facts: fact 1 (branch): sha is a commit hash …`). This
   stands in for the zod discriminated union the spec named: one checker, one message, for both tools.
-- Accept/Send back is a new command, `review {step, verdict, note?, to?}` (a page and session op, listed on `job_command`).
+- Accept/Send back is a new command, `review {step, verdict, note?, to?, force?}` (a page and session op, listed on `job_command`).
   Send back needs a note and goes back to `to`, by default the step that made the latest `branch`, else the step before.
   `stepDone` on such a step still writes an accepted review; a plain `returnTo` from it writes a sent_back one.
 - A `round` fact's `n` is the round that went back; it sits on the step gone back to, `step` = the step it was sent from.

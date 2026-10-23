@@ -602,6 +602,10 @@ test('submit_draft carries facts; a bad fact is the tool\'s error; get_job shows
   const s = await setup(t), j = await openJob(s.jobs), at = T.atOf(demoCtx(), j)!
   const d = ((await s.rpc('tools/list')).result.tools as { name: string; description: string; inputSchema: { properties: Record<string, unknown> } }[]).find((x) => x.name === 'submit_draft')!
   assert.ok(d.inputSchema.properties.facts); assert.match(d.description, /\{kind, none: why\}/)
+  // review and round are the console's own: a session reports neither
+  assert.deepEqual((d.inputSchema.properties.facts as { items: { properties: { kind: { enum: string[] } } } }).items.properties.kind.enum, ['branch', 'pr', 'deploy', 'check'])
+  const rv = await s.call('submit_draft', { id: j.id, step: at, output: 'x', facts: [{ kind: 'review', none: 'skip' }] })
+  assert.equal(rv.err, true); assert.match(rv.text, /^bad_args.*the console writes review/)
   const bad = await s.call('submit_draft', { id: j.id, step: at, output: 'x', facts: [{ kind: 'deploy', what: 'console', where: 'here', version: 'v1' }] })
   assert.equal(bad.err, true); assert.match(bad.text, /^bad_args.*ok is true or false/)
   const r = await s.call('submit_draft', { id: j.id, step: at, output: 'deployed', facts: [{ kind: 'deploy', what: 'console', where: 'here', version: 'v1', ok: true }] })
@@ -610,6 +614,18 @@ test('submit_draft carries facts; a bad fact is the tool\'s error; get_job shows
   const g = (await s.call('get_job', { id: j.id })).json()
   const st = g.phases.flatMap((p: { steps: { id: string }[] }) => p.steps).find((x: { id: string }) => x.id === at)
   assert.deepEqual(st.draftFacts, ['deploy console at v1 on here: ok'])
+})
+
+test('job_command review takes the step it sends back to by its title', async (t) => {
+  const s = await setup(t), j = await openJob(s.jobs), x = demoCtx(), at = T.atOf(x, j)!
+  await s.jobs.cmd(j.id, { op: 'stepDone', step: at, force: true })
+  const rvAt = T.atOf(x, (await s.jobs.get(j.id))!)!
+  await s.jobs.cmd(j.id, { op: 'stepEdit', step: rvAt, fx: ['review'] }, undefined, 'runner')
+  const title = T.stepOf(x, j, at)!.t
+  const r = await s.call('job_command', { id: j.id, op: 'review', step: rvAt, verdict: 'sent_back', note: 'redo it', to: title })
+  assert.equal(r.err, false, r.text)
+  const back = (await s.jobs.get(j.id))!
+  assert.equal(T.atOf(x, back), at); assert.equal(back.rounds!.length, (j.rounds?.length ?? 0) + 1)
 })
 
 test('submit_draft is busy while a run of the step is queued or running; a session without clientInfo signs Claude Code', async (t) => {

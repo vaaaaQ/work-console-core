@@ -29,11 +29,15 @@ export function holdOf(f: Flow): string | null {
 }
 
 /** the changes that move a job forward onto its next step */
-const MOVES = new Set<Cmd['op']>(['start', 'stepDone', 'stepSkip', 'acceptDraft', 'stepAdd', 'ppAccept'])
+const MOVES = new Set<Cmd['op']>(['start', 'stepDone', 'review', 'stepSkip', 'acceptDraft', 'stepAdd', 'ppAccept'])
 
 /** the steps this command made current: a forward move onto a step not reached yet, a return, or a blocker closing */
 export function madeCurrent(cmd: Cmd, prev: Job, job: Job): string[] {
   if (cmd.op === 'returnTo') return job.flow[cmd.step]?.s === 'cur' ? [cmd.step] : []
+  // a review sent back is a return, onto the step its new round starts at; one accepted moves on like Mark done
+  if (cmd.op === 'review' && cmd.verdict === 'sent_back') {
+    return (job.rounds?.length ?? 0) > (prev.rounds?.length ?? 0) && job.rf && job.flow[job.rf]?.s === 'cur' ? [job.rf] : []
+  }
   // a reopen that started a new round is a return; one that reopened the step alone is not
   if (cmd.op === 'stepReopen') return (job.rounds?.length ?? 0) > (prev.rounds?.length ?? 0) && job.flow[cmd.step]?.s === 'cur' ? [cmd.step] : []
   if (cmd.op === 'blockerClosed') return prev.flow[cmd.step]?.s !== 'cur' && job.flow[cmd.step]?.s === 'cur' ? [cmd.step] : []
