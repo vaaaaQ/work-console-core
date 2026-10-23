@@ -50,6 +50,29 @@ test('the Blockers section sits before Earlier outputs', () => {
   assert.ok(p.indexOf('## Blockers') > 0 && p.indexOf('## Blockers') < p.indexOf('## Earlier outputs'))
 })
 
+test('the step\'s questions and notes, each open or with its answer, go in after Blockers, in the run, the context and a hand-made session', () => {
+  const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
+  j.flow.dr.b = [
+    { k: 'q', t: 'which mailbox?', r: 'the shared one', o: 0 },
+    { k: 'q', t: 'who signs?', r: '', o: 1 },
+    { k: 'p', t: 'the gateway was down', r: '', o: 1 },
+  ]
+  j.flow.dr.w = [{ j: 'J-7', st: 'done', out: 'yes' }]
+  const sec = '## Questions on this step\n- Question: which mailbox? → the shared one\n- Question (open): who signs?\n- Problem (open): the gateway was down'
+  for (const t of [buildPrompt(x, j, 'dr', 'go', {}), contextText(x, j, 'dr', 'go', {}), manualText(x, j, 'dr', 'go', {})]) {
+    assert.ok(t.includes(sec + '\n\n'), t)
+    assert.ok(t.indexOf('## Blockers') < t.indexOf(sec) && t.indexOf(sec) < t.indexOf('## Journal'))
+  }
+  assert.doesNotMatch(buildPrompt(x, j, 'tr', 'go', {}), /## Questions on this step/, 'none on the step: no section')
+})
+
+test('a run is told to ask what only the person can decide with ask_question; a hand-made session is not', () => {
+  const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
+  const line = '- If something only Valery can decide holds part of the step, ask it with ask_question, one question per call, rather than only in the draft\'s text; then finish the draft as far as it goes.'
+  assert.ok(buildPrompt(x, j, 'dr', 'go', { me: 'Valery' }).includes(line + '\n'))
+  assert.doesNotMatch(manualText(x, j, 'dr', 'go', { me: 'Valery' }), /ask_question/)
+})
+
 test('## Sources goes in after the context, and the bridge line points to it', () => {
   const x = demoCtx(), j = freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
   const p = buildPrompt(x, j, 'dr', 'go', { sources: '## Sources\n### Talk (talk, browser tab)' })

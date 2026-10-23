@@ -6,7 +6,7 @@ import { JOBS0, JR, OVR, TPL0 } from '../data/demo.ts'
 import { clone } from '../lib/util.ts'
 import { KINDS } from './context.ts'
 import type { Cmd, Job, Step } from './types.ts'
-import { CmdError, DESC_MAX, reportText, allSent, apply, askText, atOf, fitFlow, freshJob, hasDraft, isClosed, isLive, needsYou, nextMonth, phasesOf, reopenGoesBack, seedFlow, sentBefore, stepOf, steps, stepsOf, tplOf, unsentAt } from './transitions.ts'
+import { CmdError, DESC_MAX, reportText, allSent, apply, askText, atOf, fitFlow, freshJob, hasDraft, isClosed, isLive, needsYou, nextMonth, openQs, phasesOf, qsM, reopenGoesBack, seedFlow, sentBefore, stepOf, steps, stepsOf, tplOf, unsentAt } from './transitions.ts'
 import type { Ctx, NewJob } from './transitions.ts'
 
 const T0 = new Date('2026-09-30T12:00:00Z')
@@ -419,6 +419,26 @@ test('rejectDraft with why journals the reason; acceptDraft said journals the wo
   assert.match(apply(X, j, { op: 'rejectDraft', step: at, why: 'Too dry.' }).job.jr[0].o, /: Too dry\.$/)
   const a = apply({ ...X, by: 'Claude Code' }, j, { op: 'acceptDraft', step: at, said: true }).job
   assert.match(a.jr[0].o, /as said in the reply/); assert.equal(a.jr[0].a, 'Claude Code')
+})
+
+test('an open question refuses an accept by reply or by the console; the page accepts and the questions stay open', () => {
+  const { j: j0, at } = drafted()
+  let j = apply(X, j0, { op: 'noteAdd', step: at, k: 'q', t: 'which mailbox?' }).job
+  j = apply(X, j, { op: 'noteAdd', step: at, k: 'q', t: 'who signs?' }).job
+  j = apply(X, j, { op: 'noteAdd', step: at, k: 'c', t: 'the brief says both' }).job
+  assert.deepEqual(openQs(j.flow[at]).map((b) => b.t), ['which mailbox?', 'who signs?'])
+  const t = stepOf(X, j, at)!.t
+  for (const extra of [{ said: true }, { auto: true as const }])
+    assert.throws(() => apply(X, j, { op: 'acceptDraft', step: at, ...extra }),
+      (e: unknown) => e instanceof CmdError && e.code === 'bad_state' && e.message === `“${t}” has 2 open questions; answer them first`, JSON.stringify(extra))
+  const p = apply(X, j, { op: 'acceptDraft', step: at }).job
+  assert.equal(p.flow[at].s, 'done'); assert.equal(openQs(p.flow[at]).length, 2)
+  // answered, or only a note of another kind open: the reply accepts
+  const one = apply(X, j, { op: 'noteAnswer', step: at, i: 0, r: 'the shared one' }).job
+  assert.throws(() => apply(X, one, { op: 'acceptDraft', step: at, said: true }), /has 1 open question; answer it first/)
+  const none = apply(X, one, { op: 'noteAnswer', step: at, i: 1, r: 'Imre' }).job
+  assert.equal(apply(X, none, { op: 'acceptDraft', step: at, said: true }).job.flow[at].s, 'done')
+  assert.equal(qsM(1), '1 open question'); assert.equal(qsM(3), '3 open questions')
 })
 
 /* ===== a draft that reports it did not finish ===== */

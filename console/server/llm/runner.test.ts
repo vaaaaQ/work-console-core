@@ -933,6 +933,39 @@ test('an accept reply on a blocked step keeps the revised draft and journals why
   assert.equal(e.a, 'console'); assert.match(e.c, new RegExp(`waits for ${b.id}`))
 })
 
+test('an accept reply on a step with an open question keeps the revised draft and journals the questions', async () => {
+  const s = setup(), d = await withDraft(s)
+  await s.jobs.cmd(d.job, { op: 'noteAdd', step: d.step, k: 'q', t: 'which mailbox?' })
+  const r = await s.runner.reply(d.job, d.step, 'fine as it is', 'accept')
+  await until(() => s.sessions.length === 2)
+  await s.sessions[1].tools.submitDraft('v2'); s.sessions[1].end()
+  await until(async () => (await s.runner.get(r.id))?.ended != null)
+  const j = (await s.jobs.get(d.job))!, e = j.jr.find((x) => x.o.startsWith('Did not accept the revised draft'))!
+  assert.equal(j.flow[d.step].dr!.t, 'v2'); assert.equal(j.flow[d.step].s, 'wait')
+  assert.equal(e.a, 'console'); assert.match(e.c, /has 1 open question/); assert.equal(e.n, 'answer it, or accept the draft anyway.')
+})
+
+test('ask_question: an open question on the run\'s step, signed LLM; the same open one is not added twice; at most 10 a run', async () => {
+  const s = setup(), [t] = await targets(s.jobs, 1)
+  await s.runner.ask(t.job, t.step, 'q')
+  await until(() => s.sessions.length === 1)
+  const ask = s.sessions[0].tools.askQuestion!
+  const title = T.stepOf(demoCtx(), (await s.jobs.get(t.job))!, t.step)!.t
+  const before = (await s.jobs.get(t.job))!.flow[t.step].b.length
+  assert.equal(await ask(' Which mailbox? '), `question ${before + 1} is open on “${title}”`)
+  const j = (await s.jobs.get(t.job))!
+  const b = j.flow[t.step].b.at(-1)!
+  assert.deepEqual([b.k, b.t, b.o], ['q', 'Which mailbox?', 1])
+  assert.equal(j.jr[0].a, 'LLM'); assert.equal(j.jr[0].o, `Question on “${title}”: Which mailbox?`)
+  assert.equal(await ask('Which mailbox?'), `question ${before + 1} is open on “${title}”`)
+  assert.equal((await s.jobs.get(t.job))!.flow[t.step].b.length, before + 1)
+  for (let i = 2; i <= 10; i++) await ask(`question ${i}?`)
+  await assert.rejects(ask('an eleventh?'), /this run already asked 10 questions/)
+  await assert.rejects(ask('  '), /a question needs text/)
+  assert.equal((await s.jobs.get(t.job))!.flow[t.step].b.length, before + 10, 'the repeat did not count')
+  s.sessions[0].end()
+})
+
 test("a reply waits until the draft's session has wound down", async () => {
   const s = setup(), d = await withDraft(s)
   const r = await s.runner.reply(d.job, d.step, 'shorter', 'revise')

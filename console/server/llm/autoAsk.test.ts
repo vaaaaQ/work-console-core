@@ -8,7 +8,7 @@ import { Blockers } from '../jobs/blockers.ts'
 import { Jobs } from '../jobs/jobs.ts'
 import { fileStore } from '../store/file.ts'
 import { demoCtx, demoSeed, fakeSdk } from '../testkit.ts'
-import { autoAsk, holdOf, madeCurrent, startOf } from './autoAsk.ts'
+import { answeredText, autoAsk, freedDraft, holdOf, madeCurrent, startOf } from './autoAsk.ts'
 import { Runner } from './runner.ts'
 import { tempDir } from '../testdirs.ts'
 
@@ -295,6 +295,80 @@ test('an auto step\'s draft with an open question is held back and journaled', a
   assert.equal(a.jr[0].a, 'console')
   assert.equal(a.flow.tr.s, 'wait'); assert.ok(a.flow.tr.dr)
   s.off()
+})
+
+test('an auto step\'s draft with a question its own run asked is held back', async () => {
+  const s = modes(false), j = await s.job('auto')
+  await s.jobs.cmd(j.id, { op: 'start' }, (await s.get(j.id)).v)
+  await until(() => s.sessions.length === 1)
+  await s.sessions[0].tools.askQuestion!('Which mailbox?')
+  await s.sessions[0].tools.submitDraft('as far as it goes'); s.sessions[0].end()
+  await until(async () => (await s.get(j.id)).jr[0].o.startsWith('Held back'))
+  assert.equal((await s.get(j.id)).jr[0].o, 'Held back the automatic accept of “Understand the request”: an open question.')
+  s.off()
+})
+
+/** a started action job whose tr has a draft, no run, and these notes */
+function asked(...notes: Cmd[]) {
+  let j = T.apply(X, T.freshJob(X, 'A-1', { t: 'Reply', key: 'K-1', pb: 'action', prj: 'p', ws: 'acme' }), start).job
+  for (const c of [{ op: 'runStart', step: 'tr', q: 'q', id: 'r1' } as Cmd, ...notes, { op: 'runDraft', step: 'tr', t: 'v1' } as Cmd]) j = T.apply(X, j, c).job
+  return j
+}
+const after = (j: Job, c: Cmd) => freedDraft(c, j, T.apply({ ...X, jobOf: () => undefined }, j, c).job)
+const q = (t: string): Cmd => ({ op: 'noteAdd', step: 'tr', k: 'q', t })
+
+test('freedDraft: answering the last open question frees the draft; an earlier one, another kind of note, or an open blocker does not', () => {
+  const two = asked(q('which mailbox?'), q('who signs?'), { op: 'noteAdd', step: 'tr', k: 'p', t: 'the gateway was down' })
+  assert.equal(two.flow.tr.s, 'wait')
+  assert.equal(after(two, { op: 'noteAnswer', step: 'tr', i: 0, r: 'the shared one' }), null, 'one question still open')
+  const one = T.apply(X, two, { op: 'noteAnswer', step: 'tr', i: 0, r: 'the shared one' }).job
+  assert.equal(after(one, { op: 'noteAnswer', step: 'tr', i: 1, r: 'Imre' }), 'tr')
+  const none = T.apply(X, one, { op: 'noteAnswer', step: 'tr', i: 1, r: 'Imre' }).job
+  assert.equal(after(none, { op: 'noteAnswer', step: 'tr', i: 2, r: 'it is back' }), null, 'a problem resolved is no answer the draft waited for')
+  assert.equal(after(none, { op: 'noteAnswer', step: 'tr', i: 1, r: 'Imre, again' }), null, 'answering an answered question again')
+  const blocked = { ...one, flow: { ...one.flow, tr: { ...one.flow.tr, w: [{ j: 'A-9', st: 'open' as const }] } } }
+  assert.equal(after(blocked, { op: 'noteAnswer', step: 'tr', i: 1, r: 'Imre' }), null, 'a blocker still open')
+})
+
+test('freedDraft: a blocker that closes while a question is open frees nothing', () => {
+  const j = asked(q('which mailbox?'))
+  const w = { ...j, flow: { ...j.flow, tr: { ...j.flow.tr, w: [{ j: 'A-9', st: 'open' as const }] } } }
+  assert.equal(after(w, { op: 'blockerClosed', step: 'tr', j: 'A-9', st: 'done' }), null)
+  const answered = T.apply(X, w, { op: 'noteAnswer', step: 'tr', i: 0, r: 'the shared one' }).job
+  assert.equal(after(answered, { op: 'blockerClosed', step: 'tr', j: 'A-9', st: 'done' }), 'tr')
+})
+
+test('answeredText lists each question with its answer', () => {
+  const j = T.apply(X, asked(q('which mailbox?'), q('who signs?')), { op: 'noteAnswer', step: 'tr', i: 0, r: 'the shared one' }).job
+  const k = T.apply(X, j, { op: 'noteAnswer', step: 'tr', i: 1, r: 'Imre' }).job
+  assert.equal(answeredText(k.flow.tr), 'Every question this step asked has an answer:\n\n- which mailbox? → the shared one\n- who signs? → Imre\n\nGo on with the step from your draft, as the answers say.')
+})
+
+test('answering the last question a self step\'s run asked revises its draft in the same session; a hand step stays for the person', async () => {
+  for (const start of ['self', 'hand'] as const) {
+    const s = modes(true), j = await s.job(start)
+    await s.jobs.cmd(j.id, { op: 'start' }, (await s.get(j.id)).v)
+    // a hand step's run is asked by the person
+    if (start === 'hand') await s.runner.ask(j.id, 'tr', 'go')
+    await until(() => s.sessions.length === 1)
+    s.sessions[0].push({ k: 'session', id: 'S1' })
+    await s.sessions[0].tools.askQuestion!('Which mailbox?')
+    await s.sessions[0].tools.askQuestion!('Who signs?')
+    await s.sessions[0].tools.submitDraft('v1, as far as it goes'); s.sessions[0].end()
+    await until(async () => (await s.runner.all()).every((r) => r.ended))
+    const qs = (await s.get(j.id)).flow.tr.b.flatMap((b, i) => (b.k === 'q' ? [i] : []))
+    await s.jobs.cmd(j.id, { op: 'noteAnswer', step: 'tr', i: qs[0], r: 'the shared one' })
+    await tick(60)
+    assert.equal(s.sessions.length, 1, `${start}: one question still open`)
+    await s.jobs.cmd(j.id, { op: 'noteAnswer', step: 'tr', i: qs[1], r: 'Imre' })
+    if (start === 'hand') { await tick(60); assert.equal(s.sessions.length, 1, 'a hand step is not woken'); s.off(); continue }
+    await until(() => s.sessions.length === 2)
+    const rev = (await s.runner.all()).find((r) => r.parent && r.via === 'console')!
+    assert.equal(rev.intent, 'revise'); assert.match(rev.q, /Which mailbox\? → the shared one/); assert.match(rev.q, /Who signs\? → Imre/)
+    assert.equal(s.sessions[1].resume, 'S1')
+    s.sessions[1].end()
+    s.off()
+  }
 })
 
 test('holdOf names what keeps a draft from being accepted by itself', () => {

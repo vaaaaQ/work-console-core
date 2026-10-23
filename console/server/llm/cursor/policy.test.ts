@@ -36,6 +36,11 @@ test('a run with the default tools reads its folder, and changes, runs and fetch
   assert.deepEqual(await guard(p, { tool_name: 'MCP:submit_draft', tool_input: { text: 'x' } }), {}, 'MCP calls are the permission answer\'s')
 })
 
+test('a run asks its questions in Cursor too: ask_question is one of its own tools', () => {
+  assert.equal(canMcp(start(), 'run', 'ask_question'), true)
+  assert.equal(canMcp(start(), 'run', 'add_note'), false)
+})
+
 test('the token folders, the console\'s home, the run\'s own folder and the user\'s Cursor folder are never read, in any case', async () => {
   const p = start()
   for (const f of [join(homedir(), '.work-console', 'console.token'), join(homedir(), '.WORK-CONSOLE', 'console.token'), join(cwd, 'x', '.work-console', 'mcp.token'),

@@ -91,6 +91,21 @@ test('the run server has its own four tools, and screenshot only when the run ca
   for (const d of runToolDefs({ ...base, screenshot: none })) assert.ok(ALLOW.includes(`mcp__run__${d.name}`), d.name)
 })
 
+test('ask_question only when the run carries it: allowed, one question a call, its answer or why not', async () => {
+  const none = async () => {}, got: string[] = []
+  const base: RunTools = { submitDraft: none, addArtifact: none, addArtifactFile: none, journal: none }
+  assert.ok(!runToolDefs(base).some((d) => d.name === 'ask_question'))
+  const d = runToolDefs({ ...base, askQuestion: async (t) => { got.push(t); return `question 1 is open on “Analysis”` } }).find((x) => x.name === 'ask_question')!
+  assert.ok(ALLOW.includes('mcp__run__ask_question'))
+  assert.match(d.description, /one per call/)
+  const call = d.handler as (a: unknown, x: unknown) => Promise<{ isError?: boolean; content: { text: string }[] }>
+  const r = await call({ text: 'Which mailbox?' }, {})
+  assert.deepEqual([got, r.isError, r.content[0].text], [['Which mailbox?'], undefined, 'question 1 is open on “Analysis”'])
+  const bad = runToolDefs({ ...base, askQuestion: async () => { throw new Error('this run already asked 10 questions') } }).find((x) => x.name === 'ask_question')!
+  const b = await (bad.handler as typeof call)({ text: 'one more?' }, {})
+  assert.deepEqual([b.isError, b.content[0].text], [true, 'failed: this run already asked 10 questions'])
+})
+
 test('submit_draft takes an optional outcome, return_to and why and hands them on', async () => {
   const none = async () => {}, got: unknown[] = []
   const base: RunTools = { submitDraft: async (t, r) => { got.push([t, r]) }, addArtifact: none, addArtifactFile: none, journal: none }
