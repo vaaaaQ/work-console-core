@@ -21,6 +21,7 @@ export function pbToFile(k: string): PbFile {
         if (s.rv) o.review = true
         if (s.out) o.output = s.out
         if (s.act) o.act = s.act
+        if (s.fx?.length) o.facts = s.fx.slice()
         return o
       }),
     })),

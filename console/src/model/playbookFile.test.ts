@@ -57,6 +57,22 @@ test('a step keeps its act through download and re-add; a step without one gets 
   } finally { delete PB.acts; delete TPL['acts/tell'] }
 })
 
+test('a step keeps the facts it declares through download and re-add; checkPb refuses an unknown kind', () => {
+  const f = blankFile()
+  f.phases[0].steps[1].facts = ['branch', 'pr']
+  assert.deepEqual(checkPb(f), [])
+  const { pb } = toInternal(f, 'fxfile')
+  assert.deepEqual(pb.ph[0].s[1].fx, ['branch', 'pr'])
+  assert.equal(pb.ph[0].s[0].fx, undefined)
+  addPb({ ...f, key: 'fxfile' })
+  assert.deepEqual(pbToFile('fxfile').phases[0].steps[1].facts, ['branch', 'pr'])
+  assert.ok(!('facts' in pbToFile('fxfile').phases[0].steps[0]))
+  for (const bad of [['tag'], 'branch', ['round']]) {
+    f.phases[0].steps[1].facts = bad as never
+    assert.ok(checkPb(f).some((e) => /facts must be a list of kinds: branch, pr, review, deploy, check/.test(e)), JSON.stringify(bad))
+  }
+})
+
 test('checkPb refuses an act that is not a name', () => {
   for (const act of [42, '', '  ', null, ['time'], { n: 'time' }]) {
     const f = blankFile() as any

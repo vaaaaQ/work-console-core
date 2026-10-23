@@ -1,5 +1,7 @@
 import { slugify } from '../lib/util.ts'
 import { httpUrl } from './context.ts'
+import { FACT_KINDS } from './facts.ts'
+import type { FactKind } from './facts.ts'
 import type { Mode, MsgHead, PbLink, Playbook, Step, Tpl, Ws } from './types.ts'
 
 /* ===== the playbook file: what Download writes and Add playbook reads =====
@@ -19,6 +21,8 @@ export interface PbStepFile {
   produces?: string[]; messages?: PbMsgFile[]; review?: boolean; output?: string
   /** the console action the step offers */
   act?: string
+  /** the kinds of fact a done draft of it must report */
+  facts?: FactKind[]
 }
 /** needs = in plain words, the context the playbook's jobs need; links = web pages each of its jobs starts with */
 export interface PbFile {
@@ -44,6 +48,7 @@ export function toInternal(o: PbFile, k: string) {
         if (s.review) st.rv = 1
         if (s.output) st.out = s.output
         if (s.act) st.act = s.act
+        if (s.facts?.length) st.fx = [...new Set(s.facts)]
         return st
       }),
     })),
@@ -85,6 +90,8 @@ export function checkPb(o: unknown): string[] {
         e.push(`${sa}: only a mail with to has cc or a subject.`)
       if (s.review != null && typeof s.review !== 'boolean') e.push(`${sa}: review must be true or false.`)
       if (s.act !== undefined && !str(s.act)) e.push(`${sa}: act must be the name of a console action.`)
+      if (s.facts != null && !(Array.isArray(s.facts) && s.facts.every((k: unknown) => FACT_KINDS.includes(k as FactKind) && k !== 'round')))
+        e.push(`${sa}: facts must be a list of kinds: ${FACT_KINDS.filter((k) => k !== 'round').join(', ')}.`)
     })
   })
   return e
