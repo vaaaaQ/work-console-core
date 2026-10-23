@@ -598,6 +598,20 @@ test('submit_draft carries an outcome and return_to; a return_to not yet passed 
   for (const k of ['outcome', 'return_to', 'why']) assert.ok(d.inputSchema.properties[k], k)
 })
 
+test('submit_draft carries facts; a bad fact is the tool\'s error; get_job shows a step\'s facts and its draft\'s', async (t) => {
+  const s = await setup(t), j = await openJob(s.jobs), at = T.atOf(demoCtx(), j)!
+  const d = ((await s.rpc('tools/list')).result.tools as { name: string; description: string; inputSchema: { properties: Record<string, unknown> } }[]).find((x) => x.name === 'submit_draft')!
+  assert.ok(d.inputSchema.properties.facts); assert.match(d.description, /\{kind, none: why\}/)
+  const bad = await s.call('submit_draft', { id: j.id, step: at, output: 'x', facts: [{ kind: 'deploy', what: 'console', where: 'here', version: 'v1' }] })
+  assert.equal(bad.err, true); assert.match(bad.text, /^bad_args.*ok is true or false/)
+  const r = await s.call('submit_draft', { id: j.id, step: at, output: 'deployed', facts: [{ kind: 'deploy', what: 'console', where: 'here', version: 'v1', ok: true }] })
+  assert.equal(r.err, false, r.text)
+  assert.deepEqual((await s.jobs.get(j.id))!.flow[at].dr!.fx!.map((f) => f.kind), ['deploy'])
+  const g = (await s.call('get_job', { id: j.id })).json()
+  const st = g.phases.flatMap((p: { steps: { id: string }[] }) => p.steps).find((x: { id: string }) => x.id === at)
+  assert.deepEqual(st.draftFacts, ['deploy console at v1 on here: ok'])
+})
+
 test('submit_draft is busy while a run of the step is queued or running; a session without clientInfo signs Claude Code', async (t) => {
   const s = await setup(t, { client: null }), j = await openJob(s.jobs), at = T.atOf(demoCtx(), j)!
   await s.runner.ask(j.id, at, 'go')

@@ -13,6 +13,7 @@ import { GatewayError } from '../bridge/wire.ts'
 import { HttpError } from '../events.ts'
 import { safeName } from '../llm/runner.ts'
 import { COMMANDS_HELP, OUTCOME_HELP, reportOf } from '../llm/sdk.ts'
+import { FACT_KINDS, FACTS_HELP, FACTS_MAX, factText } from '../../src/model/facts.ts'
 import type { Space, Spaces } from '../spaces.ts'
 
 /* Job tools for the user's own sessions (Claude Code, Cursor, …): an MCP server (streamable HTTP, JSON replies only)
@@ -63,7 +64,7 @@ export function brief(x: T.Ctx, j: Job, ws: string) {
 
 /** runs = the space's, for each step's conversation: there only once a reply has been made */
 export function detail(x: T.Ctx, j: Job, ws: string, runs: RunRec[] = [], all: Job[] = []) {
-  const at = T.atOf(x, j)
+  const at = T.atOf(x, j), title = (id: string) => T.stepOf(x, j, id)?.t ?? id
   return {
     ...brief(x, j, ws), v: j.v, current: at, roundFrom: j.rf ?? null, chat: j.chat, mail: j.mail, description: j.d,
     context: ctxOf(j).map((c) => ({ kind: c.k, item: c.id, count: c.n, name: c.name })),
@@ -76,6 +77,9 @@ export function detail(x: T.Ctx, j: Job, ws: string, runs: RunRec[] = [], all: J
           start: s.start, added: s.add ? { at: s.add.at, by: s.add.by, why: s.add.why } : undefined, asks: s.ask ? true : undefined,
           notes: f.b.length ? f.b.map((b, i) => ({ i, kind: b.k, text: b.t, open: !!b.o, answer: b.r || undefined })) : undefined,
           draft: f.dr ? clip(f.dr.t) : undefined, output: f.out ? clip(f.out) : undefined, running: f.run ? true : undefined,
+          reports: s.fx?.length ? s.fx : undefined,
+          facts: f.fx?.length ? f.fx.map((g) => factText(g, title)) : undefined,
+          draftFacts: f.dr?.fx?.length ? f.dr.fx.map((g) => factText(g, title)) : undefined,
           waitsFor: f.w?.length ? f.w.map((l) => ({ job: l.j, title: all.find((o) => o.id === l.j)?.t ?? l.t, state: l.st, plan: l.plan, outcome: l.out ? clip(l.out) : undefined })) : undefined,
           blockerAsked: f.bb?.say,
           waitsReply: f.rw ? { src: f.rw.src, ch: f.rw.ch, to: f.rw.to, at: f.rw.at } : undefined,
@@ -158,6 +162,7 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
       name: 'job_command',
       description: 'Apply one job command, exactly as the console page would. It applies at once, shows live in the console and is journaled as Claude Code. '
         + 'Args per op: start; close {st: done|cancelled, note?}; reopen; stepDone|stepSkip|stepResume {step}; stepReopen {step, why?} (a passed step with later steps reached goes back like returnTo: a new round, every step after it starts again; why defaults to "reopened <step>"); rejectDraft {step, why?: the reason; with one the step is redone in a fresh LLM session}; stepWait {step, m: what it waits for}; '
+        + 'review {step, verdict: accepted|sent_back, note?: why, needed to send back, to?: the step it goes back to, by default the one that made the latest branch} (only a step that declares a review fact; it records the review fact); '
         + 'acceptDraft {step, text?: edited text}; noteAdd {step, k: q question|c contradiction|d design note|p problem, t}; noteAnswer {step, i, r}; noteReopen {step, i}; '
         + 'sent {step, i: planned message index, t: the text you sent, to: channel} (record only, send it yourself first); vote {step, n: reviewer, v}; '
         + 'nudged {to}; replied {subj}; returnTo {step, why}; describe {d: the description, Markdown in English, the user\'s part of every LLM run; empty removes it}. '
@@ -170,7 +175,7 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
           id: { type: 'string' }, op: { type: 'string', enum: SESSION_OPS.filter((o) => !o.startsWith('ctx')) }, step: { type: 'string' }, why: { type: 'string' }, m: { type: 'string' },
           text: { type: 'string' }, k: { type: 'string', enum: ['q', 'c', 'd', 'p'] }, t: { type: 'string' }, i: { type: 'integer' }, r: { type: 'string' },
           n: { type: 'string' }, v: { type: 'integer' }, st: { type: 'string', enum: ['done', 'cancelled'] }, note: { type: 'string' }, to: { type: 'string' }, subj: { type: 'string' },
-          d: { type: 'string' }, j: { type: 'string' }, plan: { type: 'string' }, force: { type: 'boolean' },
+          d: { type: 'string' }, j: { type: 'string' }, plan: { type: 'string' }, force: { type: 'boolean' }, verdict: { type: 'string', enum: ['accepted', 'sent_back'] },
         },
       },
       async run(a, s) { const { id, ...c } = a; return command(s, id, c) },
@@ -216,7 +221,7 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
       description: 'Hand in the draft of a step taken up by hand: it waits in Approvals for the user to accept, reply to or reject, as an LLM run\'s draft does. '
         + 'artifacts: files the step expects, as {name, content}, at most 10 of 5 MB each. Refused busy while an LLM run of the step is queued or running, '
         + 'and draft_waiting while a draft waits (reply to it with draft_reply, or reject it with job_command, first). Undo takes it back. ' + OUTCOME_HELP + ' ' + COMMANDS_HELP
-        + ' Only the user approves them, on the page.',
+        + ' Only the user approves them, on the page. ' + FACTS_HELP,
       inputSchema: {
         type: 'object', required: ['id', 'step', 'output'],
         properties: {
@@ -225,6 +230,7 @@ export function jobTools(d: { spaces: Spaces }): Tool[] {
           return_to: { type: 'string', description: 'with not_done or failed: the earlier step the job goes back to on accept, id or exact title' },
           why: { type: 'string', description: 'why the step is not done, in one line' },
           commands: { type: 'array', minItems: 1, maxItems: CMDS_MAX, items: { type: 'string' }, description: 'the exact commands, in order, this draft waits to have approved' },
+          facts: { type: 'array', maxItems: FACTS_MAX, items: { type: 'object', required: ['kind'], properties: { kind: { type: 'string', enum: [...FACT_KINDS] } } }, description: 'what this step leaves besides its text; see the description for each kind\'s fields' },
           artifacts: { type: 'array', maxItems: ARTS_MAX, items: { type: 'object', required: ['name', 'content'], properties: { name: { type: 'string' }, content: { type: 'string' } } } },
         },
       },

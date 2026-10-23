@@ -7,6 +7,8 @@ import { canWrite } from '../agent/limits.ts'
 import type { Limits } from '../agent/limits.ts'
 import type { Hit, Note, ProposalIn } from '../knowledge/notes.ts'
 import type { DraftReport, Outcome } from '../../src/model/types.ts'
+import { FACT_KINDS, FACTS_HELP, FACTS_MAX } from '../../src/model/facts.ts'
+import type { FactIn } from '../../src/model/facts.ts'
 import type { PromptImage } from './context.ts'
 import { BROWSER, BROWSER_TOOLS, WITHHELD } from './runBrowser.ts'
 import type { StdioServer } from './runBrowser.ts'
@@ -197,21 +199,24 @@ const REPORT_SCHEMA = {
   return_to: z.string().min(1).optional(),
   why: z.string().optional(),
   commands: z.array(z.string()).optional(),
+  // each kind's fields are in FACTS_HELP; the console checks them as the draft goes in, so a bad one comes back as this tool's error
+  facts: z.array(z.looseObject({ kind: z.enum(FACT_KINDS) })).max(FACTS_MAX).optional(),
 }
 /** the tool's arguments as a draft's report; only what was given. The commands are checked as the draft goes in */
-export function reportOf(a: { outcome?: unknown; return_to?: unknown; why?: unknown; commands?: unknown }): DraftReport {
+export function reportOf(a: { outcome?: unknown; return_to?: unknown; why?: unknown; commands?: unknown; facts?: unknown }): DraftReport {
   return {
     ...(a.outcome !== undefined ? { o: a.outcome as Outcome } : {}),
     ...(typeof a.return_to === 'string' && a.return_to ? { rt: a.return_to } : {}),
     ...(typeof a.why === 'string' && a.why.trim() ? { why: a.why } : {}),
     ...(a.commands !== undefined ? { cm: a.commands as string[] } : {}),
+    ...(a.facts !== undefined ? { fx: a.facts as FactIn[] } : {}),
   }
 }
 
 /** the run server's tools: always its own, then the ones this run's tools carry */
 export function runToolDefs(tools: RunTools) {
   return [
-    tool('submit_draft', `Submit the draft for this step for the user to review. Call exactly once, at the end. ${OUTCOME_HELP} ${COMMANDS_HELP}`,
+    tool('submit_draft', `Submit the draft for this step for the user to review. Call exactly once, at the end. ${OUTCOME_HELP} ${COMMANDS_HELP} ${FACTS_HELP}`,
       { text: z.string().min(1), ...REPORT_SCHEMA },
       (a) => wrap(() => tools.submitDraft(a.text, reportOf(a)), 'draft submitted')()),
     tool('add_artifact', 'Save a file this step produces (for example analysis.md). Same name replaces it.', { name: z.string().min(1), content: z.string() },

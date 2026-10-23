@@ -132,6 +132,19 @@ test('submit_draft takes the commands the draft waits to have approved and hands
   assert.deepEqual(reportOf({}), {})
 })
 
+test('submit_draft takes the facts the draft reports and hands them on as fx; its help names each kind and none', async () => {
+  const none = async () => {}, got: unknown[] = []
+  const base: RunTools = { submitDraft: async (t, r) => { got.push([t, r]) }, addArtifact: none, addArtifactFile: none, journal: none }
+  const d = runToolDefs(base).find((x) => x.name === 'submit_draft')!
+  assert.ok('facts' in (d.inputSchema as Record<string, unknown>))
+  assert.match(d.description, /facts: what this step leaves.*branch \{repo, name, sha.*pr \{url.*deploy \{what, where, version, ok.*check \{name, ok.*\{kind, none: why\}/)
+  const call = d.handler as (a: unknown, x: unknown) => Promise<{ isError?: boolean }>
+  const fx = [{ kind: 'branch', repo: 'core', name: 'job/x', sha: 'abcdef1' }]
+  await call({ text: 'built', facts: fx }, {})
+  assert.deepEqual(got, [['built', { fx }]])
+  assert.deepEqual(reportOf({ facts: fx }), { fx })
+})
+
 test('context only when the run carries it; it answers with each picture after its label, then the text', async () => {
   const none = async () => {}
   const base: RunTools = { submitDraft: none, addArtifact: none, addArtifactFile: none, journal: none }

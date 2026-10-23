@@ -886,6 +886,18 @@ test('submit_draft with an outcome stores it; a bad return_to is refused and the
   assert.equal(await state(runner, r.id), 'draft')
 })
 
+test('submit_draft with facts keeps them on the draft; a bad fact is refused and the run may hand in again', async () => {
+  const { runner, sessions, jobs } = setup(), j = await started(jobs), step = T.atOf(demoCtx(), j)!
+  const r = await runner.ask(j.id, step, 'build')
+  await until(() => sessions.length === 1)
+  await assert.rejects(sessions[0].tools.submitDraft('built', { fx: [{ kind: 'branch', repo: 'core', name: 'job/x', sha: 'HEAD' }] }), /facts: fact 1 \(branch\): sha is a commit hash/)
+  await sessions[0].tools.submitDraft('built', { fx: [{ kind: 'branch', repo: 'core', name: 'job/x', sha: 'abcdef1' }] })
+  sessions[0].end()
+  await until(async () => (await runner.get(r.id))?.ended != null)
+  const f = (await jobs.get(j.id))!.flow[step]
+  assert.deepEqual(f.dr!.fx!.map((x) => [x.kind, x.step]), [['branch', step]])
+})
+
 test('an accept reply whose new draft reports failed does not close the step', async () => {
   const s = setup(), d = await withDraft(s)
   const r = await s.runner.reply(d.job, d.step, 'run the smoke test and accept', 'accept', { via: 'session' })
