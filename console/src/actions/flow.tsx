@@ -223,10 +223,10 @@ export async function llmResume(runId: string) {
 export function acceptDraft(id: string, sid: string, text?: string, force = false, anyway = false) {
   const j = byId(id), f = j?.flow[sid]
   if (!j || !f || !f.dr) return
+  // open questions stay open after the accept; the person says they go on without the answers, before anything else is asked
+  if (!anyway && openQs(f).length) { confirmQuestions(j, sid, () => acceptDraft(id, sid, text, force, true)); return }
   // a draft that reports it did not finish asks how: go back, keep the step open, or mark it done anyway
   if (f.dr.o) { acceptReported(id, sid, text); return }
-  // open questions stay open after the accept; the person says they go on without the answers
-  if (!anyway && openQs(f).length) { confirmQuestions(j, sid, () => acceptDraft(id, sid, text, force, true)); return }
   if (!force && openOf(f).length) { confirmForce(j, sid, () => acceptDraft(id, sid, text, true, anyway)); return }
   void doCmd(id, { op: 'acceptDraft', step: sid, ...(text != null ? { text } : {}), ...(force ? { force } : {}) }, `Accepted · ${stepOf(j, sid)!.t}`, { moveSel: true })
 }
