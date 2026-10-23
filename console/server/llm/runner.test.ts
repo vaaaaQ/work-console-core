@@ -862,6 +862,20 @@ test('an approve reply is refused without commands, on a stale draft, and from a
   await assert.rejects(t.runner.reply(p.job, p.step, '', 'approve', { at }), code(409, 'no_commands'))
 })
 
+test('the console approves only within the job\'s one-time approval: every command on it runs, one off it is 403; a session never', async () => {
+  const s = setup(), d = await withCommands(s)
+  const give = async (cmds: string[]) => { const j = (await s.jobs.get(d.job))!; await s.store.putJob({ ...j, ok: { at: 'x', by: 'you', cmds } }, j.v ?? null) }
+  await give(['git push'])
+  await assert.rejects(s.runner.reply(d.job, d.step, '', 'approve', { at: d.at, via: 'console' }), code(403, 'not_yours'))
+  await give(['npm run deploy', 'git push', 'git status'])
+  await assert.rejects(s.runner.reply(d.job, d.step, '', 'approve', { at: d.at, via: 'session' }), code(403, 'not_yours'))
+  assert.equal(s.sessions.length, 1, 'nothing ran')
+  const r = await s.runner.reply(d.job, d.step, 'ignored', 'approve', { at: d.at, via: 'console' })
+  assert.equal(r.via, 'console'); assert.equal(r.q, 'Approved, run exactly these commands, in this order:\n1. git push\n2. npm run deploy')
+  await until(() => s.sessions.length === 2)
+  assert.equal((await s.jobs.get(d.job))!.flow[d.step].run!.ap, 'ok')
+})
+
 test('a draft handed in by hand is never approved, not even in the session of an earlier LLM run on the step', async () => {
   const s = setup(), d = await withDraft(s)
   // the LLM's draft is rejected; a person then hands in a draft with commands through MCP

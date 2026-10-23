@@ -1,8 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import * as T from '../../src/model/transitions.ts'
-import type { Cmd, Flow, Job, Start } from '../../src/model/types.ts'
+import type { Cmd, DraftReport, Flow, Job, Playbook, Start } from '../../src/model/types.ts'
 import { Bus } from '../events.ts'
 import { Blockers } from '../jobs/blockers.ts'
 import { Jobs } from '../jobs/jobs.ts'
@@ -450,5 +451,171 @@ test('a failed auto run accepts nothing', async () => {
   const a = await s.get(j.id)
   assert.equal(a.flow.tr.s, 'cur')
   assert.ok(!a.jr.some((e) => e.o.startsWith('Accepted the LLM draft') || e.o.startsWith('Held back')))
+  s.off()
+})
+
+/* ===== AD-0017: the one-time approval and fix rounds ===== */
+const SHIP: Playbook = {
+  n: 'Ship', ok: { at: 'a1', cmds: ['git status', 'git push origin {branch}'] },
+  ph: [
+    { c: 'AN', n: 'Analysis', s: [{ id: 'a1', t: 'Analysis', m: 'llm', x: 'spec agreed' }] },
+    { c: 'BD', n: 'Build', s: [{ id: 'a2', t: 'Build', m: 'llm', x: 'tests green', start: 'auto' }] },
+    { c: 'SH', n: 'Ship', s: [
+      { id: 'a3', t: 'Live check', m: 'llm', x: 'the check passes', start: 'auto', retry: { to: 'a2' } },
+      { id: 'a4', t: 'Look at it live', m: 'you', x: 'it works' }] }],
+}
+const shipCtx = (): T.Ctx => { const d = demoCtx(); return { ...d, PB: { ...d.PB, ship: SHIP } } }
+const SX = shipCtx()
+
+function ship(delay = 0) {
+  const dir = tempDir('ship')
+  const store = fileStore(join(dir, 's.json'), demoSeed)
+  const bus = new Bus(), jobs = new Jobs({ store, bus, ctx: shipCtx, gate: () => true })
+  const { sdk, sessions } = fakeSdk()
+  const workDir = { dir: async () => dir, branch: () => 'job/s-1', base: () => 'main' }
+  const runner = new Runner({ store, jobs, bus, sdk, cwd: dir, gate: () => true, artifactsDir: join(dir, 'arts'), ctx: shipCtx, workDir })
+  const off = autoAsk({ jobs, runner, ctx: shipCtx, on: false, delay })
+  const get = async (id: string) => (await jobs.get(id))!
+  /** the newest session names its session, hands in a draft and ends */
+  const hand = async (t: string, rep?: DraftReport) => {
+    const s = sessions.at(-1)!
+    s.push({ k: 'session', id: `S${sessions.length}` })
+    await s.tools.submitDraft(t, rep); s.end()
+  }
+  /** a started ship job whose Analysis the person accepted on the page */
+  const granted = async () => {
+    const j0 = await jobs.create({ t: 'Ship it', key: 'K-1', pb: 'ship', prj: 'core', ws: 'acme' })
+    await jobs.cmd(j0.id, { op: 'start' }, j0.v)
+    await runner.ask(j0.id, 'a1', 'go')
+    await until(() => sessions.length === 1)
+    await hand('the spec')
+    await until(async () => !!(await get(j0.id)).flow.a1.dr && (await runner.all()).every((r) => r.ended))
+    await jobs.cmd(j0.id, { op: 'acceptDraft', step: 'a1' }, (await get(j0.id)).v)
+    return j0.id
+  }
+  return { dir, jobs, runner, sessions, off, get, hand, granted }
+}
+
+test('accepting a failed draft that names a step to go back to makes that step current: it is asked, not left stalled', () => {
+  let j = T.apply(SX, T.freshJob(SX, 'S-1', { t: 'Ship', key: 'K-1', pb: 'ship', prj: 'core', ws: 'acme' }), start).job
+  for (const s of ['a1', 'a2']) j = T.apply(SX, j, { op: 'stepDone', step: s }).job
+  j = T.apply(SX, T.apply(SX, j, { op: 'runStart', step: 'a3', q: 'q', id: 'r' }).job, { op: 'runDraft', step: 'a3', t: 'red', o: 'failed', rt: 'a1' }).job
+  const acc: Cmd = { op: 'acceptDraft', step: 'a3' }
+  assert.deepEqual(madeCurrent(acc, j, T.apply(SX, j, acc).job), ['a1'])
+  assert.deepEqual(madeCurrent({ ...acc, stay: true }, j, T.apply(SX, j, { ...acc, stay: true }).job), [], 'kept open: nothing new is current')
+})
+
+test('holdOf with the step and the job: a fix round within the limit goes, at the limit, elsewhere or with a question it holds; ap ok goes', () => {
+  const step = SHIP.ph[2].s[0], dr = { t: 'red', at: '', o: 'failed' as const, rt: 'a2' }
+  const f = (o: Partial<Flow>) => ({ s: 'wait', m: '', arts: [], b: [], rv: null, dr, out: null, run: null, sent: {}, ...o }) as Flow
+  const job = (fx: number) => ({ rounds: Array.from({ length: fx }, (_, i) => ({ n: i + 1, fx: { n: i + 1, max: 3, step: 'a3' } })) }) as unknown as Job
+  assert.equal(holdOf(f({}), step, job(0)), null)
+  assert.equal(holdOf(f({}), step, job(2)), null)
+  assert.equal(holdOf(f({}), step, job(3)), 'the job has had its 3 fix rounds')
+  assert.equal(holdOf(f({ dr: { ...dr, rt: 'a1' } }), step, job(0)), 'the draft reports failed')
+  assert.equal(holdOf(f({ dr: { ...dr, o: 'not_done', rt: undefined } }), step, job(0)), 'the draft reports not done')
+  assert.equal(holdOf(f({ b: [{ k: 'q', t: 'which host?', r: '', o: 1 }] }), step, job(0)), 'an open question')
+  assert.equal(holdOf(f({ b: [{ k: 'p', t: 'x', r: '', o: 1 }] }), step, job(0)), 'a problem note')
+  assert.equal(holdOf(f({ dr: { ...dr, cm: ['git push'] } }), step, job(0)), 'the draft waits for approval of 1 command')
+  assert.equal(holdOf(f({}), { ...step, start: 'self' }, job(0)), 'the draft reports failed', 'only an auto step goes back by itself')
+  assert.equal(holdOf(f({ dr: { t: 'ran', at: '', ap: 'ok' } }), step, job(0)), null)
+  assert.equal(holdOf(f({ dr: { t: 'ran', at: '', ap: 1 } }), step, job(0)), 'the draft reports approved commands')
+})
+
+test('the person accepts Analysis: the approval is granted; Build goes on by itself; a command on the list is approved by the console, runs, and its draft is accepted', async () => {
+  const s = ship(), id = await s.granted()
+  let j = await s.get(id)
+  assert.deepEqual(j.ok, { at: 'a1', by: 'you', cmds: ['git status', 'git push origin job/s-1'] })
+  assert.deepEqual(j.wd, { branch: 'job/s-1', base: 'main' })
+  await until(() => s.sessions.length === 2)
+  await s.hand('built')
+  await until(() => s.sessions.length === 3)
+  await s.hand('please run them', { cm: ['git status', 'git push origin job/s-1'] })
+  await until(() => s.sessions.length === 4)
+  assert.equal(s.sessions[3].resume, 'S3')
+  assert.match(s.sessions[3].prompt, /git push origin job\/s-1/)
+  const ap = (await s.runner.all()).find((r) => r.intent === 'approve')!
+  assert.equal(ap.via, 'console')
+  j = await s.get(id)
+  const line = j.jr.find((e) => e.o.startsWith('Approved 2 commands'))!
+  assert.equal(line.o, 'Approved 2 commands under this job\'s one-time approval: git status; git push origin job/s-1')
+  assert.equal(line.a, 'console')
+  await s.hand('clean; pushed')
+  await until(async () => (await s.get(id)).flow.a3.s === 'done')
+  j = await s.get(id)
+  assert.equal(j.flow.a4.s, 'cur')
+  assert.equal(j.flow.a3.out, 'clean; pushed')
+  s.off()
+})
+
+test('a command off the list waits for the person; a draft after the person\'s approval that asks for more waits too', async () => {
+  const s = ship(), id = await s.granted()
+  await until(() => s.sessions.length === 2)
+  await s.hand('built', { cm: ['git status', 'git push --force'] })
+  await until(async () => (await s.get(id)).jr[0].o.startsWith('Held back'))
+  assert.equal((await s.get(id)).jr[0].o, 'Held back the automatic accept of “Build”: the draft waits for approval of 2 commands.')
+  await tick(60)
+  assert.equal(s.sessions.length, 2)
+  assert.ok(!(await s.runner.all()).some((r) => r.intent === 'approve'))
+  await s.runner.reply(id, 'a2', '', 'approve', { at: (await s.get(id)).flow.a2.dr!.at })
+  await until(() => s.sessions.length === 3)
+  await s.hand('ran; now this', { cm: ['git status'] })
+  await until(async () => (await s.get(id)).jr[0].o.startsWith('Held back'))
+  await tick(60)
+  assert.equal(s.sessions.length, 3)
+  s.off()
+})
+
+test('a console-approved run that asks for its commands again is held, not approved a second time', async () => {
+  const s = ship(), id = await s.granted()
+  await until(() => s.sessions.length === 2)
+  await s.hand('built', { cm: ['git status'] })
+  await until(() => s.sessions.length === 3)
+  await s.hand('ran; once more', { cm: ['git status'] })
+  await until(async () => (await s.get(id)).jr[0].o.startsWith('Held back'))
+  await tick(60)
+  assert.equal(s.sessions.length, 3)
+  assert.equal((await s.runner.all()).filter((r) => r.intent === 'approve').length, 1)
+  s.off()
+})
+
+test('a failed Live check goes back to Build by itself 3 times, each journaled with its artifact and prompt; the 4th is held; the person\'s Return to starts the count again', async () => {
+  const s = ship(), id = await s.granted()
+  await until(() => s.sessions.length === 2)
+  await s.hand('built')
+  let n = 3
+  for (let k = 1; k <= 3; k++) {
+    await until(() => s.sessions.length === n)
+    await s.hand(`the health check answers 500 (${k})`, { o: 'failed', why: `health 500 (${k})` })
+    await until(() => s.sessions.length === n + 1)
+    const j = await s.get(id)
+    assert.equal(T.fixRounds(j), k)
+    assert.ok(j.jr.some((e) => e.o === `Fix round ${k} of 3: “Live check” failed, back to “Build”: health 500 (${k})` && e.a === 'console'))
+    assert.match(s.sessions[n].prompt, new RegExp(`## Fix round ${k} of 3`))
+    assert.match(s.sessions[n].prompt, new RegExp(`the health check answers 500 \\(${k}\\)`))
+    await until(async () => !!(await s.get(id)).flow.a3.arts.find((a) => a.n === `fix-round-${k}.md`)?.link)
+    assert.match(await readFile(join(s.dir, 'arts', id, `fix-round-${k}.md`), 'utf8'), new RegExp(`^## Fix round ${k} of 3`))
+    await s.hand('fixed')
+    n += 2
+  }
+  await until(() => s.sessions.length === n)
+  await s.hand('still 500', { o: 'failed', why: 'health 500 (4)' })
+  await until(async () => (await s.get(id)).jr[0].o.startsWith('Held back'))
+  let j = await s.get(id)
+  assert.equal(j.jr[0].o, 'Held back the automatic accept of “Live check”: the job has had its 3 fix rounds.')
+  assert.equal(j.flow.a3.s, 'wait')
+  await tick(60)
+  assert.equal(s.sessions.length, n)
+  // the person sends it back: that round is theirs, so the next failure goes back by itself again as round 1
+  await s.jobs.cmd(id, { op: 'returnTo', step: 'a2', why: 'look at the config' }, j.v)
+  assert.equal(T.fixRounds(await s.get(id)), 0)
+  await until(() => s.sessions.length === n + 1)
+  await s.hand('fixed the config')
+  await until(() => s.sessions.length === n + 2)
+  await s.hand('500 again', { o: 'failed', why: 'health 500 (5)' })
+  await until(() => s.sessions.length === n + 3)
+  j = await s.get(id)
+  assert.ok(j.jr.some((e) => e.o === 'Fix round 1 of 3: “Live check” failed, back to “Build”: health 500 (5)'))
+  await until(async () => (await s.get(id)).flow.a3.arts.some((a) => a.n === 'fix-round-4.md'))
   s.off()
 })

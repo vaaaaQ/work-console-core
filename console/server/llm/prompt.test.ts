@@ -239,3 +239,21 @@ test('How to work names the kinds the step reports, in a run and a hand-made ses
   const a = freshJob(x, 'J-2', { t: 'T', key: 'NEW', pb: 'action', prj: 'p', ws: 'acme' })
   assert.doesNotMatch(buildPrompt(x, a, 'tr', 'go', {}), /reports facts/)
 })
+
+test('the first step of a fix round is told the round, the limit and the failed draft; the next step and a round of the person are not', () => {
+  const d = demoCtx()
+  const ship = { n: 'Ship', ph: [
+    { c: 'BD', n: 'Build', s: [{ id: 'b1', t: 'Build', m: 'llm' as const, x: 'green', start: 'auto' as const }] },
+    { c: 'SH', n: 'Ship', s: [{ id: 'b2', t: 'Live check', m: 'llm' as const, x: 'passes', start: 'auto' as const, retry: { to: 'b1' } }] }] }
+  const x = { ...d, PB: { ...d.PB, ship } }, cx = { ...x, by: 'console' }
+  let j = apply(x, freshJob(x, 'S-1', { t: 'Ship', key: 'K-1', pb: 'ship', prj: 'p', ws: 'acme' }), { op: 'start' }).job
+  j = apply(x, j, { op: 'stepDone', step: 'b1' }).job
+  j = apply(x, apply(x, j, { op: 'runStart', step: 'b2', q: 'q', id: 'r' }).job, { op: 'runDraft', step: 'b2', t: 'GET /health answered 500', o: 'failed', why: 'health 500' }).job
+  const fx = apply(cx, j, { op: 'acceptDraft', step: 'b2', auto: true }).job
+  const p = buildPrompt(x, fx, 'b1', 'go', {})
+  assert.match(p, /\n## Fix round 1 of 3\n“Live check” failed; the job went back to “Build”\.\nWhy: health 500\n/)
+  assert.match(p, /GET \/health answered 500/)
+  assert.doesNotMatch(buildPrompt(x, apply(x, fx, { op: 'stepDone', step: 'b1' }).job, 'b2', 'go', {}), /## Fix round/)
+  const mine = apply(x, j, { op: 'acceptDraft', step: 'b2' }).job
+  assert.doesNotMatch(buildPrompt(x, mine, 'b1', 'go', {}), /## Fix round/)
+})
