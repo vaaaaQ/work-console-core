@@ -591,3 +591,14 @@ p.cx-t{font-family:var(--font)}
 .bc .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:3px}
 .bc .btn .st{margin-left:6px}
 @media (max-width:980px){.bd{grid-template-columns:minmax(0,1fr)}}
+
+/* facts: a step's typed outputs, the job header's strip and a round's reason */
+.fx{display:flex;flex-direction:column;gap:6px}
+.fx-row{display:grid;grid-template-columns:10px minmax(0,1fr);gap:4px 8px;align-items:baseline;padding:6px 8px;border:1px solid var(--line);border-radius:var(--r);background:var(--raised)}
+.fx-row code{font-size:.92em}
+.fx-row .iconbtn{vertical-align:middle;margin-left:2px}
+.fx-chk{display:inline-flex;align-items:center;gap:4px;margin-left:10px}
+.fx-strip{display:flex;flex-wrap:wrap;align-items:center;gap:4px 0;margin-top:8px;font-size:.92em}
+.fx-p{display:inline-flex;align-items:center;gap:6px}
+.fx-sep{color:var(--muted);margin:0 10px}
+.fx-rd{display:inline-flex;align-items:center;gap:6px;font-size:.92em}

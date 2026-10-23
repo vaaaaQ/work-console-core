@@ -1,4 +1,5 @@
 import { httpUrl } from './context.ts'
+import type { Lamp } from './types.ts'
 
 /* Typed step outputs: what a step leaves besides its prose. A fixed set of kinds, each a generic development concept;
    a run reports them with submit_draft(facts), the console writes review and round itself. Plain data over plain
@@ -175,3 +176,34 @@ export const factLine = (f: Fact, title: (id: string) => string = (id) => id) =>
 /** the names of the checks that failed among the facts */
 export const failedChecks = (fx: readonly FactIn[] | undefined) =>
   (fx ?? []).filter((f): f is CheckFact => f.kind === 'check' && !isNone(f) && !(f as CheckFact).ok).map((f) => f.name)
+
+/** a fact's colour: ok, failed (bad), still running (wait), a round going back (cur), nothing to report (off) */
+export function factLamp(f: FactIn): Lamp {
+  if (isNone(f)) return 'off'
+  switch (f.kind) {
+    case 'branch': return 'ok'
+    case 'pr': return f.checks.some((c) => c.state === 'fail') || f.state === 'closed' ? 'bad' : f.checks.some((c) => c.state === 'pending') ? 'wait' : 'ok'
+    case 'review': return f.verdict === 'accepted' ? 'ok' : 'bad'
+    case 'deploy': case 'check': return f.ok ? 'ok' : 'bad'
+    case 'round': return 'cur'
+  }
+}
+/** one part of the job header's strip: kind, lamp, words, and the link its words go on */
+export interface StripPart { kind: FactKind; l: Lamp; t: string; url?: string }
+/** the job header's strip: the latest fact of each kind, a round left out, in a few words each */
+export function stripParts(fx: readonly Fact[]): StripPart[] {
+  return latestFacts(fx).filter((f) => f.kind !== 'round').map((f): StripPart => {
+    const l = factLamp(f)
+    if (isNone(f)) return { kind: f.kind, l, t: `${f.kind}: none` }
+    switch (f.kind) {
+      case 'branch': return { kind: f.kind, l, t: `${f.name} @ ${short(f.sha)}` }
+      case 'pr': {
+        const n = (s: string) => f.checks.filter((c) => c.state === s).length, [p, b, w] = [n('pass'), n('fail'), n('pending')]
+        return { kind: f.kind, l, t: [`PR${f.n ? ` #${f.n}` : ''} ${f.state}`, p ? `✓${p}` : '', b ? `✗${b}` : '', w ? `…${w}` : ''].filter(Boolean).join(' '), url: f.url }
+      }
+      case 'review': return { kind: f.kind, l, t: `review: ${f.verdict === 'accepted' ? 'accepted' : 'sent back'}` }
+      case 'deploy': return { kind: f.kind, l, t: f.ok ? `deployed ${f.version}` : `deploy of ${f.version} failed`, ...(f.url ? { url: f.url } : {}) }
+      default: { const c = f as CheckFact; return { kind: c.kind, l, t: `${c.name} ${c.ok ? '✓' : '✗'}`, ...(c.url ? { url: c.url } : {}) } }
+    }
+  })
+}

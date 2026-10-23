@@ -6,13 +6,14 @@ import { hm, initials, tfmt } from '../lib/util.ts'
 import { S, byId, chName, draftReport, goesBack, isClosed, isLive, phaseOf, rvState, stepOf, tplOf } from '../model/world.ts'
 import { actOf } from '../model/home.ts'
 import { sentBefore } from '../model/transitions.ts'
+import { FactList } from '../ui/Facts.tsx'
 import type { Flow, Job, Step } from '../model/types.ts'
 import { waitsFor } from '../actions/blockers.tsx'
 import { closeDrawer, go } from '../actions/nav.tsx'
 import { newBlocker } from '../actions/newjob.tsx'
 import { isWide, toggleWide } from '../actions/wide.ts'
 import {
-  acceptDraft, askLlm, doCmd, bAdd, bAnswer, bReopen, editDraft, llmCancel, nudge, openStep, rejectDraft, rvOpen, rvVote, stepDoneHere, stepReopen,
+  acceptDraft, askLlm, doCmd, bAdd, bAnswer, bReopen, editDraft, llmCancel, nudge, openStep, rejectDraft, reviewStep, rvOpen, rvVote, stepDoneHere, stepReopen,
   stepResume, stepSkip, stepWait, tplSend,
 } from '../actions/flow.tsx'
 import { LIVE } from '../live/api.ts'
@@ -61,6 +62,14 @@ function OpenQs({ j, f }: { j: Job; f: Flow }) {
           {isClosed(j) ? null : <div className="acts"><button className="btn sm" onClick={() => bAnswer(i)}>Answer…</button></div>}
         </div>))}</div></div>
   )
+}
+
+/** what the step left and what its waiting draft would leave, above the draft and the output */
+function FactsSec({ j, s, f }: P) {
+  if (!f.fx?.length && !f.dr?.fx?.length) return null
+  return <section className="sec"><div className="row"><div className="eyebrow">Facts</div><span className="fsp" />
+    {s.fx?.length ? <span className="hint">reports {s.fx.join(', ')}</span> : null}</div>
+    <FactList j={j} fx={f.fx} draft={f.dr?.fx} /></section>
 }
 
 const vcls = (j: Job, v: number) => v > 0 ? 'vp' : v === 0 ? 'v0' : v <= PACKS[j.ws].veto ? 'vx' : 'vn'
@@ -163,6 +172,14 @@ function StepActs({ j, s, f }: P) {
     ? <button className="btn" title="The steps after it start again; this pass is kept as a round" onClick={stepReopen}><Ic n="retry" sm />Go back to this step…</button>
     : <button className="btn" onClick={stepReopen}><Ic n="retry" sm />Reopen step</button>
   const llmFirst = s.m === 'llm' && !f.dr
+  // a step that declares a review closes with a verdict, which the console records as its review fact
+  if (s.fx?.includes('review') && !f.dr) return <>
+    <button className="btn pri" onClick={() => reviewStep('accepted')}><Ic n="check" sm />Accept…</button>
+    <button className="btn" onClick={() => reviewStep('sent_back')}><Ic n="retry" sm />Send back…</button>
+    {s.m === 'llm' ? <button className="btn ghost" onClick={() => askLlm(j, s.id)}><Ic n="bot" sm />Ask LLM…</button> : null}
+    {f.s === 'wait' ? <button className="btn ghost" onClick={stepResume}><Ic n="play" sm />Resume</button>
+      : <button className="btn ghost" onClick={stepWait}><Ic n="hourglass" sm />Waiting…</button>}
+  </>
   const done = <button key="done" className={'btn' + (llmFirst || f.dr ? '' : ' pri')} onClick={stepDoneHere}><Ic n="check" sm />Mark done</button>
   const ask = <button key="ask" className={'btn' + (llmFirst ? ' pri' : '')} onClick={() => askLlm(j, s.id)}><Ic n="bot" sm />{f.dr ? 'Ask again…' : 'Ask LLM…'}</button>
   const open = LIVE.on && LIVE.pc
@@ -192,8 +209,8 @@ function DrawerBody({ j, sid }: { j: Job; sid: string }) {
       <div className="dr-acts"><WideBtn sid={sid} /><button className="iconbtn" aria-label="Close inspector" onClick={closeDrawer}><Ic n="x" /></button></div></div>
     <div className="dr-b">
       <dl className="kv"><dt>Who does it</dt><dd><Ic n={MODES[s.m].i} sm /> {MODES[s.m].l}<div className="why">{EXEC[s.m]}</div></dd>
-        <dt>Done when</dt><dd>{s.x}</dd>{s.a ? <><dt>Produces</dt><dd>{s.a.join(', ')}</dd></> : null}{f.m ? <><dt>Note</dt><dd>{f.m}</dd></> : null}</dl>
-      <ConsoleSec {...p} /><LlmSec {...p} /><WaitsSec {...p} />{s.rv ? <ReviewSec {...p} /> : null}<TplSec {...p} /><BadgeSec {...p} />
+        <dt>Done when</dt><dd>{s.x}</dd>{s.a ? <><dt>Produces</dt><dd>{s.a.join(', ')}</dd></> : null}{s.fx?.length ? <><dt>Reports</dt><dd>{s.fx.join(', ')}</dd></> : null}{f.m ? <><dt>Note</dt><dd>{f.m}</dd></> : null}</dl>
+      <ConsoleSec {...p} /><FactsSec {...p} /><LlmSec {...p} /><WaitsSec {...p} />{s.rv ? <ReviewSec {...p} /> : null}<TplSec {...p} /><BadgeSec {...p} />
     </div>
     <div className="dr-f"><StepActs {...p} /></div>
   </>

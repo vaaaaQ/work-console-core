@@ -22,7 +22,7 @@ if (!existsSync(join(PKG, 'dist', 'index.html'))) { console.error('smoke: run `n
 
 let release = () => {}
 const gate = new Promise<void>((r) => { release = r })
-const sdk: Sdk = { async *start({ tools }) { yield { k: 'session', id: 'smoke-1' }; await gate; await tools.submitDraft('smoke draft'); yield { k: 'result', ok: true } } }
+const sdk: Sdk = { async *start({ tools }) { yield { k: 'session', id: 'smoke-1' }; await gate; await tools.submitDraft('smoke draft', { fx: [{ kind: 'branch', repo: 'core', name: 'job/smoke', sha: 'abcdef1' }] }); yield { k: 'result', ok: true } } }
 
 type Res = { status: number; headers: IncomingMessage['headers']; text: string }
 const read = (res: IncomingMessage) => new Promise<Res>((ok) => { let t = ''; res.setEncoding('utf8'); res.on('data', (c) => { t += c }); res.on('end', () => ok({ status: res.statusCode!, headers: res.headers, text: t })) })
@@ -92,8 +92,10 @@ async function run() {
     await until(() => states().includes('draft'), 'the draft')
     const seen = [run.state, ...states()].filter((s, i, a) => s !== a[i - 1])
     assert.deepEqual(seen, ['queued', 'running', 'draft'])
-    assert.equal((await json('GET', `/api/jobs/${job.id}`)).job.flow[live].dr?.t, 'smoke draft')
-    step('an ask goes queued → running → draft')
+    const dr = (await json('GET', `/api/jobs/${job.id}`)).job.flow[live].dr
+    assert.equal(dr?.t, 'smoke draft')
+    assert.deepEqual(dr?.fx?.map((f: { kind: string; sha?: string; step: string }) => [f.kind, f.sha, f.step]), [['branch', 'abcdef1', live]])
+    step('an ask goes queued → running → draft, and the draft carries its branch fact')
 
     const mcp = (token: string) => new Promise<Res>((ok, no) => {
       const q = httpRequest({ host: '127.0.0.1', port: m.loopbackPort, method: 'POST', path: '/mcp', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` } }, (r) => { void read(r).then(ok) })

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { FACT_KINDS, FactError, factLine, factsIn, latestFacts, missingKinds } from './facts.ts'
+import { FACT_KINDS, FactError, factLamp, factLine, factsIn, latestFacts, missingKinds, stripParts } from './facts.ts'
 import type { Fact } from './facts.ts'
 
 const bad = (v: unknown, re: RegExp) => assert.throws(() => factsIn(v), (e: unknown) => e instanceof FactError && re.test(e.message), JSON.stringify(v))
@@ -81,4 +81,26 @@ test('factLine says each kind in one line, links on names, with the step that ma
   assert.equal(factLine({ kind: 'round', n: 1, back_to: 's0', why: 'smoke failed', failed: ['rounds view'], ...m }, t),
     'round 1 → back to "Build": smoke failed; failed: rounds view (from "TDD on the job branch")')
   assert.equal(factLine({ kind: 'deploy', none: 'docs only', ...m }, t), 'deploy: none, docs only (from "TDD on the job branch")')
+})
+
+test('stripParts: the job header strip, the latest of each kind but round, each with its lamp', () => {
+  const m = (at: string) => ({ at, step: 's' })
+  const fx: Fact[] = [
+    { kind: 'branch', repo: 'core', name: 'job/x', sha: '3f2c9e1aaaaaaaaaa', ...m('1') },
+    { kind: 'pr', url: 'https://git.example/41', n: 41, state: 'open', checks: [{ name: 'a', state: 'pass' }, { name: 'b', state: 'pass' }, { name: 'c', state: 'fail' }], ...m('2') },
+    { kind: 'deploy', what: 'console', where: 'this PC', version: '3f2c9e1', ok: true, ...m('3') },
+    { kind: 'check', name: 'live check', ok: true, ...m('4') },
+    { kind: 'round', n: 1, back_to: 's', why: 'x', failed: [], ...m('5') },
+  ]
+  assert.deepEqual(stripParts(fx), [
+    { kind: 'branch', l: 'ok', t: 'job/x @ 3f2c9e1aaaaa' },
+    { kind: 'pr', l: 'bad', t: 'PR #41 open ✓2 ✗1', url: 'https://git.example/41' },
+    { kind: 'deploy', l: 'ok', t: 'deployed 3f2c9e1' },
+    { kind: 'check', l: 'ok', t: 'live check ✓' },
+  ])
+  assert.deepEqual(stripParts([{ kind: 'deploy', none: 'docs only', ...m('1') }, { kind: 'review', by: 'A', verdict: 'sent_back', ...m('2') }]),
+    [{ kind: 'review', l: 'bad', t: 'review: sent back' }, { kind: 'deploy', l: 'off', t: 'deploy: none' }])
+  assert.equal(factLamp({ kind: 'pr', url: 'https://g.example', state: 'open', checks: [{ name: 'a', state: 'pending' }] }), 'wait')
+  assert.equal(factLamp({ kind: 'check', name: 'x', ok: false }), 'bad')
+  assert.equal(factLamp({ kind: 'round', n: 1, back_to: 's', why: 'x', failed: [] }), 'cur')
 })

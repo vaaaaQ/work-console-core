@@ -34,6 +34,8 @@ test('the run\'s tools as the CLI sees them: listed with JSON schemas, called wi
     assert.deepEqual(list[0].inputSchema, { type: 'object', properties: {
       text: { type: 'string', minLength: 1 }, outcome: { type: 'string', enum: ['done', 'not_done', 'failed'] },
       return_to: { type: 'string', minLength: 1 }, why: { type: 'string' }, commands: { type: 'array', items: { type: 'string' } },
+      // facts reach a Cursor run through the same tool: each {kind, ...}, the fields checked by the console
+      facts: { type: 'array', maxItems: 20, items: { type: 'object', properties: { kind: { type: 'string', enum: ['branch', 'pr', 'review', 'deploy', 'check', 'round'] } }, required: ['kind'], additionalProperties: {} } },
     }, required: ['text'] })
     assert.deepEqual((await call(s, 'submit_draft', { text: 'done' })).body.result, { content: [{ type: 'text', text: 'draft submitted' }] })
     const bad = (await call(s, 'submit_draft', { text: '' })).body.result

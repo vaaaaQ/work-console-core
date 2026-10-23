@@ -18,6 +18,7 @@ import { inputLinks } from '../model/context.ts'
 import { CtxPanel, DescPanel } from './Context.tsx'
 import { ProposalCard } from './Proposal.tsx'
 import { Rounds } from './Rounds.tsx'
+import { FactStrip } from '../ui/Facts.tsx'
 import { TrackerPanels } from './Tracker.tsx'
 
 const LEGEND: NodeState[] = ['done', 'cur', 'wait', 'bad', 'fut', 'tpl']
@@ -87,7 +88,7 @@ export function JobView() {
   return <>
     <div className="jh"><button className="back" onClick={() => go('jobs')}><Ic n="arrow-left" sm />Jobs</button>
       <div className="jh-row"><span className="key">{j.key}</span><h1>{j.t}</h1><Pill st={j.st} /><span className="fsp" /><JobActs j={j} /></div>
-      <div className="meta"><span>Playbook <b>{pb.n}</b>{pb.ws ? '' : ' · core'}</span><span>Project <b>{j.prj}</b></span><span>Updated <b>{ago(j.ts)}</b></span>{holds.length ? <span>Holds {holds.filter((h, i) => holds.findIndex((x) => x.job.id === h.job.id) === i).map((h, i) => <React.Fragment key={h.job.id + h.step}>{i ? ', ' : ''}<a href={`#${h.job.id}`} onClick={(e) => { e.preventDefault(); go('job', h.job.id) }}><b>{h.job.id}</b> · {h.job.t}</a></React.Fragment>)}</span> : null}<span className="mono">{j.id} · {j.slug}</span></div></div>
+      <div className="meta"><span>Playbook <b>{pb.n}</b>{pb.ws ? '' : ' · core'}</span><span>Project <b>{j.prj}</b></span><span>Updated <b>{ago(j.ts)}</b></span>{holds.length ? <span>Holds {holds.filter((h, i) => holds.findIndex((x) => x.job.id === h.job.id) === i).map((h, i) => <React.Fragment key={h.job.id + h.step}>{i ? ', ' : ''}<a href={`#${h.job.id}`} onClick={(e) => { e.preventDefault(); go('job', h.job.id) }}><b>{h.job.id}</b> · {h.job.t}</a></React.Fragment>)}</span> : null}<span className="mono">{j.id} · {j.slug}</span></div><FactStrip j={j} /></div>
     <TrackerPanels j={j} />
     <div className="toolbar"><div className="legend">{LEGEND.map((k) => <span key={k}><i className={'chip s-' + k} />{NODE[k][1]}</span>)}</div><span className="fsp" />
       {pv?.banner ? <span className="rd-cur pv">{pv.banner}</span> : null}

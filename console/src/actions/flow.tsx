@@ -12,7 +12,8 @@ import {
 } from '../model/world.ts'
 import { openOf } from '../model/blockers.ts'
 import { ctxOf } from '../model/context.ts'
-import { askText, openQs, qsM } from '../model/transitions.ts'
+import { askText, latestBranch, openQs, qsM } from '../model/transitions.ts'
+import { CTX } from '../model/world.ts'
 import type { BadgeKind, Cmd, Job, JobStatus, RunRec } from '../model/types.ts'
 import { commit } from '../store.ts'
 import { Ic } from '../ui/Icon.tsx'
@@ -108,6 +109,31 @@ export async function stepDone(j: Job, sid: string, force = false) {
   else toast(`Done · ${s.t}`, 'Undo', r.undo)
 }
 export const stepDoneHere = () => { const { j, sid } = here(); void stepDone(j, sid) }
+
+/** a review step closed by a person: Accept with an optional note, or Send back with why and where to; the note becomes the review fact's */
+export function reviewStep(verdict: 'accepted' | 'sent_back') {
+  const { j, sid, s } = here(), id = j.id, back = verdict === 'sent_back'
+  const all = jsteps(j), i = all.findIndex((t) => t.id === sid), passed = all.slice(0, Math.max(i, 0))
+  const def = latestBranch(CTX, j)?.step ?? passed.at(-1)?.id
+  if (back && !passed.length) { toast('No step before this one to send it back to'); return }
+  modal({
+    title: back ? `Send “${s.t}” back` : `Accept “${s.t}”`, form: 'review',
+    body: <>
+      <label className="field"><span>{back ? 'Why does it go back?' : 'Note (optional)'}</span><VoiceField name="note" target="llm" ctx={s.t} rows={3} autoFocus
+        placeholder={back ? 'What has to change' : 'What you checked'} /></label>
+      {back ? <label className="field"><span>Back to</span><select name="to" defaultValue={def}>{passed.map((t) => <option key={t.id} value={t.id}>{t.t}</option>)}</select></label> : null}
+      <p className="why" style={{ margin: 0 }}>{back ? 'The steps from there on start again; this pass is kept as a round. The note goes on the review fact and into the next runs’ prompts.'
+        : 'The step is done; the note goes on the review fact with the latest branch commit.'}</p>
+    </>,
+    foot: <><CancelBtn /><button className="btn pri" type="submit"><Ic n={back ? 'retry' : 'check'} sm />{back ? 'Send back' : 'Accept'}</button></>,
+    onSubmit: (fd) => {
+      const note = String(fd.get('note') || '').trim(), to = String(fd.get('to') || '')
+      if (back && !note) { toast('Say why it goes back'); return }
+      closeModal()
+      void doCmd(id, { op: 'review', step: sid, verdict, ...(note ? { note } : {}), ...(back && to ? { to } : {}) }, back ? `Sent back · ${s.t}` : `Accepted · ${s.t}`, { moveSel: true })
+    },
+  })
+}
 
 export async function closeJob(id: string, st: JobStatus, note: string) {
   const j = byId(id)

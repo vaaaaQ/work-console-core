@@ -2,8 +2,11 @@ import * as React from 'react'
 import { BK, NODE } from '../data/core.ts'
 import { artIc, tfmt } from '../lib/util.ts'
 import { CTX } from '../model/world.ts'
-import { roundPhases } from '../model/transitions.ts'
+import { roundPhases, stepOf } from '../model/transitions.ts'
+import { failedChecks, isNone } from '../model/facts.ts'
+import type { Fact, RoundFact } from '../model/facts.ts'
 import type { Job, Round } from '../model/types.ts'
+import { FactList } from '../ui/Facts.tsx'
 import { LIVE } from '../live/api.ts'
 import { ArtName } from '../ui/artifact.tsx'
 import { Ic } from '../ui/Icon.tsx'
@@ -23,12 +26,20 @@ function RoundDetail({ j, r }: { j: Job; r: Round }) {
           {f.arts.length ? <div className="arts">{f.arts.map((a, i) => (
             <span key={i} className={'art' + (a.ok ? '' : ' gh')}><Ic n={artIc(a.n)} sm />{LIVE.on && a.link ? <ArtName n={a.n} link={a.link} /> : a.n}</span>))}</div> : null}
           {f.b.map((b, i) => <p key={i} className="why"><Ic n={BK[b.k].i} sm /> {b.t}{b.r ? ` — ${b.r}` : b.o ? ' (open)' : ''}</p>)}
+          <FactList j={j} fx={f.fx} />
           {f.out ? <OutText t={f.out} /> : f.dr ? <><div className="why">LLM draft, not accepted</div><OutText t={f.dr.t} /></> : null}
           {sent.map((m, i) => <p key={'m' + i} className="why"><Ic n="send" sm /> sent {tfmt(m.at)}: {m.t}</p>)}
         </section>
       )
     })}</div>
   )
+}
+
+/** the round fact the console wrote when round n went back: on the next pass's step it went back to */
+function roundFact(j: Job, n: number): (Fact & RoundFact) | undefined {
+  const later = [...(j.rounds ?? []).filter((r) => r.n > n).map((r) => r.flow), j.flow]
+  return later.flatMap((fl) => Object.values(fl).flatMap((f) => f.fx ?? []))
+    .find((f): f is Fact & RoundFact => f.kind === 'round' && !isNone(f) && (f as RoundFact).n === n)
 }
 
 export function Rounds({ j }: { j: Job }) {
@@ -41,6 +52,11 @@ export function Rounds({ j }: { j: Job }) {
           <button className="lnk" aria-expanded={open === r.n} onClick={() => setOpen(open === r.n ? null : r.n)}>
             <Ic n="chevron" sm />Round {r.n}</button>
           <span className="why">ended {tfmt(r.at)} · {r.by} returned it: {r.why}</span>
+          {(() => {
+            const rf = roundFact(j, r.n), failed = rf?.failed.length ? rf.failed : failedChecks(Object.values(r.flow).flatMap((f) => f.fx ?? []))
+            return rf || failed.length ? <span className="fx-rd"><span className="lamp cur" />{rf ? `back to “${stepOf(CTX, j, rf.back_to)?.t ?? rf.back_to}”` : ''}
+              {failed.length ? <>{rf ? ' · ' : ''}<span className="lamp bad" />failed: {failed.join(', ')}</> : null}</span> : null
+          })()}
         </div>
         <div className="rd-row">{roundPhases(CTX, j, r).map((p, i) => (
           <React.Fragment key={i}>
