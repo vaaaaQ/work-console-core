@@ -13,12 +13,12 @@ import { closeDrawer, go } from '../actions/nav.tsx'
 import { newBlocker } from '../actions/newjob.tsx'
 import { isWide, toggleWide } from '../actions/wide.ts'
 import {
-  acceptDraft, askLlm, doCmd, bAdd, bAnswer, bReopen, editDraft, llmCancel, nudge, openStep, rejectDraft, reviewStep, rvOpen, rvVote, stepDoneHere, stepReopen,
+  askLlm, doCmd, bAdd, bAnswer, bReopen, editDraft, llmCancel, nudge, openStep, rejectDraft, reviewStep, rvOpen, rvVote, stepDoneHere, stepReopen,
   stepResume, stepSkip, stepWait, tplSend,
 } from '../actions/flow.tsx'
 import { LIVE } from '../live/api.ts'
 import { FillT, NodePill } from '../ui/bits.tsx'
-import { ApproveBtn, CmdList, approveHead } from '../ui/Commands.tsx'
+import { AcceptBtn, ApproveBtn, CmdList, OkList } from '../ui/Commands.tsx'
 import { DraftTalk } from '../ui/DraftTalk.tsx'
 import { RunFeed, lastRun } from '../ui/RunFeed.tsx'
 import { Ic } from '../ui/Icon.tsx'
@@ -40,9 +40,9 @@ function LlmSec({ j, s, f }: P) {
   if (f.dr) return (
     <section className="sec"><div className="eyebrow">LLM draft</div><div className="llmr pending">
       <div className="hd"><Ic n="bot" sm /><b>Waiting for your review</b><span>· {tfmt(f.dr.at)}</span><OutSeg /></div>{draftReport(j, f.dr) && <div className="why rep">{draftReport(j, f.dr)}</div>}<OutText t={f.dr.t} />
-      <CmdList job={j} step={s.id} />
+      <CmdList job={j} step={s.id} /><OkList job={j} step={s.id} />
       <OpenQs j={j} f={f} />
-      <div className="row"><ApproveBtn job={j} step={s.id} /><button className={'btn sm' + (approveHead(j, s.id) ? '' : ' pri')} disabled={!!f.run} onClick={() => acceptDraft(j.id, s.id)}><Ic n="check" sm />Accept</button>
+      <div className="row"><ApproveBtn job={j} step={s.id} /><AcceptBtn job={j} step={s.id} />
         <button className="btn sm" disabled={!!f.run} onClick={() => editDraft(j.id, s.id)}><Ic n="pen" sm />Edit…</button>
         <button className="btn sm" disabled={!!f.run} onClick={() => rejectDraft(j.id, s.id)}><Ic n="x" sm />Reject…</button></div>
       <DraftTalk job={j} step={s.id} /></div></section>

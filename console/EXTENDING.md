@@ -98,6 +98,20 @@ person acts on it.*
 - Test: `checkWorkspaces([server])` passes, and `install([{ page }])` then `PB0['my-review']` has
   the steps.
 
+A playbook may add two things for jobs that go on by themselves (see `auto-ship` in the Acme demo):
+
+```
+ 'my-ship': { …, ok: { at: 'sh1', cmds: ['git push origin {branch}', 'gh pr create --base {base} --head {branch}'] }, ph: [ …
+   { id: 'sh4', t: 'Live check', m: 'llm', x: 'It answers ok', start: 'auto', retry: { to: 'sh2', max: 3 } } … ] }
+```
+
+- `ok`: the person's Accept of step `at` approves these commands for the job, `{branch}` and `{base}` filled from its
+  work dir; later the console approves a draft that asks for exactly these. List only what may run without asking:
+  anything left out waits for the person.
+- `retry` on an llm step: a failed draft goes back to `to`; on an auto step the console does it by itself, at most
+  `max` (default 3) times in a row.
+- Test: `install([{ page }])` refuses a bad `ok` or `retry` with the playbook's name.
+
 ### Pack config
 
 ```

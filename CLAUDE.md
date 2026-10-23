@@ -19,6 +19,11 @@ Guidance for an agent working in this repo.
   in Packs or Access, at most 30 such calls a run (`server/llm/mcpRun.ts`). An unticked or 31st call is refused; a refused
   or failed one shows on the step as a problem and is never retried; a question the server asks first (elicitation)
   waits for the person's Confirm, and is declined without one.
+  A fourth exception: a job's one-time approval. When the person accepts a playbook's `ok.at` step on the page, the
+  commands its `ok.cmds` list (filled with the job's `{branch}` and `{base}`) are approved for that job; the console
+  (never a session) then approves a run's draft whose commands are all on that list, word for word, and the commands run
+  in the draft's own session (`server/llm/autoAsk.ts`, `runner.reply` with `via: 'console'`). Any other command waits for
+  the person. The person withdraws it in Approvals, and it lapses when the job goes back to that step or before it.
 - **The core names no workplace.** Code under `console/` and `schemas/` must not mention a real
   company, product, person or host. A workplace lives in its workspace, `console/workspaces/<id>/`
   (pack, playbooks, board rule, demo data), and in a bridge pack under `packs/<name>/`. The demo

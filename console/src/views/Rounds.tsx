@@ -51,7 +51,9 @@ export function Rounds({ j }: { j: Job }) {
         <div className="rd-h">
           <button className="lnk" aria-expanded={open === r.n} onClick={() => setOpen(open === r.n ? null : r.n)}>
             <Ic n="chevron" sm />Round {r.n}</button>
-          <span className="why">ended {tfmt(r.at)} · {r.by} returned it: {r.why}</span>
+          <span className="why">ended {tfmt(r.at)} · {r.fx
+            ? <>fix round {r.fx.n} of {r.fx.max}: “{roundPhases(CTX, j, r).flatMap((p) => p.s).find((s) => s.id === r.fx!.step)?.t ?? r.fx.step}” failed, the console sent it back: {r.why}</>
+            : <>{r.by} returned it: {r.why}</>}</span>
           {(() => {
             const rf = roundFact(j, r.n), failed = rf?.failed.length ? rf.failed : failedChecks(Object.values(r.flow).flatMap((f) => f.fx ?? []))
             return rf || failed.length ? <span className="fx-rd"><span className="lamp cur" />{rf ? `back to “${stepOf(CTX, j, rf.back_to)?.t ?? rf.back_to}”` : ''}

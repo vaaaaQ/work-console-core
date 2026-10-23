@@ -1,9 +1,10 @@
 import * as React from 'react'
 import { tfmt } from '../lib/util.ts'
-import { S, W, approvals, chName, draftReport, proposals, tplOf } from '../model/world.ts'
+import { S, W, approvals, chName, draftReport, proposals, stepOf, tplOf, wsJobs } from '../model/world.ts'
+import type { Job } from '../model/types.ts'
 import type { Approval } from '../model/world.ts'
 import { go } from '../actions/nav.tsx'
-import { acceptDraft, editDraft, rejectDraft, tplSend } from '../actions/flow.tsx'
+import { doCmd, editDraft, rejectDraft, tplSend } from '../actions/flow.tsx'
 import { lineDiff } from '../lib/diff.ts'
 import * as api from '../live/api.ts'
 import { LIVE } from '../live/api.ts'
@@ -13,7 +14,7 @@ import { decide, editProposal } from '../actions/knowledge.tsx'
 import { grantsAccept, grantsReject, openAgent } from '../actions/agent.tsx'
 import type { AgentPending } from '../model/agent.ts'
 import { FillT } from '../ui/bits.tsx'
-import { ApproveBtn, CmdList, approveHead } from '../ui/Commands.tsx'
+import { AcceptBtn, ApproveBtn, CmdList, OkList } from '../ui/Commands.tsx'
 import { DraftTalk } from '../ui/DraftTalk.tsx'
 import { Ic } from '../ui/Icon.tsx'
 import { OutSeg, OutText } from '../ui/outText.ts'
@@ -42,8 +43,8 @@ function ApCard({ x }: { x: Approval }) {
       <article className={'dc' + (dr.nw ? ' new' : '')}>
         <div className="dc-h"><span className="st"><Ic n="bot" sm /><b>LLM draft · {s.t}</b></span>{lnk}<span className="src">{tfmt(dr.at)}</span><OutSeg /></div>
         <div className="why">{j.t} · done when: {s.x}</div>{draftReport(j, dr) && <div className="why rep">{draftReport(j, dr)}</div>}<OutText t={dr.t} />
-        <CmdList job={j} step={s.id} />
-        <div className="row"><ApproveBtn job={j} step={s.id} /><button className={'btn sm' + (approveHead(j, s.id) ? '' : ' pri')} disabled={!!f.run} onClick={() => acceptDraft(j.id, s.id)}><Ic n="check" sm />Accept</button>
+        <CmdList job={j} step={s.id} /><OkList job={j} step={s.id} />
+        <div className="row"><ApproveBtn job={j} step={s.id} /><AcceptBtn job={j} step={s.id} />
           <button className="btn sm" disabled={!!f.run} onClick={() => editDraft(j.id, s.id)}><Ic n="pen" sm />Edit…</button>
           <button className="btn sm" disabled={!!f.run} onClick={() => rejectDraft(j.id, s.id)}><Ic n="x" sm />Reject…</button>{open}</div>
         <DraftTalk job={j} step={s.id} last={2} />
@@ -57,6 +58,19 @@ function ApCard({ x }: { x: Approval }) {
       <div className="why">{j.t}</div>
       <div className="tplm"><div className="ch"><Ic n={ic} sm />{chName(j, k, lbl)}</div><div className="body"><FillT j={j} t={t} /></div></div>
       <div className="row"><button className="btn sm pri" onClick={() => tplSend(j.id, s.id, x.i)}><Ic n="send" sm />Review and send…</button>{open}</div>
+    </article>
+  )
+}
+
+/** a job's one-time approval: the commands the console approves for it by itself, until withdrawn */
+function OkCard({ j }: { j: Job }) {
+  const ok = j.ok!
+  return (
+    <article className="dc">
+      <div className="dc-h"><span className="st"><Ic n="check" sm /><b>One-time approval · {ok.cmds.length} command{ok.cmds.length === 1 ? '' : 's'}</b></span><button className="lnk mono" onClick={() => go('job', j.id)}>{j.id} · {j.key}</button></div>
+      <div className="why">{j.t} · granted when {ok.by === 'you' ? 'you' : ok.by} accepted “{stepOf(j, ok.at)?.t ?? ok.at}”. A draft that asks for exactly these runs them without asking you; any other command waits.</div>
+      <ol className="mono">{ok.cmds.map((c, i) => <li key={i} style={{ whiteSpace: 'pre-wrap' }}>{c}</li>)}</ol>
+      <div className="row"><button className="btn sm" onClick={() => void doCmd(j.id, { op: 'okDrop' }, `Withdrew the approval · ${j.id}`)}><Ic n="x" sm />Withdraw</button></div>
     </article>
   )
 }
@@ -96,11 +110,14 @@ export function Approvals() {
   const w = W(), A = approvals(), K = LIVE.on ? L().proposals : [], G = LIVE.on ? L().agent?.pending : undefined, R = LIVE.on ? L().requests : [], P = proposals()
   // a server's question waits on a live run; it goes as soon as it is answered, declined, or the run ends
   const C = LIVE.on ? Object.values(LIVE.runs).filter((r) => r.cf && r.state === 'running') : []
+  // standing approvals are listed after what waits for a decision; they do not make the view non-empty
+  const O = wsJobs().filter((j) => j.ok && j.st !== 'done' && j.st !== 'cancelled')
   return <>
     <div className="vh"><div><div className="eyebrow">{w.n} · work</div><h1>Approvals</h1>
       <p>A server's question a run waits on, LLM drafts, planned messages, the agent's proposals, knowledge proposals, grants changes and the runs' access requests that wait for you. Nothing is kept or sent until you press a button, here or on the step.</p></div></div>
     <div className="dl">{C.map((r) => <CfCard key={r.id} r={r} />)}{G ? <GrantsCard ws={S.ws} conv={L().agent!.id} p={G} /> : null}{R.map((r) => <RequestCard key={r.id} ws={S.ws} r={r} />)}{P.map((j) => <ProposalCard key={j.id} j={j} where="approvals" />)}{K.map((p) => <KnCard key={p.id} p={p} />)}
       {A.map((x) => <ApCard key={`${x.j.id}/${x.s.id}${x.k === 'msg' ? '/' + x.i : ''}`} x={x} />)}
-      {!C.length && !G && !R.length && !P.length && !K.length && !A.length ? <div className="dc empty">Nothing waits for you. A draft lands here after you ask the LLM on a step; a knowledge proposal after an LLM suggests a note.</div> : null}</div>
+      {!C.length && !G && !R.length && !P.length && !K.length && !A.length ? <div className="dc empty">Nothing waits for you. A draft lands here after you ask the LLM on a step; a knowledge proposal after an LLM suggests a note.</div> : null}
+      {O.map((j) => <OkCard key={'ok/' + j.id} j={j} />)}</div>
   </>
 }

@@ -12,7 +12,7 @@ import {
 } from '../model/world.ts'
 import { openOf } from '../model/blockers.ts'
 import { ctxOf } from '../model/context.ts'
-import { askText, latestBranch, openQs, qsM } from '../model/transitions.ts'
+import { askText, cmdsN, latestBranch, openQs, qsM } from '../model/transitions.ts'
 import { CTX } from '../model/world.ts'
 import type { BadgeKind, Cmd, Job, JobStatus, RunRec } from '../model/types.ts'
 import { commit } from '../store.ts'
@@ -292,6 +292,27 @@ function acceptReported(id: string, sid: string, text?: string) {
       <button type="button" className="btn" onClick={() => send({ asDone: true }, `Marked done although it reported ${rep} · ${t}`)}>Mark done anyway</button>
       <button type="button" className={'btn' + (back ? '' : ' pri')} onClick={() => send({ stay: true }, `Kept open · ${t}`)}>Keep the step open</button>
       {back && <button type="button" className="btn pri" onClick={() => send({}, `Back to ${back}`)}><Ic n="check" sm />Return to {back}</button>}</>,
+  })
+}
+
+/** a draft that waits for commands the person ran outside the console: accepting it says so, and only then closes the step */
+export function acceptRan(id: string, sid: string, force = false) {
+  const j = byId(id), f = j?.flow[sid], cm = f?.dr?.cm
+  if (!j || !f || !cm?.length) return
+  const t = stepOf(j, sid)!.t
+  const send = (force: boolean) => {
+    closeModal()
+    const g = byId(id)?.flow[sid]
+    if (!force && g && openOf(g).length) { confirmForce(byId(id)!, sid, () => send(true)); return }
+    void doCmd(id, { op: 'acceptDraft', step: sid, ran: true, ...(force ? { force } : {}) }, `Accepted; you ran its commands · ${t}`, { moveSel: true })
+  }
+  modal({
+    title: `You ran its ${cmdsN(cm.length)} yourself? · ${t}`,
+    body: <>
+      <ol className="mono">{cm.map((c, i) => <li key={i} style={{ whiteSpace: 'pre-wrap' }}>{c}</li>)}</ol>
+      <p className="why" style={{ margin: 0 }}>Accepting closes the step as done. Use Approve instead to have the LLM run them in its session and report what they printed.</p>
+    </>,
+    foot: <><CancelBtn /><button type="button" className="btn pri" onClick={() => send(force)}><Ic n="check" sm />I ran them</button></>,
   })
 }
 

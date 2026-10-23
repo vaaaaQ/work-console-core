@@ -233,6 +233,20 @@ test('only the page may accept a reported failure as done: asDone from a session
   assert.equal(p.job.flow.tr.s, 'done')
 })
 
+test('only the page says a draft\'s commands ran, and only the page withdraws the one-time approval', async () => {
+  const { jobs } = setup(), j = await jobs.create({ t: 'Deploy', key: 'K-1', pb: 'action', prj: 'p', ws: 'acme' })
+  await jobs.cmd(j.id, { op: 'start' })
+  await jobs.cmd(j.id, { op: 'runStart', step: 'tr', q: 'q', id: 'r1' }, undefined, 'runner')
+  await jobs.cmd(j.id, { op: 'runDraft', step: 'tr', t: 'Run update.ps1.', cm: ['update.ps1'] }, undefined, 'runner')
+  for (const who of ['session', 'console'] as const)
+    await assert.rejects(jobs.cmd(j.id, { op: 'acceptDraft', step: 'tr', ran: true }, undefined, who), code(400, 'bad_args'), who)
+  await assert.rejects(jobs.cmd(j.id, { op: 'acceptDraft', step: 'tr' }, undefined, 'session'), code(400, 'bad_state'))
+  await assert.rejects(jobs.cmd(j.id, { op: 'okDrop' }, undefined, 'session'), code(400, 'bad_args'))
+  const p = await jobs.cmd(j.id, { op: 'acceptDraft', step: 'tr', ran: true })
+  assert.equal(p.job.flow.tr.s, 'done')
+  assert.match(p.job.jr[0].o, /; you ran its 1 command yourself\.$/)
+})
+
 test('the console\'s acceptDraft on a step that is not auto is refused', async () => {
   const { jobs } = setup(), j = await jobs.create({ t: 'Reply', key: 'K-1', pb: 'action', prj: 'p', ws: 'acme' })
   await jobs.cmd(j.id, { op: 'start' })
