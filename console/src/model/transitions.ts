@@ -695,7 +695,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
         noBlockers(cmd.force)
         reviewFact(x, j, sid, 'accepted', note)
         nx = advance(x, j, sid, 'done')
-        jr(x, j, `Accepted the review “${S.t}”${note ? `: ${note}` : ''}.`, `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')
+        jr(x, j, sentence(`Accepted the review “${S.t}”${note ? `: ${note}` : ''}`), `step done${nx ? `; “${stepOf(x, j, nx)!.t}” is next` : ''}.`, nextTxt(x, j, nx), by(x), 'ok')
         break
       }
       if (cmd.verdict !== 'sent_back') throw new CmdError('bad_args', 'verdict is accepted or sent_back')
@@ -704,7 +704,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       const to = cmd.to ?? latestBranch(x, j)?.step ?? all[here - 1]?.id
       if (!to || !stepOf(x, j, to)) throw new CmdError('bad_step', `${j.id} has no step ${to ?? 'before this one'} to go back to`)
       reviewFact(x, j, sid, 'sent_back', note)
-      jr(x, j, `Sent “${S.t}” back: ${note}`, `the job goes back to “${stepOf(x, j, to)!.t}”.`, `work on “${stepOf(x, j, to)!.t}”.`, by(x), 'bad')
+      jr(x, j, sentence(`Sent “${S.t}” back: ${note}`), `the job goes back to “${stepOf(x, j, to)!.t}”.`, `work on “${stepOf(x, j, to)!.t}”.`, by(x), 'bad')
       returnTo(x, j, to, note, []); nx = to
       break
     }
@@ -722,7 +722,7 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       const m = (cmd.m || '').trim() || 'waiting on others'
       F.s = 'wait'; F.m = m; F.nw = 1
       if (j.st === 'draft' || j.st === 'ready') j.st = 'active'
-      jr(x, j, `“${S.t}” is waiting: ${m}.`, 'step set to waiting.', 'resume it when the answer arrives.', by(x), 'wait'); syncStatus(x, j)
+      jr(x, j, sentence(`“${S.t}” is waiting: ${m}`), 'step set to waiting.', 'resume it when the answer arrives.', by(x), 'wait'); syncStatus(x, j)
       break
     }
     case 'stepResume':

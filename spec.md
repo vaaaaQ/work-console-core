@@ -191,3 +191,15 @@ the page. The core version is `core.lock.json`'s `core` field.
   Its `failed` lists the failed checks of the draft that sent it back (none for Send back or a reopen by hand).
 - Accepted facts are added after the step's own (a round fact stays), so "latest of each kind" reads the step's history.
 - `get_job` shows each step's declared kinds (`reports`), its `facts` and its draft's (`draftFacts`), in words.
+
+## What the Prove step changed (after the live run)
+- A field a kind does not have is refused, never dropped: `facts: fact 1 (check): check has no field version; its fields are
+  name, ok, against, url, art, note`. The same goes for a PR check's fields (`a check has no field conclusion; its fields are
+  name, state, url`), and a none fact is only `{kind, none}` (`a none fact has only kind and none; drop version`). The fields
+  per kind are `KIND_FIELDS` in `facts.ts`.
+- A round's line in `## Facts` says its reason once: a Send back's review note that equals the round's why is left out, and
+  one that says something else is kept. A part that ends a sentence loses its closing `.`, `,`, `;` or `:` before the next
+  part, so there is no `deploy.;` (`clause`). A round fact's own line does the same before `; failed:`.
+- The journal adds no second period after a review note or a waiting reason that already ends a sentence (`sentence`).
+- A branch fact's copy button stays on the name's line (`.fx-row .iconbtn` is inline).
+- Left as is, for Review: a Send back round's `failed` stays empty even when that round's PR had a failing check.

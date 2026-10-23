@@ -2,8 +2,8 @@ import { BK } from '../../src/data/core.ts'
 import { contextSection, ctxLabel, renderNote } from '../../src/model/context.ts'
 import type { Resolved } from '../../src/model/context.ts'
 import * as T from '../../src/model/transitions.ts'
-import { factLine, factText, isNone, latestFacts, oneLine } from '../../src/model/facts.ts'
-import type { CheckFact, Fact, RoundFact } from '../../src/model/facts.ts'
+import { clause, factLine, factText, isNone, latestFacts, oneLine } from '../../src/model/facts.ts'
+import type { CheckFact, Fact, ReviewFact, RoundFact } from '../../src/model/facts.ts'
 import type { Flow, Job, RunIntent, WaitLink } from '../../src/model/types.ts'
 import type { Note } from '../knowledge/notes.ts'
 
@@ -52,10 +52,15 @@ export function factsText(x: T.Ctx, j: Job): string {
     const rf = all.find((f): f is Fact & RoundFact => f.kind === 'round' && !isNone(f) && (f as RoundFact).n === r.n)
     const fx = Object.values(r.flow).flatMap((f) => f.fx ?? [])
     const bad = fx.filter((f): f is Fact & CheckFact => f.kind === 'check' && !isNone(f) && !(f as CheckFact).ok).map((f) => factText(f))
-    const back = fx.filter((f) => f.kind === 'review' && !isNone(f) && (f as { verdict: string }).verdict === 'sent_back').map((f) => factText(f))
-    const head = rf ? `round ${r.n} → back to "${title(rf.back_to)}": ${rf.why}` : `round ${r.n}: ${r.why}`
-    // every part is a person's or a run's words: the line stays one line, whatever a kept round holds
-    return rf || bad.length || back.length ? `- ${oneLine([head, ...bad, ...back].join('; '))}` : ''
+    const why = rf ? rf.why : r.why, same = (t?: string) => !!t && clause(oneLine(t)) === clause(oneLine(why))
+    // a Send back's note is the round's why: said once
+    const back = fx.filter((f): f is Fact & ReviewFact => f.kind === 'review' && !isNone(f) && (f as ReviewFact).verdict === 'sent_back')
+      .map((f) => factText(same(f.note) ? { ...f, note: undefined } : f))
+    const head = rf ? `round ${r.n} → back to "${title(rf.back_to)}": ${why}` : `round ${r.n}: ${why}`
+    // every part is a person's or a run's words: the line stays one line, whatever a kept round holds; a part
+    // that ends a sentence loses its closing mark before the next, so no ".;"
+    const parts = [head, ...bad, ...back].map((p) => oneLine(p))
+    return rf || bad.length || back.length ? `- ${parts.map((p, i) => (i < parts.length - 1 ? clause(p) : p)).join('; ')}` : ''
   }).filter(Boolean)
   if (!now.length && !past.length) return ''
   const pastHead = left ? `Earlier rounds (the latest ${shown.length} of ${rounds.length}; ${left} older left out):` : 'Earlier rounds:'

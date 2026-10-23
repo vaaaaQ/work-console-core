@@ -41,12 +41,24 @@ export const FACT_FIELDS: Record<RunKind, string> = {
   deploy: 'what, where, version, ok (true or false), url?',
   check: 'name, ok (true or false), against? (the version it ran against), url? or art? (an artifact of this step) as evidence, note?',
 }
-export const FACTS_HELP = 'facts: what this step leaves besides its text, each {kind, ...fields}: '
+/** every field each kind has, besides kind; anything else is refused, never dropped, so a run that guesses a name learns the real ones */
+export const KIND_FIELDS: Record<FactKind, readonly string[]> = {
+  branch: ['repo', 'name', 'sha', 'base'],
+  pr: ['url', 'n', 'title', 'state', 'checks'],
+  review: ['by', 'verdict', 'of', 'note'],
+  deploy: ['what', 'where', 'version', 'ok', 'url'],
+  check: ['name', 'ok', 'against', 'url', 'art', 'note'],
+  round: ['n', 'back_to', 'why', 'failed'],
+}
+const PR_CHECK_FIELDS = ['name', 'state', 'url'] as const
+export const FACTS_HELP ='facts: what this step leaves besides its text, each {kind, ...fields}: '
   + (Object.entries(FACT_FIELDS) as [string, string][]).map(([k, f]) => `${k} {${f}}`).join('; ')
   + '. A kind the step must report but has nothing for goes as {kind, none: why}. URLs are http(s). Each text is one line.'
 
 /** text in one line: every run of whitespace, a newline too, one space; so no fact can open a heading or a line of its own in a prompt */
 export const oneLine = (t: string) => t.replace(/\s+/g, ' ').trim()
+/** text that goes before "; " in a line: a sentence's closing . , ; or : dropped, so no ".;" */
+export const clause = (t: string) => t.replace(/[\s.,;:]+$/, '')
 
 type Rec = Record<string, unknown>
 const rec = (v: unknown): Rec | null => (v && typeof v === 'object' && !Array.isArray(v) ? v as Rec : null)
@@ -79,7 +91,12 @@ function reader(o: Rec, at: string) {
     return /^[0-9a-f]{7,64}$/i.test(v) ? v.toLowerCase() : fail(`${k} is a commit hash (7 to 64 hex digits)`)
   }
   const opt = <V>(k: string, v: V | undefined) => (v === undefined ? {} : { [k]: v })
-  return { fail, str, req, url, one, bool, sha, opt }
+  /** refuses the first field outside known; what = how the message names the object */
+  const only = (known: readonly string[], what: string) => {
+    const k = Object.keys(o).find((f) => !known.includes(f))
+    if (k !== undefined) fail(`${what} has no field ${k}; its fields are ${known.filter((f) => f !== 'kind').join(', ')}`)
+  }
+  return { fail, str, req, url, one, bool, sha, opt, only }
 }
 
 /** one fact as a run reports it, checked; i = its place in the list */
@@ -94,11 +111,14 @@ function factIn(v: unknown, i: number, console: boolean): FactIn {
     return r.fail(`the console writes ${kind} facts itself; a run never reports one (report ${RUN_KINDS.join(', ')})`)
   }
   if (o.none !== undefined) {
+    const extra = Object.keys(o).find((k) => k !== 'kind' && k !== 'none')
+    if (extra !== undefined) return r.fail(`a none fact has only kind and none; drop ${extra}`)
     const none = typeof o.none === 'string' ? oneLine(o.none) : ''
     if (!none) return r.fail('none says why there is nothing to report')
     if (none.length > STR_MAX) return r.fail(`none is longer than ${STR_MAX} characters`)
     return { kind, none }
   }
+  r.only(['kind', ...KIND_FIELDS[kind]], kind)
   switch (kind) {
     case 'branch': return { kind, repo: r.req('repo'), name: r.req('name'), sha: r.sha('sha')!, ...r.opt('base', r.str('base', STR_MAX, true)) }
     case 'pr': {
@@ -109,6 +129,7 @@ function factIn(v: unknown, i: number, console: boolean): FactIn {
       const checks = (cs as unknown[]).map((c, k): PrCheck => {
         const co = rec(c) ?? r.fail(`check ${k + 1} is an object {name, state, url?}`)
         const cr = reader(co, `fact ${i + 1} (pr), check ${k + 1}`)
+        cr.only(PR_CHECK_FIELDS, 'a check')
         return { name: cr.req('name'), state: cr.one('state', CHECK_STATES), ...cr.opt('url', cr.url('url')) }
       })
       return { kind, url: r.url('url', false)!, ...r.opt('n', n as number | undefined), ...r.opt('title', r.str('title', STR_MAX, true)), state: r.one('state', PR_STATES), checks }
@@ -171,7 +192,7 @@ export function factText(f: FactIn, title: (id: string) => string = (id) => id):
     case 'deploy': return `deploy ${f.what} at ${f.version} on ${f.where}: ${f.ok ? 'ok' : 'failed'}${f.url ? ` (${link('link', f.url)})` : ''}`
     case 'check': return `check "${f.name}" ${f.ok ? 'passed' : 'failed'}${f.against ? ` against ${f.against}` : ''}`
       + `${f.url ? ` (${link('evidence', f.url)})` : f.art ? ` (artifact ${f.art})` : ''}${f.note ? `: ${f.note}` : ''}`
-    case 'round': return `round ${f.n} → back to "${title(f.back_to)}": ${f.why}${f.failed.length ? `; failed: ${f.failed.join(', ')}` : ''}`
+    case 'round': return `round ${f.n} → back to "${title(f.back_to)}": ${f.failed.length ? `${clause(f.why)}; failed: ${f.failed.join(', ')}` : f.why}`
   }
 }
 

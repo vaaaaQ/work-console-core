@@ -201,6 +201,22 @@ test('## Facts: the latest fact of each kind this round, earlier rounds one line
   assert.match(manualText(x, j, 'fxd', 'go', {}), /## Facts\nThis round:/)
 })
 
+test('## Facts: a Send back round says its reason once, with no stray ".;"', () => {
+  const x = devCtx()
+  x.PB.fxrev = { ws: 'acme', n: 'Rev', ph: [{ c: 'B', n: 'B', s: [
+    { id: 'rb', t: 'Build it', m: 'llm', x: 'green', fx: ['branch'] }, { id: 'rr', t: 'Review', m: 'you', x: 'reviewed', fx: ['review'] },
+    { id: 'rd', t: 'Deploy', m: 'llm', x: 'deployed', fx: ['deploy'] }] }] }
+  let j = apply(x, freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'fxrev', prj: 'p', ws: 'acme' }), { op: 'start' }).job
+  j = by(x, j, 'rb', [{ op: 'runDraft', step: 'rb', t: 'built', fx: [{ kind: 'branch', repo: 'core', name: 'job/x', sha: 'aaaaaaa' }] } as Cmd, { op: 'acceptDraft', step: 'rb' }])
+  j = apply({ ...x, by: 'Valery' }, j, { op: 'review', step: 'rr', verdict: 'sent_back', note: 'The smoke check fails: fix it before deploy.' }).job
+  const past = factsText(x, j).split('\n').filter((l) => l.startsWith('- round '))
+  assert.deepEqual(past, ['- round 1 → back to "Build it": The smoke check fails: fix it before deploy; review sent back by Valery at aaaaaaa'])
+  // a review whose note says something else than the round's why keeps it
+  const r = j.rounds![0].flow.rr.fx![0] as { note?: string }
+  r.note = 'and rename the view'
+  assert.match(factsText(x, j), /fix it before deploy; review sent back by Valery at aaaaaaa: and rename the view$/m)
+})
+
 test('## Facts keeps the latest earlier rounds and says how many it left out; a round\'s why is one line', () => {
   const x = devCtx()
   let j = apply(x, freshJob(x, 'J-1', { t: 'T', key: 'NEW', pb: 'fxdev', prj: 'p', ws: 'acme' }), { op: 'start' }).job

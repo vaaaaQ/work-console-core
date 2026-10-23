@@ -596,7 +596,7 @@ p.cx-t{font-family:var(--font)}
 .fx{display:flex;flex-direction:column;gap:6px}
 .fx-row{display:grid;grid-template-columns:10px minmax(0,1fr);gap:4px 8px;align-items:baseline;padding:6px 8px;border:1px solid var(--line);border-radius:var(--r);background:var(--raised)}
 .fx-row code{font-size:.92em}
-.fx-row .iconbtn{vertical-align:middle;margin-left:2px}
+.fx-row .iconbtn{display:inline-grid;vertical-align:middle;width:24px;height:24px;margin:0 2px 0 6px}
 .fx-chk{display:inline-flex;align-items:center;gap:4px;margin-left:10px}
 .fx-strip{display:flex;flex-wrap:wrap;align-items:center;gap:4px 0;margin-top:8px;font-size:.92em}
 .fx-p{display:inline-flex;align-items:center;gap:6px}

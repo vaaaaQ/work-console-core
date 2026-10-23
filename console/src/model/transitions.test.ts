@@ -1279,6 +1279,18 @@ test('facts: Send back goes back like a return; the kept round keeps the review,
   assert.equal(apply(DEV, j, { op: 'review', step: 'fxr', verdict: 'sent_back', note: 'prove again', to: 'fxp' }).nx, 'fxp')
 })
 
+test('facts: a review note or a waiting reason that ends a sentence gets no second period in the journal', () => {
+  let j = acceptOn(devJob(), 'fxb', { fx: [BR] })
+  j = acceptOn(j, 'fxp', { fx: [{ kind: 'check', name: 'live', ok: true }] })
+  assert.equal(apply(DEV, j, { op: 'review', step: 'fxr', verdict: 'accepted', note: 'diff read.' }).job.jr[0].o, 'Accepted the review “Review”: diff read.')
+  assert.equal(apply(DEV, j, { op: 'review', step: 'fxr', verdict: 'accepted', note: 'all good?' }).job.jr[0].o, 'Accepted the review “Review”: all good?')
+  assert.equal(apply(DEV, j, { op: 'review', step: 'fxr', verdict: 'accepted', note: 'diff read' }).job.jr[0].o, 'Accepted the review “Review”: diff read.')
+  assert.equal(apply(DEV, j, { op: 'review', step: 'fxr', verdict: 'accepted' }).job.jr[0].o, 'Accepted the review “Review”.')
+  const back = apply(DEV, j, { op: 'review', step: 'fxr', verdict: 'sent_back', note: 'rename it' }).job.jr.find((e) => e.o.startsWith('Sent'))!
+  assert.equal(back.o, 'Sent “Review” back: rename it.')
+  assert.equal(apply(DEV, j, { op: 'stepWait', step: 'fxr', m: 'Ann answers.' }).job.jr[0].o, '“Review” is waiting: Ann answers.')
+})
+
 test('facts: a failed smoke test that goes back writes a round fact naming the failed checks', () => {
   let j = acceptOn(devJob(), 'fxb', { fx: [BR] })
   j = acceptOn(j, 'fxp', { fx: [{ kind: 'check', name: 'live', ok: true }] })

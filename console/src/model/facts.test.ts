@@ -9,9 +9,9 @@ test('the six kinds are fixed in the core', () => {
   assert.deepEqual([...FACT_KINDS], ['branch', 'pr', 'review', 'deploy', 'check', 'round'])
 })
 
-test('each kind a run reports validates, trimmed, with only the fields it knows', () => {
+test('each kind a run reports validates, trimmed', () => {
   const got = factsIn([
-    { kind: 'branch', repo: ' core ', name: 'job/ad-0016', sha: '3F2C9E1', base: 'master', extra: 'dropped' },
+    { kind: 'branch', repo: ' core ', name: 'job/ad-0016', sha: '3F2C9E1', base: 'master' },
     { kind: 'pr', url: 'https://git.example/core/pull/41', n: 41, state: 'open', checks: [{ name: 'build', state: 'pass' }, { name: 'test', state: 'fail', url: 'https://ci.example/7' }] },
     { kind: 'deploy', what: 'console', where: 'this PC', version: 'core 3f2c9e1', ok: true },
     { kind: 'check', name: 'rounds view', ok: false, against: '3f2c9e1', art: 'rounds.png' },
@@ -43,6 +43,20 @@ test('a bad fact is refused with a message the run can act on', () => {
   bad(Array.from({ length: 21 }, () => ({ kind: 'deploy', none: 'x' })), /at most 20/)
   // a round is the console's own; a run never reports one
   bad([{ kind: 'round', n: 1, back_to: 'a', why: 'x', failed: [] }], /the console writes round/)
+})
+
+test('a field a kind does not have is refused, naming the field and the kind\'s real fields, never dropped', () => {
+  bad([{ kind: 'check', name: 'smoke', ok: true, version: 'c0ffee1' }], /^fact 1 \(check\): check has no field version; its fields are name, ok, against, url, art, note$/)
+  bad([{ kind: 'check', name: 'smoke', ok: true, evidence: 'https://x.example' }], /check has no field evidence; its fields are name, ok, against, url, art, note/)
+  bad([{ kind: 'branch', repo: 'core', name: 'b', sha: 'abcdef1', extra: 'x' }], /fact 1 \(branch\): branch has no field extra; its fields are repo, name, sha, base$/)
+  bad([{ kind: 'deploy', what: 'a', where: 'b', version: 'c', ok: true, env: 'dev' }], /deploy has no field env; its fields are what, where, version, ok, url/)
+  bad([{ kind: 'pr', url: 'https://git.example/1', state: 'open', checks: [], number: 1 }], /pr has no field number; its fields are url, n, title, state, checks/)
+  bad([{ kind: 'pr', url: 'https://git.example/1', state: 'open', checks: [{ name: 'b', state: 'pass', conclusion: 'ok' }] }],
+    /fact 1 \(pr\), check 1: a check has no field conclusion; its fields are name, state, url/)
+  // a none fact is the kind and why, nothing else
+  bad([{ kind: 'deploy', none: 'docs only', version: 'x' }], /fact 1 \(deploy\): a none fact has only kind and none; drop version/)
+  // the help a run reads names the same fields the check takes
+  assert.match(FACTS_HELP, /check \{name, ok \(true or false\), against\?/)
 })
 
 test('a run never reports review or round, not even as none', () => {
@@ -103,6 +117,9 @@ test('factLine says each kind in one line, links on names, with the step that ma
   assert.equal(factLine({ kind: 'round', n: 1, back_to: 's0', why: 'smoke failed', failed: ['rounds view'], ...m }, t),
     'round 1 → back to "Build": smoke failed; failed: rounds view (from "TDD on the job branch")')
   assert.equal(factLine({ kind: 'deploy', none: 'docs only', ...m }, t), 'deploy: none, docs only (from "TDD on the job branch")')
+  // a why that ends a sentence leaves no stray ".;" before what follows it
+  assert.equal(factLine({ kind: 'round', n: 1, back_to: 's0', why: 'fix it before deploy.', failed: ['smoke'], ...m }, t),
+    'round 1 → back to "Build": fix it before deploy; failed: smoke (from "TDD on the job branch")')
 })
 
 test('stripParts: the job header strip, the latest of each kind but round, each with its lamp', () => {
