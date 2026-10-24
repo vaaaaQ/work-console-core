@@ -18,6 +18,8 @@ export const startOf = (s: Step | undefined, on: boolean): Start | null =>
   !s || s.m !== 'llm' ? null : s.start ?? (on ? 'self' : 'hand')
 /** what keeps a draft from being accepted by itself, or null; s and j = its step and job, which a fix round needs */
 export function holdOf(f: Flow, s?: Step, j?: Job): string | null {
+  // a review is the person's verdict: accepting it by itself would write one nobody gave
+  if (s?.fx?.includes('review')) return 'the step is a review, which only a person accepts'
   // a draft that says it did not finish is the person's to accept, unless its auto step's retry sends the job back,
   // and then only max times in a row: going back by itself could loop
   if (f.dr?.o) {

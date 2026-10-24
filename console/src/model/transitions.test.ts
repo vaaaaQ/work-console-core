@@ -1353,3 +1353,16 @@ test('facts: a step declares them through stepAdd and stepEdit; an added step br
   assert.deepEqual(stepOf(DEV, e, 'fxd')!.fx, ['deploy', 'check']); assert.match(e.jr[0].o, /facts/)
   assert.equal(stepOf(DEV, apply(DEV, e, { op: 'stepEdit', step: 'fxd', fx: null }).job, 'fxd')!.fx, undefined)
 })
+
+test('facts: the console never accepts a draft on a step that declares review, so no review fact is written without a person', () => {
+  const RV: Ctx = { ...DEV, PB: { ...DEV.PB, fxauto: { ws: 'acme', n: 'Auto review', ph: [
+    { c: 'R', n: 'Review', s: [{ id: 'ar', t: 'Review', m: 'llm', x: 'reviewed', start: 'auto', fx: ['review'] }] }] } } }
+  const j = apply(RV, freshJob(RV, 'J-7001', { t: 'Auto', key: 'NEW', pb: 'fxauto', prj: 'platform', ws: 'acme' }), { op: 'start' }).job
+  const d = apply(RV, apply(RV, j, { op: 'runStart', step: 'ar', q: 'go', id: 'r-ar' }).job, { op: 'runDraft', step: 'ar', t: 'looks fine' } as Cmd).job
+  assert.throws(() => apply({ ...RV, by: 'console' }, d, { op: 'acceptDraft', step: 'ar', auto: true }),
+    (e: unknown) => e instanceof CmdError && e.code === 'bad_state' && /only a person accepts/.test(e.message))
+  assert.equal(d.flow.ar.fx, undefined)
+  // the person's accept writes it
+  const a = apply(RV, d, { op: 'acceptDraft', step: 'ar' }).job
+  assert.equal(a.flow.ar.fx![0].kind, 'review')
+})

@@ -440,7 +440,7 @@ function report(x: Ctx, j: Job, sid: string, r: DraftReport): Pick<Draft, 'o' | 
     if (miss.length) throw new CmdError('bad_args', `“${S.t}” reports ${miss.join(', ')}: a done draft of it carries a fact of each kind in facts, or {kind, none: why} when there is honestly nothing to report`)
     return cm
   }
-  const all = stepsOf(x, j), S = all.find((s) => s.id === sid), si = all.findIndex((s) => s.id === sid)
+  const all = stepsOf(x, j), si = all.findIndex((s) => s.id === sid)
   // a failed draft on a step with retry goes back where the step says, unless it names a step itself
   const ri = S?.retry ? all.findIndex((s) => s.id === S.retry!.to) : -1
   if (!r.rt && r.o === 'failed' && ri >= 0 && ri < si) return { o: r.o, rt: all[ri].id, ...(why ? { why } : {}), ...cm }
@@ -837,6 +837,8 @@ export function apply(x: Ctx, job: Job, cmd: Cmd): { job: Job; nx: string | null
       const qs = openQs(F).length
       if (qs && (cmd.said || cmd.auto)) throw new CmdError('bad_state', `“${S.t}” has ${qsM(qs)}; ${qs > 1 ? 'answer them' : 'answer it'} first`)
       const stayOpen = () => { if (qs) jr(x, j, `${qsM(qs)} on “${S.t}” ${qs > 1 ? 'stay' : 'stays'} open.`, 'accepted without their answers.', `answer ${qs > 1 ? 'them' : 'it'} when you can.`, by(x), 'wait') }
+      // a review is the person's verdict: the console never accepts it, so it never writes one nobody gave
+      if (cmd.auto && S.fx?.includes('review')) throw new CmdError('bad_state', `“${S.t}” is a review, which only a person accepts`)
       // the console sends back by itself only a failed draft its step's retry covers, and at most max times in a row
       const fix = !!cmd.auto && isFix(S, dr)
       if (cmd.auto && dr.o && !fix) throw new CmdError('bad_state', `the console does not accept a draft that reports ${dr.o === 'failed' ? 'failed' : 'not done'} on “${S.t}” unless the step's retry sends it back`)

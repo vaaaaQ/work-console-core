@@ -637,3 +637,10 @@ test('a failed Live check goes back to Build by itself 3 times, each journaled w
   await until(async () => (await s.get(id)).flow.a3.arts.some((a) => a.n === 'fix-round-4.md'))
   s.off()
 })
+
+test('holdOf holds a draft on a step that declares review: only a person accepts a review', () => {
+  const f = { s: 'wait', m: '', arts: [], b: [], rv: null, dr: { t: 'd', at: '' }, out: null, run: null, sent: {} } as Flow
+  const j = { rounds: [] } as unknown as Job
+  assert.equal(holdOf(f, { id: 'r', t: 'Review', m: 'llm', x: 'reviewed', start: 'auto', fx: ['review'] }, j), 'the step is a review, which only a person accepts')
+  assert.equal(holdOf(f, { id: 'b', t: 'Build', m: 'llm', x: 'green', start: 'auto', fx: ['branch'] }, j), null)
+})
